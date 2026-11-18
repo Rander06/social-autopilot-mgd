@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 interface GeneratedPost {
+  tema_visual: string;
   headline_arte: string;
   subtitulo_arte: string;
   legenda: string;
@@ -25,30 +26,37 @@ function getRequiredEnv(name: string): string {
   return value.trim();
 }
 
-async function generatePostWithGemini(): Promise<GeneratedPost> {
+function appendLog(logs: string[], message: string) {
+  const timestamp = new Date().toISOString();
+  logs.push(`[${timestamp}] ${message}`);
+}
+
+async function generatePostWithGemini(logs: string[]): Promise<GeneratedPost> {
+  appendLog(logs, "Passo A: Iniciando geração de copy com Gemini 2.5 Flash...");
   const apiKey = getRequiredEnv("GEMINI_API_KEY");
   const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `Você é o estrategista de marketing e copywriter sênior da agência "Meu Gestor Digital".
-Crie um post inédito, persuasivo e focado em conversão para Instagram e Facebook vendendo sites completos para donos de chácaras, ranchos, casas de temporada e salões de festas.
+Crie um post inédito, persuasivo e focado em conversão para Instagram Business e Página do Facebook vendendo sites completos para donos de chácaras, ranchos, casas de temporada e salões de festas.
 
 DADOS OBRIGATÓRIOS DA OFERTA:
 - Preço: 12x de R$149,90
 - Zero taxas ou comissões por reserva (100% do lucro fica com o proprietário)
 - Recursos incluídos no site:
-  1. Simulador de orçamento instantâneo
-  2. Calendário online de disponibilidade em tempo real
-  3. Pagamento via PIX automático
-  4. Geração automática de contrato em PDF
-  5. Atendimento automatizado por Inteligência Artificial no WhatsApp
+  1. Simulador de orçamento em tempo real
+  2. Calendário online de disponibilidade
+  3. Pagamento via PIX com baixa automática
+  4. Contrato digital em PDF
+  5. Atendimento automático com IA no WhatsApp onde o dono assume quando quiser
 
 REGRAS ESTRITAS:
-1. NUNCA cite nomes de clientes, pessoas ou nomes específicos de propriedades/empresas terceiras.
-2. Varie o ângulo da abordagem a cada geração (ex: fuga de comissões de plataformas, fechamento automático de reservas no PIX, atendimento 24h por IA no WhatsApp, profissionalismo e fim de curiosos que não fecham).
-3. headline_arte: Máximo de 7 palavras. Direta, impactante, fácil de ler em uma arte 1080x1080.
-4. subtitulo_arte: Curto (idealmente até 12 palavras), incluindo obrigatoriamente "12x de R$149,90".
-5. legenda: Copy persuasiva em português do Brasil, bem formatada em parágrafos curtos com emojis estratégicos, destacando a dor do proprietário e os diferenciais do site, finalizando com um CTA forte convidando o leitor a comentar "EU QUERO".
-6. hashtags: Lista de hashtags relevantes separadas por espaço (ex: #Chacara #Rancho #CasaDeTemporada #SalaoDeFestas #MeuGestorDigital).`;
+1. NUNCA cite nomes de clientes, pessoas ou nomes específicos de espaços/propriedades (como "Espaço Lazer" ou similares) nas artes ou legendas.
+2. Varie o ângulo criativo a cada geração (ex: fuga de taxas de aplicativos, fechamento no PIX com baixa automática, atendimento 24h com IA no WhatsApp onde o dono assume quando quiser, contrato digital em PDF automático).
+3. tema_visual: Frase curta (2 a 5 palavras) resumindo o tema visual/ângulo principal da arte (ex: "Zero Taxas por Reserva", "PIX com Baixa Automática", "Atendimento IA no WhatsApp").
+4. headline_arte: Máximo de 7 palavras. Direta, impactante e legível em arte 1080x1080.
+5. subtitulo_arte: Curto (até 12 palavras), incluindo obrigatoriamente "12x de R$149,90".
+6. legenda: Copy persuasiva em português do Brasil, parágrafos curtos com emojis estratégicos, destacando os benefícios e finalizando com CTA claro convidando a comentar "EU QUERO".
+7. hashtags: Lista de hashtags relevantes separadas por espaço.`;
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
@@ -58,6 +66,11 @@ REGRAS ESTRITAS:
       responseSchema: {
         type: Type.OBJECT,
         properties: {
+          tema_visual: {
+            type: Type.STRING,
+            description:
+              "Tema visual/ângulo criativo curto do post (2 a 5 palavras).",
+          },
           headline_arte: {
             type: Type.STRING,
             description:
@@ -78,7 +91,13 @@ REGRAS ESTRITAS:
             description: "Hashtags relevantes separadas por espaço.",
           },
         },
-        required: ["headline_arte", "subtitulo_arte", "legenda", "hashtags"],
+        required: [
+          "tema_visual",
+          "headline_arte",
+          "subtitulo_arte",
+          "legenda",
+          "hashtags",
+        ],
       },
       temperature: 0.9,
     },
@@ -91,6 +110,7 @@ REGRAS ESTRITAS:
 
   const parsed = JSON.parse(rawText) as GeneratedPost;
   if (
+    !parsed.tema_visual ||
     !parsed.headline_arte ||
     !parsed.subtitulo_arte ||
     !parsed.legenda ||
@@ -99,16 +119,23 @@ REGRAS ESTRITAS:
     throw new Error("Resposta JSON do Gemini incompleta.");
   }
 
+  appendLog(
+    logs,
+    `Passo A concluído: tema_visual="${parsed.tema_visual}", headline="${parsed.headline_arte}".`
+  );
   return parsed;
 }
 
-async function renderPostImageBuffer(post: GeneratedPost): Promise<Buffer> {
+async function renderPostImageBuffer(
+  post: GeneratedPost,
+  slideLabel?: string
+): Promise<Buffer> {
   const features = [
-    "Simulador de Orçamento",
+    "Simulador em Tempo Real",
     "Calendário Online",
-    "PIX Automático",
-    "Contrato em PDF",
-    "IA no WhatsApp",
+    "PIX Baixa Automática",
+    "Contrato Digital PDF",
+    "IA no WhatsApp (Assuma Quando Quiser)",
   ];
 
   const h = React.createElement;
@@ -123,13 +150,13 @@ async function renderPostImageBuffer(post: GeneratedPost): Promise<Buffer> {
         flexDirection: "column",
         justifyContent: "space-between",
         backgroundColor: "#FAF5EE",
-        padding: "56px",
+        padding: "54px",
         fontFamily: "sans-serif",
         color: "#2C1E16",
         position: "relative",
       },
     },
-    // Barra decorativa superior
+    // Barra superior com tema visual e selo de preço
     h(
       "div",
       {
@@ -146,37 +173,85 @@ async function renderPostImageBuffer(post: GeneratedPost): Promise<Buffer> {
         {
           style: {
             display: "flex",
-            alignItems: "center",
-            backgroundColor: "#C85A32",
-            color: "#FAF5EE",
-            padding: "12px 24px",
-            borderRadius: "999px",
-            fontSize: "20px",
-            fontWeight: 700,
-            letterSpacing: "0.04em",
+            flexDirection: "column",
+            gap: "8px",
           },
         },
-        "CHÁCARAS • RANCHOS • TEMPORADA • SALÕES"
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              alignItems: "center",
+              backgroundColor: "#C85A32",
+              color: "#FAF5EE",
+              padding: "10px 22px",
+              borderRadius: "999px",
+              fontSize: "19px",
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+            },
+          },
+          slideLabel
+            ? `${post.tema_visual.toUpperCase()} • ${slideLabel}`
+            : post.tema_visual.toUpperCase()
+        ),
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              fontSize: "17px",
+              fontWeight: 700,
+              color: "#2C1E16",
+              opacity: 0.78,
+              paddingLeft: "6px",
+            },
+          },
+          "CHÁCARAS • RANCHOS • TEMPORADA • SALÕES"
+        )
       ),
       h(
         "div",
         {
           style: {
             display: "flex",
-            alignItems: "center",
+            flexDirection: "column",
+            alignItems: "flex-end",
             backgroundColor: "#1E7E53",
             color: "#FAF5EE",
             padding: "14px 28px",
             borderRadius: "18px",
-            fontSize: "26px",
-            fontWeight: 800,
             boxShadow: "0 8px 20px rgba(30, 126, 83, 0.25)",
           },
         },
-        "12x de R$149,90"
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              fontSize: "28px",
+              fontWeight: 900,
+            },
+          },
+          "12x de R$149,90"
+        ),
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              fontSize: "15px",
+              fontWeight: 700,
+              opacity: 0.9,
+              marginTop: "2px",
+            },
+          },
+          "SEM TAXAS POR RESERVA"
+        )
       )
     ),
-    // Cartão central de destaque
+    // Cartão central
     h(
       "div",
       {
@@ -187,7 +262,7 @@ async function renderPostImageBuffer(post: GeneratedPost): Promise<Buffer> {
           backgroundColor: "#FFFFFF",
           borderRadius: "36px",
           border: "3px solid rgba(44, 30, 22, 0.12)",
-          padding: "54px",
+          padding: "50px",
           boxShadow: "0 20px 50px rgba(44, 30, 22, 0.08)",
         },
       },
@@ -198,7 +273,7 @@ async function renderPostImageBuffer(post: GeneratedPost): Promise<Buffer> {
           height: "10px",
           backgroundColor: "#C85A32",
           borderRadius: "999px",
-          marginBottom: "28px",
+          marginBottom: "26px",
         },
       }),
       h(
@@ -206,12 +281,12 @@ async function renderPostImageBuffer(post: GeneratedPost): Promise<Buffer> {
         {
           style: {
             display: "flex",
-            fontSize: "64px",
+            fontSize: "62px",
             fontWeight: 900,
             lineHeight: 1.08,
             color: "#2C1E16",
             letterSpacing: "-0.02em",
-            marginBottom: "28px",
+            marginBottom: "24px",
           },
         },
         post.headline_arte
@@ -221,11 +296,11 @@ async function renderPostImageBuffer(post: GeneratedPost): Promise<Buffer> {
         {
           style: {
             display: "flex",
-            fontSize: "30px",
-            fontWeight: 600,
+            fontSize: "29px",
+            fontWeight: 700,
             lineHeight: 1.35,
             color: "#C85A32",
-            marginBottom: "34px",
+            marginBottom: "30px",
           },
         },
         post.subtitulo_arte
@@ -237,7 +312,7 @@ async function renderPostImageBuffer(post: GeneratedPost): Promise<Buffer> {
             display: "flex",
             flexDirection: "row",
             flexWrap: "wrap",
-            gap: "12px",
+            gap: "10px",
           },
         },
         ...features.map((item) =>
@@ -251,9 +326,9 @@ async function renderPostImageBuffer(post: GeneratedPost): Promise<Buffer> {
                 backgroundColor: "#FAF5EE",
                 border: "2px solid rgba(30, 126, 83, 0.35)",
                 color: "#2C1E16",
-                padding: "10px 18px",
-                borderRadius: "14px",
-                fontSize: "20px",
+                padding: "9px 16px",
+                borderRadius: "12px",
+                fontSize: "19px",
                 fontWeight: 700,
               },
             },
@@ -262,7 +337,7 @@ async function renderPostImageBuffer(post: GeneratedPost): Promise<Buffer> {
         )
       )
     ),
-    // Rodapé / Assinatura
+    // Rodapé com assinatura Meu Gestor Digital
     h(
       "div",
       {
@@ -273,7 +348,7 @@ async function renderPostImageBuffer(post: GeneratedPost): Promise<Buffer> {
           justifyContent: "space-between",
           backgroundColor: "#2C1E16",
           color: "#FAF5EE",
-          padding: "28px 36px",
+          padding: "26px 34px",
           borderRadius: "24px",
         },
       },
@@ -309,7 +384,7 @@ async function renderPostImageBuffer(post: GeneratedPost): Promise<Buffer> {
               marginTop: "4px",
             },
           },
-          "Site completo sem taxas por reserva"
+          "Site completo para locações e eventos"
         )
       ),
       h(
@@ -320,9 +395,9 @@ async function renderPostImageBuffer(post: GeneratedPost): Promise<Buffer> {
             alignItems: "center",
             backgroundColor: "#C85A32",
             color: "#FAF5EE",
-            padding: "14px 26px",
+            padding: "14px 24px",
             borderRadius: "14px",
-            fontSize: "22px",
+            fontSize: "21px",
             fontWeight: 800,
           },
         },
@@ -340,7 +415,11 @@ async function renderPostImageBuffer(post: GeneratedPost): Promise<Buffer> {
   return Buffer.from(arrayBuffer);
 }
 
-async function uploadImageToR2(imageBuffer: Buffer): Promise<string> {
+async function uploadImageToR2(
+  imageBuffer: Buffer,
+  logs: string[],
+  suffix?: string
+): Promise<string> {
   const accountId = getRequiredEnv("R2_ACCOUNT_ID");
   const accessKeyId = getRequiredEnv("R2_ACCESS_KEY_ID");
   const secretAccessKey = getRequiredEnv("R2_SECRET_ACCESS_KEY");
@@ -356,7 +435,9 @@ async function uploadImageToR2(imageBuffer: Buffer): Promise<string> {
     },
   });
 
-  const fileName = `posts/${Date.now()}.png`;
+  const fileName = suffix
+    ? `posts/${Date.now()}-${suffix}.png`
+    : `posts/${Date.now()}.png`;
 
   await s3Client.send(
     new PutObjectCommand({
@@ -367,16 +448,20 @@ async function uploadImageToR2(imageBuffer: Buffer): Promise<string> {
     })
   );
 
-  return `${publicUrl}/${fileName}`;
+  const finalUrl = `${publicUrl}/${fileName}`;
+  appendLog(logs, `Passo C concluído: Imagem enviada ao R2 (${finalUrl}).`);
+  return finalUrl;
 }
 
 async function publishToInstagram(
   imageUrl: string,
-  caption: string
+  caption: string,
+  logs: string[]
 ): Promise<string> {
   const igUserId = getRequiredEnv("IG_USER_ID");
   const accessToken = getRequiredEnv("META_ACCESS_TOKEN");
 
+  appendLog(logs, "Passo D (IG): Criando container de mídia única...");
   const mediaResponse = await fetch(
     `${META_GRAPH_BASE_URL}/${igUserId}/media`,
     {
@@ -394,20 +479,23 @@ async function publishToInstagram(
 
   const mediaData = (await mediaResponse.json()) as {
     id?: string;
-    error?: { message?: string };
+    error?: { message?: string; code?: number; fbtrace_id?: string };
   };
 
   if (!mediaResponse.ok || !mediaData.id) {
     throw new Error(
-      `Erro ao criar container de mídia no Instagram: ${
+      `Meta IG /media falhou (HTTP ${mediaResponse.status}): ${
         mediaData.error?.message || mediaResponse.statusText
       }`
     );
   }
 
   const creationId = mediaData.id;
+  appendLog(
+    logs,
+    `Passo D (IG): Container criado (${creationId}). Aguardando 5s para processamento...`
+  );
 
-  // Aguarda 5 segundos para processamento da mídia pela Meta antes da publicação
   await new Promise((resolve) => setTimeout(resolve, 5000));
 
   const publishResponse = await fetch(
@@ -426,27 +514,150 @@ async function publishToInstagram(
 
   const publishData = (await publishResponse.json()) as {
     id?: string;
-    error?: { message?: string };
+    error?: { message?: string; code?: number; fbtrace_id?: string };
   };
 
   if (!publishResponse.ok || !publishData.id) {
     throw new Error(
-      `Erro ao publicar mídia no Instagram: ${
+      `Meta IG /media_publish falhou (HTTP ${publishResponse.status}): ${
         publishData.error?.message || publishResponse.statusText
       }`
     );
   }
 
+  appendLog(
+    logs,
+    `Passo D (IG): Publicado no Instagram com ID ${publishData.id}.`
+  );
+  return publishData.id;
+}
+
+async function publishCarouselToInstagram(
+  imageUrls: string[],
+  caption: string,
+  logs: string[]
+): Promise<string> {
+  if (imageUrls.length < 2) {
+    throw new Error("Um carrossel no Instagram exige ao menos 2 imagens.");
+  }
+
+  const igUserId = getRequiredEnv("IG_USER_ID");
+  const accessToken = getRequiredEnv("META_ACCESS_TOKEN");
+
+  appendLog(
+    logs,
+    `Passo D (IG Carrossel): Criando ${imageUrls.length} containers filhos...`
+  );
+
+  const childrenIds: string[] = [];
+  for (let index = 0; index < imageUrls.length; index++) {
+    const childResponse = await fetch(
+      `${META_GRAPH_BASE_URL}/${igUserId}/media`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image_url: imageUrls[index],
+          is_carousel_item: true,
+          access_token: accessToken,
+        }),
+      }
+    );
+
+    const childData = (await childResponse.json()) as {
+      id?: string;
+      error?: { message?: string };
+    };
+
+    if (!childResponse.ok || !childData.id) {
+      throw new Error(
+        `Meta IG carrossel item ${index + 1} falhou: ${
+          childData.error?.message || childResponse.statusText
+        }`
+      );
+    }
+    childrenIds.push(childData.id);
+  }
+
+  appendLog(
+    logs,
+    `Passo D (IG Carrossel): Criando container pai CAROUSEL com ${childrenIds.length} itens...`
+  );
+
+  const carouselResponse = await fetch(
+    `${META_GRAPH_BASE_URL}/${igUserId}/media`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        media_type: "CAROUSEL",
+        children: childrenIds,
+        caption,
+        access_token: accessToken,
+      }),
+    }
+  );
+
+  const carouselData = (await carouselResponse.json()) as {
+    id?: string;
+    error?: { message?: string };
+  };
+
+  if (!carouselResponse.ok || !carouselData.id) {
+    throw new Error(
+      `Meta IG container CAROUSEL falhou: ${
+        carouselData.error?.message || carouselResponse.statusText
+      }`
+    );
+  }
+
+  appendLog(
+    logs,
+    `Passo D (IG Carrossel): Container pai ${carouselData.id} criado. Aguardando 5s...`
+  );
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+
+  const publishResponse = await fetch(
+    `${META_GRAPH_BASE_URL}/${igUserId}/media_publish`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        creation_id: carouselData.id,
+        access_token: accessToken,
+      }),
+    }
+  );
+
+  const publishData = (await publishResponse.json()) as {
+    id?: string;
+    error?: { message?: string };
+  };
+
+  if (!publishResponse.ok || !publishData.id) {
+    throw new Error(
+      `Meta IG /media_publish carrossel falhou: ${
+        publishData.error?.message || publishResponse.statusText
+      }`
+    );
+  }
+
+  appendLog(
+    logs,
+    `Passo D (IG Carrossel): Publicado no Instagram com ID ${publishData.id}.`
+  );
   return publishData.id;
 }
 
 async function publishToFacebook(
   imageUrl: string,
-  message: string
+  message: string,
+  logs: string[]
 ): Promise<string> {
   const fbPageId = getRequiredEnv("FB_PAGE_ID");
   const accessToken = getRequiredEnv("META_ACCESS_TOKEN");
 
+  appendLog(logs, "Passo D (FB): Publicando foto na Página do Facebook...");
   const fbResponse = await fetch(
     `${META_GRAPH_BASE_URL}/${fbPageId}/photos`,
     {
@@ -465,54 +676,136 @@ async function publishToFacebook(
   const fbData = (await fbResponse.json()) as {
     id?: string;
     post_id?: string;
-    error?: { message?: string };
+    error?: { message?: string; code?: number; fbtrace_id?: string };
   };
 
   const facebookPostId = fbData.post_id || fbData.id;
   if (!fbResponse.ok || !facebookPostId) {
     throw new Error(
-      `Erro ao publicar foto na Página do Facebook: ${
+      `Meta FB /photos falhou (HTTP ${fbResponse.status}): ${
         fbData.error?.message || fbResponse.statusText
       }`
     );
   }
 
+  appendLog(
+    logs,
+    `Passo D (FB): Publicado no Facebook com ID ${facebookPostId}.`
+  );
   return facebookPostId;
 }
 
 export async function GET(request: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
+  const cronSecret = process.env.CRON_SECRET?.trim();
   const authHeader = request.headers.get("authorization");
+  const querySecret = request.nextUrl.searchParams.get("secret")?.trim();
 
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  const isAuthorized =
+    Boolean(cronSecret) &&
+    (authHeader === `Bearer ${cronSecret}` || querySecret === cronSecret);
+
+  if (!isAuthorized) {
+    return NextResponse.json(
+      {
+        error:
+          "Não autorizado. Informe o CRON_SECRET válido no header Authorization ou no parâmetro ?secret=.",
+      },
+      { status: 401 }
+    );
   }
 
+  const logs: string[] = [];
+  const mode =
+    request.nextUrl.searchParams.get("tipo") === "carrossel"
+      ? "carrossel"
+      : "imagem";
+
   try {
+    appendLog(logs, `Execução iniciada no modo "${mode}".`);
+
     // Passo A: Gerar conteúdo com Gemini 2.5 Flash
-    const post = await generatePostWithGemini();
-
-    // Passo B: Renderizar imagem PNG 1080x1080 com @vercel/og e converter para Buffer
-    const imageBuffer = await renderPostImageBuffer(post);
-
-    // Passo C: Upload no Cloudflare R2
-    const imageUrl = await uploadImageToR2(imageBuffer);
-
-    // Montar legenda final com hashtags
+    const post = await generatePostWithGemini(logs);
     const fullCaption = `${post.legenda.trim()}\n\n${post.hashtags.trim()}`;
 
+    if (mode === "carrossel") {
+      appendLog(
+        logs,
+        "Passo B: Renderizando 2 slides PNG 1080x1080 para carrossel..."
+      );
+      const slide1Buffer = await renderPostImageBuffer(post, "1/2");
+      const slide2Buffer = await renderPostImageBuffer(
+        {
+          ...post,
+          headline_arte: "Site Completo por 12x de R$149,90",
+          subtitulo_arte:
+            "Simulador, Calendário, PIX Automático, Contrato PDF e IA no WhatsApp",
+        },
+        "2/2"
+      );
+
+      const slide1Url = await uploadImageToR2(slide1Buffer, logs, "slide-1");
+      const slide2Url = await uploadImageToR2(slide2Buffer, logs, "slide-2");
+
+      const instagramPostId = await publishCarouselToInstagram(
+        [slide1Url, slide2Url],
+        fullCaption,
+        logs
+      );
+      const facebookPostId = await publishToFacebook(
+        slide1Url,
+        fullCaption,
+        logs
+      );
+
+      return NextResponse.json(
+        {
+          success: true,
+          mode,
+          imageUrl: slide1Url,
+          imageUrls: [slide1Url, slide2Url],
+          instagramPostId,
+          facebookPostId,
+          generatedAt: new Date().toISOString(),
+          post,
+          logs,
+        },
+        { status: 200 }
+      );
+    }
+
+    // Passo B: Renderizar imagem PNG 1080x1080 única com @vercel/og
+    appendLog(logs, "Passo B: Renderizando arte PNG 1080x1080 com @vercel/og...");
+    const imageBuffer = await renderPostImageBuffer(post);
+    appendLog(
+      logs,
+      `Passo B concluído: Buffer PNG gerado (${imageBuffer.byteLength} bytes).`
+    );
+
+    // Passo C: Upload no Cloudflare R2
+    const imageUrl = await uploadImageToR2(imageBuffer, logs);
+
     // Passo D: Publicar no Instagram e Facebook (Meta Graph API v21.0)
-    const instagramPostId = await publishToInstagram(imageUrl, fullCaption);
-    const facebookPostId = await publishToFacebook(imageUrl, fullCaption);
+    const instagramPostId = await publishToInstagram(
+      imageUrl,
+      fullCaption,
+      logs
+    );
+    const facebookPostId = await publishToFacebook(
+      imageUrl,
+      fullCaption,
+      logs
+    );
 
     return NextResponse.json(
       {
         success: true,
+        mode,
         imageUrl,
         instagramPostId,
         facebookPostId,
         generatedAt: new Date().toISOString(),
         post,
+        logs,
       },
       { status: 200 }
     );
@@ -521,7 +814,8 @@ export async function GET(request: NextRequest) {
       error instanceof Error
         ? error.message
         : "Erro interno ao gerar e publicar post.";
+    appendLog(logs, `ERRO: ${message}`);
 
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message, logs }, { status: 500 });
   }
 }

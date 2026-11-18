@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 interface GeneratedPostContent {
+  tema_visual: string;
   headline_arte: string;
   subtitulo_arte: string;
   legenda: string;
@@ -11,11 +12,14 @@ interface GeneratedPostContent {
 
 interface PublishResult {
   success: boolean;
+  mode?: string;
   imageUrl: string;
+  imageUrls?: string[];
   instagramPostId: string;
   facebookPostId: string;
   generatedAt: string;
   post: GeneratedPostContent;
+  logs?: string[];
 }
 
 const STORAGE_KEY = "mgd_last_published_post";
@@ -23,8 +27,10 @@ const STORAGE_KEY = "mgd_last_published_post";
 export default function HomePage() {
   const [secret, setSecret] = useState("");
   const [showSecret, setShowSecret] = useState(false);
+  const [postMode, setPostMode] = useState<"imagem" | "carrossel">("imagem");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [executionLogs, setExecutionLogs] = useState<string[]>([]);
   const [lastPost, setLastPost] = useState<PublishResult | null>(null);
   const [copiedCaption, setCopiedCaption] = useState(false);
 
@@ -34,6 +40,9 @@ export default function HomePage() {
       if (saved) {
         const parsed = JSON.parse(saved) as PublishResult;
         setLastPost(parsed);
+        if (parsed.logs) {
+          setExecutionLogs(parsed.logs);
+        }
       }
     } catch {
       // Ignora erro de leitura do localStorage
@@ -44,16 +53,24 @@ export default function HomePage() {
     e.preventDefault();
     setErrorMessage(null);
     setCopiedCaption(false);
+    setExecutionLogs([]);
 
     const trimmedSecret = secret.trim();
     if (!trimmedSecret) {
-      setErrorMessage("Informe a senha (CRON_SECRET) para autorizar a publicação.");
+      setErrorMessage(
+        "Informe a senha (CRON_SECRET) para autorizar a publicação."
+      );
       return;
     }
 
     setIsLoading(true);
     try {
-      const response = await fetch("/api/cron/gerar-e-postar", {
+      const endpoint =
+        postMode === "carrossel"
+          ? "/api/cron/gerar-e-postar?tipo=carrossel"
+          : "/api/cron/gerar-e-postar";
+
+      const response = await fetch(endpoint, {
         method: "GET",
         headers: {
           Authorization: `Bearer ${trimmedSecret}`,
@@ -63,9 +80,14 @@ export default function HomePage() {
 
       const data = await response.json().catch(() => null);
 
+      if (Array.isArray(data?.logs)) {
+        setExecutionLogs(data.logs);
+      }
+
       if (response.status === 401) {
         setErrorMessage(
-          "Senha inválida (401). Verifique o valor de CRON_SECRET e tente novamente."
+          data?.error ||
+            "Senha inválida (401). Verifique o valor de CRON_SECRET e tente novamente."
         );
         return;
       }
@@ -80,11 +102,14 @@ export default function HomePage() {
 
       const result: PublishResult = {
         success: true,
+        mode: data.mode,
         imageUrl: data.imageUrl,
+        imageUrls: data.imageUrls,
         instagramPostId: data.instagramPostId,
         facebookPostId: data.facebookPostId,
         generatedAt: data.generatedAt || new Date().toISOString(),
         post: data.post,
+        logs: data.logs,
       };
 
       setLastPost(result);
@@ -130,8 +155,9 @@ export default function HomePage() {
                 Meu Gestor Digital — Automação Meta
               </h1>
               <p className="mt-1 text-sm text-[#2C1E16]/75">
-                Geração automática de copy com Gemini 2.5 Flash, arte 1080×1080,
-                hospedagem no Cloudflare R2 e publicação no Instagram e Facebook.
+                Geração automática com Gemini 2.5 Flash, arte 1080×1080,
+                hospedagem no Cloudflare R2 e publicação no Instagram Business e
+                Página do Facebook.
               </p>
             </div>
             <div className="rounded-xl border border-[#1E7E53]/25 bg-[#1E7E53]/10 px-4 py-3 text-right">
@@ -141,7 +167,9 @@ export default function HomePage() {
               <p className="text-sm font-bold text-[#2C1E16]">
                 Seg, Qua e Sex às 13:00 UTC
               </p>
-              <p className="text-xs text-[#2C1E16]/70">0 13 * * 1,3,5</p>
+              <p className="text-xs text-[#2C1E16]/70">
+                10:00 (Brasília) • 0 13 * * 1,3,5
+              </p>
             </div>
           </div>
         </header>
@@ -161,50 +189,75 @@ export default function HomePage() {
 
           <form
             onSubmit={handleGenerateAndPublish}
-            className="mt-5 flex flex-col gap-4 md:flex-row md:items-end"
+            className="mt-5 space-y-4"
           >
-            <div className="flex-1">
-              <label
-                htmlFor="cron-secret"
-                className="block text-sm font-semibold text-[#2C1E16]"
-              >
-                Senha de Acesso (CRON_SECRET)
-              </label>
-              <div className="relative mt-1.5">
-                <input
-                  id="cron-secret"
-                  type={showSecret ? "text" : "password"}
-                  value={secret}
-                  onChange={(e) => setSecret(e.target.value)}
-                  placeholder="Digite o token CRON_SECRET..."
-                  disabled={isLoading}
-                  autoComplete="current-password"
-                  className="w-full rounded-xl border border-[#2C1E16]/20 bg-[#FAF5EE]/60 px-4 py-3 pr-24 text-sm text-[#2C1E16] placeholder-[#2C1E16]/40 outline-none transition focus:border-[#C85A32] focus:ring-2 focus:ring-[#C85A32]/20 disabled:opacity-60"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowSecret((prev) => !prev)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg px-2.5 py-1 text-xs font-semibold text-[#2C1E16]/70 hover:bg-[#2C1E16]/10"
+            <div className="flex flex-col gap-4 md:flex-row md:items-end">
+              <div className="flex-1">
+                <label
+                  htmlFor="cron-secret"
+                  className="block text-sm font-semibold text-[#2C1E16]"
                 >
-                  {showSecret ? "Ocultar" : "Mostrar"}
-                </button>
+                  Senha de Acesso (CRON_SECRET)
+                </label>
+                <div className="relative mt-1.5">
+                  <input
+                    id="cron-secret"
+                    type={showSecret ? "text" : "password"}
+                    value={secret}
+                    onChange={(e) => setSecret(e.target.value)}
+                    placeholder="Digite o token CRON_SECRET..."
+                    disabled={isLoading}
+                    autoComplete="current-password"
+                    className="w-full rounded-xl border border-[#2C1E16]/20 bg-[#FAF5EE]/60 px-4 py-3 pr-24 text-sm text-[#2C1E16] placeholder-[#2C1E16]/40 outline-none transition focus:border-[#C85A32] focus:ring-2 focus:ring-[#C85A32]/20 disabled:opacity-60"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSecret((prev) => !prev)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg px-2.5 py-1 text-xs font-semibold text-[#2C1E16]/70 hover:bg-[#2C1E16]/10"
+                  >
+                    {showSecret ? "Ocultar" : "Mostrar"}
+                  </button>
+                </div>
               </div>
-            </div>
 
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#C85A32] px-6 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-[#b04b26] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70 md:min-w-[230px]"
-            >
-              {isLoading ? (
-                <>
-                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  Publicando...
-                </>
-              ) : (
-                "Gerar e Publicar Agora"
-              )}
-            </button>
+              <div className="md:w-48">
+                <label
+                  htmlFor="post-mode"
+                  className="block text-sm font-semibold text-[#2C1E16]"
+                >
+                  Formato
+                </label>
+                <select
+                  id="post-mode"
+                  value={postMode}
+                  onChange={(e) =>
+                    setPostMode(
+                      e.target.value === "carrossel" ? "carrossel" : "imagem"
+                    )
+                  }
+                  disabled={isLoading}
+                  className="mt-1.5 w-full rounded-xl border border-[#2C1E16]/20 bg-[#FAF5EE]/60 px-3 py-3 text-sm text-[#2C1E16] outline-none transition focus:border-[#C85A32] focus:ring-2 focus:ring-[#C85A32]/20 disabled:opacity-60"
+                >
+                  <option value="imagem">Imagem Única</option>
+                  <option value="carrossel">Carrossel (2 slides)</option>
+                </select>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#C85A32] px-6 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-[#b04b26] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70 md:min-w-[230px]"
+              >
+                {isLoading ? (
+                  <>
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    Publicando...
+                  </>
+                ) : (
+                  "Gerar e Publicar Agora"
+                )}
+              </button>
+            </div>
           </form>
 
           {isLoading && (
@@ -214,8 +267,8 @@ export default function HomePage() {
               </p>
               <p className="mt-1 text-xs text-[#2C1E16]/80">
                 Gerando copy com Gemini IA, renderizando arte 1080×1080,
-                enviando ao R2 e publicando no Instagram e Facebook (inclui espera
-                de 5s para processamento do container Meta)...
+                enviando ao Cloudflare R2 e publicando no Instagram e Facebook
+                (inclui espera de 5s para processamento do container Meta)...
               </p>
             </div>
           )}
@@ -226,6 +279,28 @@ export default function HomePage() {
               className="mt-4 rounded-xl border border-red-300 bg-red-50 p-4 text-sm font-medium text-red-800"
             >
               {errorMessage}
+            </div>
+          )}
+
+          {executionLogs.length > 0 && (
+            <div className="mt-4 rounded-xl border border-[#2C1E16]/15 bg-[#2C1E16] p-4 text-[#FAF5EE]">
+              <p className="text-xs font-bold uppercase tracking-wider text-[#C85A32]">
+                Logs de Execução &amp; Meta Graph API
+              </p>
+              <ul className="mt-2 space-y-1 font-mono text-xs leading-relaxed">
+                {executionLogs.map((logLine, idx) => (
+                  <li
+                    key={`${idx}-${logLine.slice(0, 24)}`}
+                    className={
+                      logLine.includes("ERRO:")
+                        ? "text-red-300"
+                        : "text-[#FAF5EE]/90"
+                    }
+                  >
+                    {logLine}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </section>
@@ -251,7 +326,7 @@ export default function HomePage() {
               </p>
               <p className="mt-1 text-xs text-[#2C1E16]/50">
                 Informe o CRON_SECRET acima e clique em &quot;Gerar e Publicar
-                Agora&quot; para visualizar a arte e a legenda aqui.
+                Agora&quot; para visualizar a arte, os logs e a legenda aqui.
               </p>
             </div>
           ) : (
@@ -269,6 +344,10 @@ export default function HomePage() {
                 <div className="mt-3 flex items-center justify-between gap-2 text-xs">
                   <span className="font-medium text-[#2C1E16]/70">
                     Arquivo PNG 1080×1080 no R2
+                    {lastPost.mode === "carrossel" &&
+                    lastPost.imageUrls?.length
+                      ? ` (${lastPost.imageUrls.length} slides)`
+                      : ""}
                   </span>
                   <a
                     href={lastPost.imageUrl}
@@ -303,6 +382,17 @@ export default function HomePage() {
                 </div>
 
                 <div className="rounded-xl border border-[#2C1E16]/10 bg-[#FAF5EE]/40 p-4">
+                  {lastPost.post.tema_visual && (
+                    <>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-[#1E7E53]">
+                        Tema Visual
+                      </p>
+                      <p className="mt-1 mb-3 text-sm font-bold text-[#2C1E16]">
+                        {lastPost.post.tema_visual}
+                      </p>
+                    </>
+                  )}
+
                   <p className="text-xs font-semibold uppercase tracking-wider text-[#C85A32]">
                     Headline da Arte
                   </p>
