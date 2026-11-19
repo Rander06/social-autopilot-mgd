@@ -119,6 +119,7 @@ create table if not exists public.posts_history (
   id text primary key,
   company_id text not null references public.companies(id) on delete cascade,
   topic_id text references public.topics(id) on delete set null,
+  topic_title text,
   ai_provider_used text,
   format text not null default 'SINGLE',
   aspect_ratio text not null default '1:1',

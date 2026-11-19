@@ -1647,9 +1647,28 @@ export async function recordGeneratedPost(
   };
 
   if (isSupabaseConfigured()) {
+    const dbRow = {
+      id: entry.id,
+      company_id: entry.company_id,
+      topic_id: entry.topic_id ?? null,
+      ai_provider_used: entry.ai_provider_used ?? null,
+      format: entry.format,
+      aspect_ratio: entry.aspect_ratio,
+      slides_count: entry.slides_count,
+      headline: entry.headline,
+      content_json: entry.content_json,
+      image_urls_json: entry.image_urls_json,
+      ig_post_id: entry.ig_post_id ?? null,
+      fb_post_id: entry.fb_post_id ?? null,
+      tiktok_post_id: entry.tiktok_post_id ?? null,
+      status: entry.status,
+      logs_json: entry.logs_json,
+      created_at: entry.created_at,
+    };
+
     await sbRequest("posts_history", {
       method: "POST",
-      body: JSON.stringify(entry),
+      body: JSON.stringify(dbRow),
     });
   } else {
     getMemDb().posts.unshift(entry);
@@ -1667,12 +1686,14 @@ export async function updatePostRecord(
   patch: Partial<PostHistoryItem>
 ): Promise<PostHistoryItem | null> {
   if (isSupabaseConfigured()) {
+    const { topic_title: _ignoredTitle, ...dbPatch } = patch;
+    void _ignoredTitle;
     const updated = await sbRequest<PostHistoryItem[]>(
       `posts_history?id=eq.${encodeURIComponent(postId)}`,
       {
         method: "PATCH",
         headers: { Prefer: "return=representation" },
-        body: JSON.stringify(patch),
+        body: JSON.stringify(dbPatch),
       }
     );
     return updated[0] || null;
