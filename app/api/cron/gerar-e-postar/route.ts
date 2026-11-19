@@ -705,7 +705,36 @@ async function publishToFacebook(
   const fbPageId = getRequiredEnv("FB_PAGE_ID");
   const accessToken = getRequiredEnv("META_ACCESS_TOKEN");
 
-  appendLog(logs, "Passo D (FB): Publicando foto na Página do Facebook...");
+  appendLog(
+    logs,
+    "Passo D (FB): Obtendo Page Access Token da Página do Facebook..."
+  );
+
+  const pageTokenRes = await fetch(
+    `${META_GRAPH_BASE_URL}/${fbPageId}?fields=access_token,name&access_token=${encodeURIComponent(accessToken)}`,
+    { method: "GET" }
+  );
+
+  const pageTokenData = (await pageTokenRes.json()) as {
+    id?: string;
+    name?: string;
+    access_token?: string;
+    error?: { message?: string };
+  };
+
+  if (!pageTokenRes.ok || !pageTokenData.access_token) {
+    throw new Error(
+      `Não foi possível obter o Page Access Token da Página ${fbPageId}. Verifique se o META_ACCESS_TOKEN possui a permissão "pages_manage_posts" e acesso à Página no Graph API Explorer. Detalhe: ${
+        pageTokenData.error?.message || pageTokenRes.statusText
+      }`
+    );
+  }
+
+  appendLog(
+    logs,
+    `Passo D (FB): Page Access Token obtido para "${pageTokenData.name || fbPageId}". Publicando foto...`
+  );
+
   const fbResponse = await fetch(
     `${META_GRAPH_BASE_URL}/${fbPageId}/photos`,
     {
@@ -716,7 +745,7 @@ async function publishToFacebook(
       body: JSON.stringify({
         url: imageUrl,
         message,
-        access_token: accessToken,
+        access_token: pageTokenData.access_token,
       }),
     }
   );
