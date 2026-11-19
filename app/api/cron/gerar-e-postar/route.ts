@@ -12,11 +12,23 @@ interface GeneratedPost {
   tema_visual: string;
   headline_arte: string;
   subtitulo_arte: string;
+  dor_vs_solucao: string;
+  destaque_selo: string;
   legenda: string;
   hashtags: string;
 }
 
 const META_GRAPH_BASE_URL = "https://graph.facebook.com/v21.0";
+
+const CURATED_PROPERTY_PHOTOS = [
+  "https://images.unsplash.com/photo-1635108201018-94bbbfac4a79?auto=format&fit=crop&w=1080&q=80",
+  "https://images.unsplash.com/photo-1657383543451-e47d1589195d?auto=format&fit=crop&w=1080&q=80",
+  "https://images.unsplash.com/photo-1783125127094-ea962d41ba42?auto=format&fit=crop&w=1080&q=80",
+  "https://images.unsplash.com/photo-1783125127318-2c6792a58734?auto=format&fit=crop&w=1080&q=80",
+  "https://images.unsplash.com/photo-1783125126717-e9c855c86a63?auto=format&fit=crop&w=1080&q=80",
+];
+
+const fontCache = new Map<string, ArrayBuffer>();
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -39,6 +51,197 @@ function isRetryableGeminiError(error: unknown): boolean {
     /UNAVAILABLE|RESOURCE_EXHAUSTED|NOT_FOUND|high demand|fetch failed/i.test(
       message
     )
+  );
+}
+
+async function loadGoogleFont(
+  family: string,
+  weight: 500 | 700 | 800
+): Promise<ArrayBuffer | null> {
+  const cacheKey = `${family}:${weight}`;
+  const cached = fontCache.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const cssUrl = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(
+      family
+    )}:wght@${weight}&display=swap`;
+    const cssRes = await fetch(cssUrl, {
+      headers: {
+        // User-Agent legado faz o Google Fonts retornar URLs .ttf compatíveis com Satori
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_8; de-at) AppleWebKit/533.21.1 (KHTML, like Gecko) Version/5.0.5 Safari/533.21.1",
+      },
+      signal: AbortSignal.timeout(4000),
+    });
+
+    if (!cssRes.ok) return null;
+    const css = await cssRes.text();
+    const match = css.match(/src:\s*url\(([^)]+)\)\s*format\(['"]?truetype['"]?\)/);
+    if (!match?.[1]) return null;
+
+    const fontRes = await fetch(match[1], {
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!fontRes.ok) return null;
+
+    const buffer = await fontRes.arrayBuffer();
+    fontCache.set(cacheKey, buffer);
+    return buffer;
+  } catch {
+    return null;
+  }
+}
+
+async function loadOgFonts() {
+  const [w500, w700, w800] = await Promise.all([
+    loadGoogleFont("Plus Jakarta Sans", 500),
+    loadGoogleFont("Plus Jakarta Sans", 700),
+    loadGoogleFont("Plus Jakarta Sans", 800),
+  ]);
+
+  const fonts: Array<{
+    name: string;
+    data: ArrayBuffer;
+    weight: 500 | 700 | 800;
+    style: "normal";
+  }> = [];
+
+  if (w500) {
+    fonts.push({
+      name: "Plus Jakarta Sans",
+      data: w500,
+      weight: 500,
+      style: "normal",
+    });
+  }
+  if (w700) {
+    fonts.push({
+      name: "Plus Jakarta Sans",
+      data: w700,
+      weight: 700,
+      style: "normal",
+    });
+  }
+  if (w800) {
+    fonts.push({
+      name: "Plus Jakarta Sans",
+      data: w800,
+      weight: 800,
+      style: "normal",
+    });
+  }
+
+  return fonts;
+}
+
+async function loadPhotoDataUrl(photoIndex: number): Promise<string | null> {
+  const photoUrl =
+    CURATED_PROPERTY_PHOTOS[photoIndex % CURATED_PROPERTY_PHOTOS.length];
+  try {
+    const res = await fetch(photoUrl, {
+      signal: AbortSignal.timeout(4500),
+    });
+    if (!res.ok) return null;
+    const contentType = res.headers.get("content-type") || "image/jpeg";
+    const buf = Buffer.from(await res.arrayBuffer());
+    return `data:${contentType};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+function renderCheckSvg(color = "#1E7E53", size = 20) {
+  const h = React.createElement;
+  return h(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      style: { flexShrink: 0 },
+    },
+    h("circle", {
+      cx: "12",
+      cy: "12",
+      r: "10",
+      fill: color,
+      fillOpacity: "0.16",
+    }),
+    h("path", {
+      d: "M7.5 12.5L10.5 15.5L16.5 9",
+      stroke: color,
+      strokeWidth: "2.6",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+    })
+  );
+}
+
+function renderBoltSvg(color = "#C85A32", size = 22) {
+  const h = React.createElement;
+  return h(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      style: { flexShrink: 0 },
+    },
+    h("path", {
+      d: "M13 2L4.5 13.5H11.5L10.5 22L19.5 10.5H12.5L13 2Z",
+      fill: color,
+    })
+  );
+}
+
+function renderArrowRightSvg(color = "#FAF5EE", size = 20) {
+  const h = React.createElement;
+  return h(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      style: { flexShrink: 0 },
+    },
+    h("path", {
+      d: "M5 12H19M19 12L13 6M19 12L13 18",
+      stroke: color,
+      strokeWidth: "2.6",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+    })
+  );
+}
+
+function renderXCrossSvg(color = "#C85A32", size = 18) {
+  const h = React.createElement;
+  return h(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      style: { flexShrink: 0 },
+    },
+    h("circle", {
+      cx: "12",
+      cy: "12",
+      r: "10",
+      fill: color,
+      fillOpacity: "0.18",
+    }),
+    h("path", {
+      d: "M9 9L15 15M15 9L9 15",
+      stroke: color,
+      strokeWidth: "2.4",
+      strokeLinecap: "round",
+    })
   );
 }
 
@@ -73,12 +276,15 @@ DADOS OBRIGATÓRIOS DA OFERTA:
 
 REGRAS ESTRITAS:
 1. NUNCA cite nomes de clientes, pessoas ou nomes específicos de espaços/propriedades (como "Espaço Lazer" ou similares) nas artes ou legendas.
-2. Varie o ângulo criativo a cada geração (ex: fuga de taxas de aplicativos, fechamento no PIX com baixa automática, atendimento 24h com IA no WhatsApp onde o dono assume quando quiser, contrato digital em PDF automático).
-3. tema_visual: Frase curta (2 a 5 palavras) resumindo o tema visual/ângulo principal da arte (ex: "Zero Taxas por Reserva", "PIX com Baixa Automática", "Atendimento IA no WhatsApp").
-4. headline_arte: Máximo de 7 palavras. Direta, impactante e legível em arte 1080x1080.
-5. subtitulo_arte: Curto (até 12 palavras), incluindo obrigatoriamente "12x de R$149,90".
-6. legenda: Copy persuasiva em português do Brasil, parágrafos curtos com emojis estratégicos, destacando os benefícios e finalizando com CTA claro convidando a comentar "EU QUERO".
-7. hashtags: Lista de hashtags relevantes separadas por espaço.`;
+2. NUNCA use emojis nos campos de texto da arte (tema_visual, headline_arte, subtitulo_arte, dor_vs_solucao, destaque_selo) — use emojis APENAS na legenda.
+3. Varie o ângulo criativo a cada geração (ex: fuga de taxas de aplicativos, fechamento no PIX com baixa automática, atendimento 24h com IA no WhatsApp onde o dono assume quando quiser, contrato digital em PDF automático).
+4. tema_visual: Frase curta (2 a 4 palavras, sem emojis) resumindo o tema visual (ex: "Lucro 100% Direto", "Reserva no Piloto Automático").
+5. headline_arte: Máximo de 7 palavras, sem emojis. Direta, forte e persuasiva para estampar uma arte publicitária 1080x1080.
+6. subtitulo_arte: Curto (até 12 palavras, sem emojis), incluindo obrigatoriamente "12x de R$149,90".
+7. dor_vs_solucao: Frase curta (até 14 palavras, sem emojis) contrastando a dor do proprietário com a solução (ex: "Chega de perder locações respondendo orçamentos manuais no WhatsApp").
+8. destaque_selo: Frase curtíssima em caixa alta para selo (ex: "0% COMISSÃO • 100% SEU LUCRO").
+9. legenda: Copy persuasiva em português do Brasil, parágrafos curtos com emojis estratégicos, destacando os benefícios e finalizando com CTA claro convidando a comentar "EU QUERO".
+10. hashtags: Lista de hashtags relevantes separadas por espaço.`;
 
   let lastError: unknown;
 
@@ -101,17 +307,27 @@ REGRAS ESTRITAS:
               tema_visual: {
                 type: Type.STRING,
                 description:
-                  "Tema visual/ângulo criativo curto do post (2 a 5 palavras).",
+                  "Tema visual curto sem emojis (2 a 4 palavras).",
               },
               headline_arte: {
                 type: Type.STRING,
                 description:
-                  "Título impactante para a arte com no máximo 7 palavras.",
+                  "Título publicitário impactante sem emojis com no máximo 7 palavras.",
               },
               subtitulo_arte: {
                 type: Type.STRING,
                 description:
-                  "Subtítulo curto para a arte incluindo obrigatoriamente 12x de R$149,90.",
+                  "Subtítulo curto sem emojis incluindo obrigatoriamente 12x de R$149,90.",
+              },
+              dor_vs_solucao: {
+                type: Type.STRING,
+                description:
+                  "Frase curta de contraste atacando a dor do locador (até 14 palavras, sem emojis).",
+              },
+              destaque_selo: {
+                type: Type.STRING,
+                description:
+                  'Frase curta para selo de oferta (ex: "0% COMISSÃO • 100% SEU LUCRO").',
               },
               legenda: {
                 type: Type.STRING,
@@ -127,6 +343,8 @@ REGRAS ESTRITAS:
               "tema_visual",
               "headline_arte",
               "subtitulo_arte",
+              "dor_vs_solucao",
+              "destaque_selo",
               "legenda",
               "hashtags",
             ],
@@ -145,6 +363,8 @@ REGRAS ESTRITAS:
         !parsed.tema_visual ||
         !parsed.headline_arte ||
         !parsed.subtitulo_arte ||
+        !parsed.dor_vs_solucao ||
+        !parsed.destaque_selo ||
         !parsed.legenda ||
         !parsed.hashtags
       ) {
@@ -174,46 +394,29 @@ REGRAS ESTRITAS:
     : new Error("Falha ao gerar conteúdo no Gemini.");
 }
 
-async function renderPostImageBuffer(
+function buildBrandHeader(
   post: GeneratedPost,
-  slideLabel?: string
-): Promise<Buffer> {
-  const features = [
-    "Simulador em Tempo Real",
-    "Calendário Online",
-    "PIX Baixa Automática",
-    "Contrato Digital PDF",
-    "IA no WhatsApp (Assuma Quando Quiser)",
-  ];
-
+  slideBadge?: string
+): React.ReactElement {
   const h = React.createElement;
-
-  const element = h(
+  return h(
     "div",
     {
       style: {
-        width: "1080px",
-        height: "1080px",
         display: "flex",
-        flexDirection: "column",
+        flexDirection: "row",
+        alignItems: "center",
         justifyContent: "space-between",
-        backgroundColor: "#FAF5EE",
-        padding: "54px",
-        fontFamily: "sans-serif",
-        color: "#2C1E16",
-        position: "relative",
+        width: "100%",
       },
     },
-    // Barra superior com tema visual e selo de preço
     h(
       "div",
       {
         style: {
           display: "flex",
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          width: "100%",
+          flexDirection: "column",
+          gap: "8px",
         },
       },
       h(
@@ -221,8 +424,9 @@ async function renderPostImageBuffer(
         {
           style: {
             display: "flex",
-            flexDirection: "column",
-            gap: "8px",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: "10px",
           },
         },
         h(
@@ -233,159 +437,194 @@ async function renderPostImageBuffer(
               alignItems: "center",
               backgroundColor: "#C85A32",
               color: "#FAF5EE",
-              padding: "10px 22px",
+              padding: "10px 20px",
               borderRadius: "999px",
-              fontSize: "19px",
-              fontWeight: 700,
-              letterSpacing: "0.04em",
-            },
-          },
-          slideLabel
-            ? `${post.tema_visual.toUpperCase()} • ${slideLabel}`
-            : post.tema_visual.toUpperCase()
-        ),
-        h(
-          "div",
-          {
-            style: {
-              display: "flex",
               fontSize: "17px",
-              fontWeight: 700,
-              color: "#2C1E16",
-              opacity: 0.78,
-              paddingLeft: "6px",
+              fontWeight: 800,
+              letterSpacing: "0.05em",
             },
           },
-          "CHÁCARAS • RANCHOS • TEMPORADA • SALÕES"
-        )
+          post.tema_visual.toUpperCase()
+        ),
+        slideBadge
+          ? h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  backgroundColor: "rgba(250, 245, 238, 0.16)",
+                  border: "1px solid rgba(250, 245, 238, 0.35)",
+                  color: "#FAF5EE",
+                  padding: "9px 16px",
+                  borderRadius: "999px",
+                  fontSize: "16px",
+                  fontWeight: 700,
+                },
+              },
+              slideBadge
+            )
+          : null
       ),
       h(
         "div",
         {
           style: {
             display: "flex",
-            flexDirection: "column",
-            alignItems: "flex-end",
-            backgroundColor: "#1E7E53",
-            color: "#FAF5EE",
-            padding: "14px 28px",
-            borderRadius: "18px",
-            boxShadow: "0 8px 20px rgba(30, 126, 83, 0.25)",
+            fontSize: "15px",
+            fontWeight: 700,
+            letterSpacing: "0.08em",
+            color: "rgba(250, 245, 238, 0.85)",
           },
         },
-        h(
-          "div",
-          {
-            style: {
-              display: "flex",
-              fontSize: "28px",
-              fontWeight: 900,
-            },
-          },
-          "12x de R$149,90"
-        ),
-        h(
-          "div",
-          {
-            style: {
-              display: "flex",
-              fontSize: "15px",
-              fontWeight: 700,
-              opacity: 0.9,
-              marginTop: "2px",
-            },
-          },
-          "SEM TAXAS POR RESERVA"
-        )
+        "CHÁCARAS • RANCHOS • TEMPORADA • SALÕES"
       )
     ),
-    // Cartão central
     h(
       "div",
       {
         style: {
           display: "flex",
           flexDirection: "column",
-          justifyContent: "center",
-          backgroundColor: "#FFFFFF",
-          borderRadius: "36px",
-          border: "3px solid rgba(44, 30, 22, 0.12)",
-          padding: "50px",
-          boxShadow: "0 20px 50px rgba(44, 30, 22, 0.08)",
+          alignItems: "flex-end",
+          backgroundColor: "#1E7E53",
+          color: "#FAF5EE",
+          padding: "14px 26px",
+          borderRadius: "18px",
+          border: "2px solid rgba(250, 245, 238, 0.25)",
+          boxShadow: "0 12px 28px rgba(0, 0, 0, 0.28)",
         },
       },
-      h("div", {
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            fontSize: "30px",
+            fontWeight: 800,
+            lineHeight: 1.05,
+          },
+        },
+        "12x de R$149,90"
+      ),
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            fontSize: "13px",
+            fontWeight: 800,
+            letterSpacing: "0.05em",
+            color: "#FAF5EE",
+            opacity: 0.92,
+            marginTop: "4px",
+          },
+        },
+        post.destaque_selo.toUpperCase()
+      )
+    )
+  );
+}
+
+function buildBrandFooter(ctaText = 'COMENTE "EU QUERO"'): React.ReactElement {
+  const h = React.createElement;
+  return h(
+    "div",
+    {
+      style: {
+        display: "flex",
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "16px",
+        backgroundColor: "#2C1E16",
+        color: "#FAF5EE",
+        padding: "22px 30px",
+        borderRadius: "22px",
+        width: "100%",
+        boxShadow: "0 14px 32px rgba(44, 30, 22, 0.18)",
+      },
+    },
+    h(
+      "div",
+      {
         style: {
           display: "flex",
-          width: "96px",
-          height: "10px",
-          backgroundColor: "#C85A32",
-          borderRadius: "999px",
-          marginBottom: "26px",
+          flexDirection: "column",
         },
-      }),
+      },
       h(
         "div",
         {
           style: {
             display: "flex",
-            fontSize: "62px",
-            fontWeight: 900,
-            lineHeight: 1.08,
-            color: "#2C1E16",
-            letterSpacing: "-0.02em",
-            marginBottom: "24px",
+            fontSize: "26px",
+            fontWeight: 800,
+            color: "#FAF5EE",
           },
         },
-        post.headline_arte
+        "Meu Gestor Digital"
       ),
       h(
         "div",
         {
           style: {
             display: "flex",
-            fontSize: "29px",
-            fontWeight: 700,
-            lineHeight: 1.35,
-            color: "#C85A32",
-            marginBottom: "30px",
+            fontSize: "15px",
+            fontWeight: 500,
+            color: "rgba(250, 245, 238, 0.8)",
+            marginTop: "2px",
           },
         },
-        post.subtitulo_arte
-      ),
-      h(
-        "div",
-        {
-          style: {
-            display: "flex",
-            flexDirection: "row",
-            flexWrap: "wrap",
-            gap: "10px",
-          },
-        },
-        ...features.map((item) =>
-          h(
-            "div",
-            {
-              key: item,
-              style: {
-                display: "flex",
-                alignItems: "center",
-                backgroundColor: "#FAF5EE",
-                border: "2px solid rgba(30, 126, 83, 0.35)",
-                color: "#2C1E16",
-                padding: "9px 16px",
-                borderRadius: "12px",
-                fontSize: "19px",
-                fontWeight: 700,
-              },
-            },
-            `✓ ${item}`
-          )
-        )
+        "Sites completos para locações e eventos • Sem taxas por reserva"
       )
     ),
-    // Rodapé com assinatura Meu Gestor Digital
+    h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "center",
+          gap: "10px",
+          backgroundColor: "#C85A32",
+          color: "#FAF5EE",
+          padding: "14px 24px",
+          borderRadius: "14px",
+          fontSize: "19px",
+          fontWeight: 800,
+          whiteSpace: "nowrap",
+          flexShrink: 0,
+        },
+      },
+      ctaText,
+      renderArrowRightSvg("#FAF5EE", 20)
+    )
+  );
+}
+
+function buildMiniDashboardMockup(): React.ReactElement {
+  const h = React.createElement;
+  const steps = [
+    { step: "1. Simulador", label: "Orçamento na hora", badge: "Online" },
+    { step: "2. PIX Auto", label: "Baixa instantânea", badge: "0% Taxa" },
+    { step: "3. Contrato", label: "PDF automático", badge: "Assinado" },
+    { step: "4. IA WhatsApp", label: "Assuma quando quiser", badge: "24h" },
+  ];
+
+  return h(
+    "div",
+    {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        backgroundColor: "#2C1E16",
+        borderRadius: "20px",
+        padding: "18px 22px",
+        gap: "12px",
+        width: "100%",
+      },
+    },
     h(
       "div",
       {
@@ -394,10 +633,569 @@ async function renderPostImageBuffer(
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
-          backgroundColor: "#2C1E16",
-          color: "#FAF5EE",
-          padding: "26px 34px",
-          borderRadius: "24px",
+        },
+      },
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            fontSize: "14px",
+            fontWeight: 700,
+            letterSpacing: "0.06em",
+            color: "rgba(250, 245, 238, 0.78)",
+          },
+        },
+        "FLUXO AUTOMÁTICO DA RESERVA NO SEU SITE"
+      ),
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            backgroundColor: "rgba(30, 126, 83, 0.25)",
+            border: "1px solid #1E7E53",
+            color: "#8CE0B3",
+            padding: "4px 12px",
+            borderRadius: "999px",
+            fontSize: "13px",
+            fontWeight: 700,
+          },
+        },
+        "100% NO PILOTO AUTOMÁTICO"
+      )
+    ),
+    h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          flexDirection: "row",
+          justifyContent: "space-between",
+          gap: "10px",
+        },
+      },
+      ...steps.map((item) =>
+        h(
+          "div",
+          {
+            key: item.step,
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "space-between",
+              flex: 1,
+              backgroundColor: "rgba(250, 245, 238, 0.08)",
+              border: "1px solid rgba(250, 245, 238, 0.14)",
+              borderRadius: "14px",
+              padding: "12px 13px",
+            },
+          },
+          h(
+            "div",
+            {
+              style: {
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+              },
+            },
+            h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  fontSize: "15px",
+                  fontWeight: 800,
+                  color: "#FAF5EE",
+                },
+              },
+              item.step
+            ),
+            h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  backgroundColor: "#1E7E53",
+                  color: "#FAF5EE",
+                  padding: "2px 8px",
+                  borderRadius: "999px",
+                  fontSize: "11px",
+                  fontWeight: 700,
+                },
+              },
+              item.badge
+            )
+          ),
+          h(
+            "div",
+            {
+              style: {
+                display: "flex",
+                fontSize: "14px",
+                fontWeight: 500,
+                color: "rgba(250, 245, 238, 0.8)",
+                marginTop: "6px",
+              },
+            },
+            item.label
+          )
+        )
+      )
+    )
+  );
+}
+
+function buildHeroBackdrop(
+  photoDataUrl: string | null,
+  height = 410
+): React.ReactElement {
+  const h = React.createElement;
+  return h(
+    "div",
+    {
+      style: {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: "1080px",
+        height: `${height}px`,
+        display: "flex",
+        overflow: "hidden",
+        backgroundColor: "#2C1E16",
+      },
+    },
+    photoDataUrl
+      ? h("img", {
+          src: photoDataUrl,
+          alt: "Área de lazer com piscina",
+          style: {
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "1080px",
+            height: `${height}px`,
+            objectFit: "cover",
+          },
+        })
+      : null,
+    h("div", {
+      style: {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: "1080px",
+        height: `${height}px`,
+        display: "flex",
+        backgroundImage: photoDataUrl
+          ? "linear-gradient(155deg, rgba(44, 30, 22, 0.92) 0%, rgba(44, 30, 22, 0.82) 55%, rgba(200, 90, 50, 0.78) 100%)"
+          : "linear-gradient(140deg, #2C1E16 0%, #5B2E1E 60%, #C85A32 100%)",
+      },
+    })
+  );
+}
+
+function buildSinglePostArt(
+  post: GeneratedPost,
+  photoDataUrl: string | null
+): React.ReactElement {
+  const h = React.createElement;
+  const featureCards = [
+    {
+      title: "Simulador de Orçamento",
+      desc: "Cliente calcula valores em tempo real",
+    },
+    {
+      title: "Calendário Online",
+      desc: "Mostra datas disponíveis sem curiosos",
+    },
+    {
+      title: "PIX Baixa Automática",
+      desc: "Confirma a reserva na hora sem taxas",
+    },
+    {
+      title: "Contrato Digital PDF",
+      desc: "Emitido automaticamente após o sinal",
+    },
+    {
+      title: "IA no WhatsApp 24h",
+      desc: "Atende sozinha e você assume quando quiser",
+    },
+    {
+      title: "12x de R$149,90",
+      desc: "Sem mensalidade abusiva ou comissão",
+    },
+  ];
+
+  return h(
+    "div",
+    {
+      style: {
+        width: "1080px",
+        height: "1080px",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+        backgroundColor: "#FAF5EE",
+        fontFamily: "Plus Jakarta Sans, sans-serif",
+        color: "#2C1E16",
+        position: "relative",
+        overflow: "hidden",
+      },
+    },
+    // Fundo fotográfico superior com overlay escuro/terracota
+    buildHeroBackdrop(photoDataUrl, 420),
+
+    // Conteúdo principal em fluxo seguro
+    h(
+      "div",
+      {
+        style: {
+          position: "relative",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "space-between",
+          width: "1080px",
+          height: "1080px",
+          padding: "44px 48px",
+        },
+      },
+      // Cabeçalho de autoridade sobre o hero escuro
+      buildBrandHeader(post),
+
+      // Headline + Subtítulo no topo sobre foto
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            flexDirection: "column",
+            gap: "12px",
+            marginTop: "6px",
+          },
+        },
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              fontSize: "58px",
+              fontWeight: 800,
+              lineHeight: 1.06,
+              color: "#FAF5EE",
+              letterSpacing: "-0.02em",
+            },
+          },
+          post.headline_arte
+        ),
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              fontSize: "25px",
+              fontWeight: 700,
+              lineHeight: 1.3,
+              color: "#FFD2BF",
+            },
+          },
+          post.subtitulo_arte
+        )
+      ),
+
+      // Cartão branco principal com dor/solução, grid 2 colunas e mini-mockup
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            flexDirection: "column",
+            backgroundColor: "#FFFFFF",
+            borderRadius: "28px",
+            border: "2px solid rgba(44, 30, 22, 0.1)",
+            padding: "26px 28px",
+            gap: "18px",
+            boxShadow: "0 20px 44px rgba(44, 30, 22, 0.12)",
+          },
+        },
+        // Faixa de dor vs solução
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              gap: "12px",
+              backgroundColor: "#FAF5EE",
+              borderLeft: "6px solid #C85A32",
+              borderRadius: "12px",
+              padding: "14px 18px",
+            },
+          },
+          renderBoltSvg("#C85A32", 24),
+          h(
+            "div",
+            {
+              style: {
+                display: "flex",
+                fontSize: "20px",
+                fontWeight: 700,
+                color: "#2C1E16",
+                lineHeight: 1.3,
+              },
+            },
+            post.dor_vs_solucao
+          )
+        ),
+
+        // Grid 2 colunas (452px + 14px + 452px = 918px dentro de 984 - 56 = 928px)
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              flexDirection: "row",
+              flexWrap: "wrap",
+              gap: "14px",
+              width: "100%",
+            },
+          },
+          ...featureCards.map((card, idx) => {
+            const isPriceCard = idx === featureCards.length - 1;
+            return h(
+              "div",
+              {
+                key: card.title,
+                style: {
+                  display: "flex",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: "12px",
+                  width: "455px",
+                  backgroundColor: isPriceCard ? "#EDF7F2" : "#FAF5EE",
+                  border: isPriceCard
+                    ? "2px solid #1E7E53"
+                    : "1px solid rgba(44, 30, 22, 0.12)",
+                  borderRadius: "16px",
+                  padding: "13px 16px",
+                },
+              },
+              renderCheckSvg(isPriceCard ? "#1E7E53" : "#C85A32", 24),
+              h(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    flexDirection: "column",
+                  },
+                },
+                h(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      fontSize: "19px",
+                      fontWeight: 800,
+                      color: isPriceCard ? "#1E7E53" : "#2C1E16",
+                    },
+                  },
+                  card.title
+                ),
+                h(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      fontSize: "15px",
+                      fontWeight: 500,
+                      color: "rgba(44, 30, 22, 0.78)",
+                      marginTop: "2px",
+                    },
+                  },
+                  card.desc
+                )
+              )
+            );
+          })
+        ),
+
+        // Mini-mockup de fluxo automatizado
+        buildMiniDashboardMockup()
+      ),
+
+      // Rodapé premium
+      buildBrandFooter()
+    )
+  );
+}
+
+function buildCarouselSlide1(
+  post: GeneratedPost,
+  photoDataUrl: string | null
+): React.ReactElement {
+  const h = React.createElement;
+  return h(
+    "div",
+    {
+      style: {
+        width: "1080px",
+        height: "1080px",
+        display: "flex",
+        flexDirection: "column",
+        backgroundColor: "#2C1E16",
+        fontFamily: "Plus Jakarta Sans, sans-serif",
+        position: "relative",
+        overflow: "hidden",
+      },
+    },
+    buildHeroBackdrop(photoDataUrl, 1080),
+    h(
+      "div",
+      {
+        style: {
+          position: "relative",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "space-between",
+          width: "1080px",
+          height: "1080px",
+          padding: "52px",
+        },
+      },
+      buildBrandHeader(post, "SLIDE 1/3"),
+
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            flexDirection: "column",
+            gap: "24px",
+            backgroundColor: "rgba(44, 30, 22, 0.76)",
+            border: "2px solid rgba(250, 245, 238, 0.2)",
+            borderRadius: "32px",
+            padding: "46px",
+          },
+        },
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              fontSize: "72px",
+              fontWeight: 800,
+              lineHeight: 1.05,
+              color: "#FAF5EE",
+              letterSpacing: "-0.02em",
+            },
+          },
+          post.headline_arte
+        ),
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              gap: "14px",
+              backgroundColor: "rgba(250, 245, 238, 0.1)",
+              borderLeft: "6px solid #C85A32",
+              borderRadius: "14px",
+              padding: "18px 22px",
+            },
+          },
+          renderBoltSvg("#C85A32", 26),
+          h(
+            "div",
+            {
+              style: {
+                display: "flex",
+                fontSize: "24px",
+                fontWeight: 700,
+                color: "#FAF5EE",
+                lineHeight: 1.35,
+              },
+            },
+            post.dor_vs_solucao
+          )
+        ),
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              fontSize: "28px",
+              fontWeight: 700,
+              color: "#FFD2BF",
+            },
+          },
+          post.subtitulo_arte
+        )
+      ),
+
+      buildBrandFooter("DESLIZE PARA VER")
+    )
+  );
+}
+
+function buildCarouselSlide2(): React.ReactElement {
+  const h = React.createElement;
+  const items = [
+    {
+      num: "01",
+      title: "Simulador de Orçamento em Tempo Real",
+      desc: "O cliente escolhe datas, quantidade de pessoas e recebe o valor exato na hora, sem depender de você responder.",
+    },
+    {
+      num: "02",
+      title: "Calendário Online de Disponibilidade",
+      desc: "Acaba com perguntas repetitivas de datas ocupadas e evita conflito de reservas duplas.",
+    },
+    {
+      num: "03",
+      title: "Pagamento via PIX com Baixa Automática",
+      desc: "Reserva confirmada e data bloqueada automaticamente assim que o PIX cai na sua conta, sem taxas.",
+    },
+    {
+      num: "04",
+      title: "Contrato Digital em PDF Automático",
+      desc: "Documento completo gerado na hora com os dados do locatário para sua total segurança jurídica.",
+    },
+    {
+      num: "05",
+      title: "Atendimento com IA no WhatsApp 24h",
+      desc: "Responde dúvidas, envia orçamentos e você assume a conversa manualmente quando quiser.",
+    },
+  ];
+
+  return h(
+    "div",
+    {
+      style: {
+        width: "1080px",
+        height: "1080px",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+        backgroundColor: "#FAF5EE",
+        fontFamily: "Plus Jakarta Sans, sans-serif",
+        color: "#2C1E16",
+        padding: "46px 52px",
+      },
+    },
+    // Cabeçalho claro
+    h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
         },
       },
       h(
@@ -413,26 +1211,26 @@ async function renderPostImageBuffer(
           {
             style: {
               display: "flex",
-              fontSize: "28px",
+              fontSize: "18px",
               fontWeight: 800,
-              letterSpacing: "0.02em",
-              color: "#FAF5EE",
+              color: "#C85A32",
+              letterSpacing: "0.06em",
             },
           },
-          "Meu Gestor Digital"
+          "SISTEMA COMPLETO PARA LOCAÇÕES • SLIDE 2/3"
         ),
         h(
           "div",
           {
             style: {
               display: "flex",
-              fontSize: "18px",
-              color: "#FAF5EE",
-              opacity: 0.85,
+              fontSize: "40px",
+              fontWeight: 800,
+              color: "#2C1E16",
               marginTop: "4px",
             },
           },
-          "Site completo para locações e eventos"
+          "Tudo funcionando no automático:"
         )
       ),
       h(
@@ -440,23 +1238,408 @@ async function renderPostImageBuffer(
         {
           style: {
             display: "flex",
-            alignItems: "center",
-            backgroundColor: "#C85A32",
+            backgroundColor: "#1E7E53",
             color: "#FAF5EE",
-            padding: "14px 24px",
+            padding: "12px 22px",
             borderRadius: "14px",
-            fontSize: "21px",
+            fontSize: "22px",
             fontWeight: 800,
           },
         },
-        'COMENTE "EU QUERO"'
+        "12x de R$149,90"
       )
-    )
+    ),
+
+    // Lista dos 5 recursos
+    h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          flexDirection: "column",
+          gap: "14px",
+        },
+      },
+      ...items.map((item) =>
+        h(
+          "div",
+          {
+            key: item.num,
+            style: {
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              gap: "18px",
+              backgroundColor: "#FFFFFF",
+              border: "2px solid rgba(44, 30, 22, 0.1)",
+              borderRadius: "20px",
+              padding: "16px 22px",
+            },
+          },
+          h(
+            "div",
+            {
+              style: {
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "52px",
+                height: "52px",
+                borderRadius: "14px",
+                backgroundColor: "#C85A32",
+                color: "#FAF5EE",
+                fontSize: "22px",
+                fontWeight: 800,
+                flexShrink: 0,
+              },
+            },
+            item.num
+          ),
+          h(
+            "div",
+            {
+              style: {
+                display: "flex",
+                flexDirection: "column",
+              },
+            },
+            h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  fontSize: "22px",
+                  fontWeight: 800,
+                  color: "#2C1E16",
+                },
+              },
+              item.title
+            ),
+            h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  fontSize: "16px",
+                  fontWeight: 500,
+                  color: "rgba(44, 30, 22, 0.78)",
+                  marginTop: "3px",
+                },
+              },
+              item.desc
+            )
+          )
+        )
+      )
+    ),
+
+    buildBrandFooter("COMPARE E DECIDA")
   );
+}
+
+function buildCarouselSlide3(post: GeneratedPost): React.ReactElement {
+  const h = React.createElement;
+  const oldWay = [
+    "Paga taxas altas em plataformas a cada reserva",
+    "Perde vendas respondendo orçamentos manuais tarde da noite",
+    "Confere comprovante de PIX manualmente no extrato",
+    "Preenche contrato no Word um por um",
+  ];
+  const newWay = [
+    "Zero comissão por reserva (100% do lucro é seu)",
+    "Simulador + Calendário online fecham reservas 24h",
+    "PIX com baixa automática e bloqueio instantâneo",
+    "Contrato PDF automático + IA no WhatsApp",
+  ];
+
+  return h(
+    "div",
+    {
+      style: {
+        width: "1080px",
+        height: "1080px",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+        backgroundColor: "#FAF5EE",
+        fontFamily: "Plus Jakarta Sans, sans-serif",
+        color: "#2C1E16",
+        padding: "46px 52px",
+      },
+    },
+    h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+        },
+      },
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            flexDirection: "column",
+          },
+        },
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              fontSize: "18px",
+              fontWeight: 800,
+              color: "#1E7E53",
+              letterSpacing: "0.06em",
+            },
+          },
+          "COMPARE E DECIDA • SLIDE 3/3"
+        ),
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              fontSize: "42px",
+              fontWeight: 800,
+              color: "#2C1E16",
+              marginTop: "4px",
+            },
+          },
+          "Pare de perder dinheiro por reserva"
+        )
+      )
+    ),
+
+    // Comparativo 2 colunas
+    h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          flexDirection: "row",
+          gap: "20px",
+          width: "100%",
+        },
+      },
+      // Coluna Sem Site Próprio
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            flexDirection: "column",
+            width: "478px",
+            backgroundColor: "#FFFFFF",
+            border: "2px solid rgba(200, 90, 50, 0.35)",
+            borderRadius: "24px",
+            padding: "28px",
+            gap: "18px",
+          },
+        },
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              backgroundColor: "rgba(200, 90, 50, 0.14)",
+              color: "#C85A32",
+              padding: "10px 16px",
+              borderRadius: "12px",
+              fontSize: "20px",
+              fontWeight: 800,
+            },
+          },
+          "JEITO ANTIGO (COM TAXAS)"
+        ),
+        ...oldWay.map((item) =>
+          h(
+            "div",
+            {
+              key: item,
+              style: {
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "flex-start",
+                gap: "12px",
+              },
+            },
+            renderXCrossSvg("#C85A32", 22),
+            h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  fontSize: "19px",
+                  fontWeight: 500,
+                  color: "rgba(44, 30, 22, 0.85)",
+                  lineHeight: 1.35,
+                },
+              },
+              item
+            )
+          )
+        )
+      ),
+      // Coluna Com Meu Gestor Digital
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            flexDirection: "column",
+            width: "478px",
+            backgroundColor: "#EDF7F2",
+            border: "3px solid #1E7E53",
+            borderRadius: "24px",
+            padding: "28px",
+            gap: "18px",
+          },
+        },
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              backgroundColor: "#1E7E53",
+              color: "#FAF5EE",
+              padding: "10px 16px",
+              borderRadius: "12px",
+              fontSize: "20px",
+              fontWeight: 800,
+            },
+          },
+          "SEU SITE PRÓPRIO MGD"
+        ),
+        ...newWay.map((item) =>
+          h(
+            "div",
+            {
+              key: item,
+              style: {
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "flex-start",
+                gap: "12px",
+              },
+            },
+            renderCheckSvg("#1E7E53", 22),
+            h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  fontSize: "19px",
+                  fontWeight: 700,
+                  color: "#2C1E16",
+                  lineHeight: 1.35,
+                },
+              },
+              item
+            )
+          )
+        )
+      )
+    ),
+
+    // Banner oferta final
+    h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "20px",
+          backgroundColor: "#1E7E53",
+          color: "#FAF5EE",
+          borderRadius: "24px",
+          padding: "26px 32px",
+        },
+      },
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            flexDirection: "column",
+          },
+        },
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              fontSize: "17px",
+              fontWeight: 700,
+              opacity: 0.9,
+            },
+          },
+          post.destaque_selo.toUpperCase()
+        ),
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              fontSize: "26px",
+              fontWeight: 800,
+              marginTop: "4px",
+            },
+          },
+          "Site completo + Automação WhatsApp"
+        )
+      ),
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            fontSize: "38px",
+            fontWeight: 800,
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+          },
+        },
+        "12x de R$149,90"
+      )
+    ),
+
+    buildBrandFooter('COMENTE "EU QUERO"')
+  );
+}
+
+async function renderPostImageBuffer(
+  post: GeneratedPost,
+  slideNumber?: 1 | 2 | 3
+): Promise<Buffer> {
+  const photoIndex = Math.floor(Date.now() / 1000) % CURATED_PROPERTY_PHOTOS.length;
+  const [fonts, photoDataUrl] = await Promise.all([
+    loadOgFonts(),
+    slideNumber === 2 || slideNumber === 3
+      ? Promise.resolve(null)
+      : loadPhotoDataUrl(photoIndex),
+  ]);
+
+  let element: React.ReactElement;
+  if (slideNumber === 1) {
+    element = buildCarouselSlide1(post, photoDataUrl);
+  } else if (slideNumber === 2) {
+    element = buildCarouselSlide2();
+  } else if (slideNumber === 3) {
+    element = buildCarouselSlide3(post);
+  } else {
+    element = buildSinglePostArt(post, photoDataUrl);
+  }
 
   const imageResponse = new ImageResponse(element, {
     width: 1080,
     height: 1080,
+    fonts: fonts.length > 0 ? fonts : undefined,
   });
 
   const arrayBuffer = await imageResponse.arrayBuffer();
@@ -711,7 +1894,9 @@ async function publishToFacebook(
   );
 
   const pageTokenRes = await fetch(
-    `${META_GRAPH_BASE_URL}/${fbPageId}?fields=access_token,name&access_token=${encodeURIComponent(accessToken)}`,
+    `${META_GRAPH_BASE_URL}/${fbPageId}?fields=access_token,name&access_token=${encodeURIComponent(
+      accessToken
+    )}`,
     { method: "GET" }
   );
 
@@ -732,7 +1917,9 @@ async function publishToFacebook(
 
   appendLog(
     logs,
-    `Passo D (FB): Page Access Token obtido para "${pageTokenData.name || fbPageId}". Publicando foto...`
+    `Passo D (FB): Page Access Token obtido para "${
+      pageTokenData.name || fbPageId
+    }". Publicando foto...`
   );
 
   const fbResponse = await fetch(
@@ -800,31 +1987,27 @@ export async function GET(request: NextRequest) {
   try {
     appendLog(logs, `Execução iniciada no modo "${mode}".`);
 
-    // Passo A: Gerar conteúdo com Gemini 2.5 Flash
+    // Passo A: Gerar conteúdo com Gemini
     const post = await generatePostWithGemini(logs);
     const fullCaption = `${post.legenda.trim()}\n\n${post.hashtags.trim()}`;
 
     if (mode === "carrossel") {
       appendLog(
         logs,
-        "Passo B: Renderizando 2 slides PNG 1080x1080 para carrossel..."
+        "Passo B: Renderizando 3 slides PNG 1080x1080 para carrossel..."
       );
-      const slide1Buffer = await renderPostImageBuffer(post, "1/2");
-      const slide2Buffer = await renderPostImageBuffer(
-        {
-          ...post,
-          headline_arte: "Site Completo por 12x de R$149,90",
-          subtitulo_arte:
-            "Simulador, Calendário, PIX Automático, Contrato PDF e IA no WhatsApp",
-        },
-        "2/2"
-      );
+      const [slide1Buffer, slide2Buffer, slide3Buffer] = await Promise.all([
+        renderPostImageBuffer(post, 1),
+        renderPostImageBuffer(post, 2),
+        renderPostImageBuffer(post, 3),
+      ]);
 
       const slide1Url = await uploadImageToR2(slide1Buffer, logs, "slide-1");
       const slide2Url = await uploadImageToR2(slide2Buffer, logs, "slide-2");
+      const slide3Url = await uploadImageToR2(slide3Buffer, logs, "slide-3");
 
       const instagramPostId = await publishCarouselToInstagram(
-        [slide1Url, slide2Url],
+        [slide1Url, slide2Url, slide3Url],
         fullCaption,
         logs
       );
@@ -839,7 +2022,7 @@ export async function GET(request: NextRequest) {
           success: true,
           mode,
           imageUrl: slide1Url,
-          imageUrls: [slide1Url, slide2Url],
+          imageUrls: [slide1Url, slide2Url, slide3Url],
           instagramPostId,
           facebookPostId,
           generatedAt: new Date().toISOString(),
@@ -851,7 +2034,10 @@ export async function GET(request: NextRequest) {
     }
 
     // Passo B: Renderizar imagem PNG 1080x1080 única com @vercel/og
-    appendLog(logs, "Passo B: Renderizando arte PNG 1080x1080 com @vercel/og...");
+    appendLog(
+      logs,
+      "Passo B: Renderizando arte publicitária 1080x1080 com @vercel/og..."
+    );
     const imageBuffer = await renderPostImageBuffer(post);
     appendLog(
       logs,

@@ -6,6 +6,8 @@ interface GeneratedPostContent {
   tema_visual: string;
   headline_arte: string;
   subtitulo_arte: string;
+  dor_vs_solucao?: string;
+  destaque_selo?: string;
   legenda: string;
   hashtags: string;
 }
@@ -239,7 +241,7 @@ export default function HomePage() {
                   className="mt-1.5 w-full rounded-xl border border-[#2C1E16]/20 bg-[#FAF5EE]/60 px-3 py-3 text-sm text-[#2C1E16] outline-none transition focus:border-[#C85A32] focus:ring-2 focus:ring-[#C85A32]/20 disabled:opacity-60"
                 >
                   <option value="imagem">Imagem Única</option>
-                  <option value="carrossel">Carrossel (2 slides)</option>
+                  <option value="carrossel">Carrossel (3 slides)</option>
                 </select>
               </div>
 
@@ -358,6 +360,29 @@ export default function HomePage() {
                     Abrir imagem original
                   </a>
                 </div>
+                {lastPost.imageUrls && lastPost.imageUrls.length > 1 && (
+                  <div className="mt-4 grid grid-cols-3 gap-2">
+                    {lastPost.imageUrls.map((slideUrl, slideIdx) => (
+                      <a
+                        key={slideUrl}
+                        href={slideUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="group overflow-hidden rounded-xl border border-[#2C1E16]/15 bg-[#FAF5EE]"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={slideUrl}
+                          alt={`Slide ${slideIdx + 1}`}
+                          className="aspect-square w-full object-cover transition group-hover:opacity-90"
+                        />
+                        <span className="block py-1 text-center text-[11px] font-semibold text-[#2C1E16]/75">
+                          Slide {slideIdx + 1}
+                        </span>
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Detalhes e IDs */}
@@ -406,6 +431,17 @@ export default function HomePage() {
                   <p className="mt-1 text-sm font-medium text-[#2C1E16]/85">
                     {lastPost.post.subtitulo_arte}
                   </p>
+
+                  {lastPost.post.dor_vs_solucao && (
+                    <>
+                      <p className="mt-3 text-xs font-semibold uppercase tracking-wider text-[#1E7E53]">
+                        Dor vs. Solução
+                      </p>
+                      <p className="mt-1 text-sm font-medium text-[#2C1E16]/85">
+                        {lastPost.post.dor_vs_solucao}
+                      </p>
+                    </>
+                  )}
                 </div>
 
                 <div className="rounded-xl border border-[#2C1E16]/10 bg-[#FAF5EE]/40 p-4">
