@@ -141,7 +141,7 @@ export default function SaasAppPage() {
   const [loginMode, setLoginMode] = useState<"credentials" | "cron">(
     "credentials"
   );
-  const [loginEmail, setLoginEmail] = useState("admin@meugestordigital.com.br");
+  const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [showAuthPassword, setShowAuthPassword] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -160,9 +160,7 @@ export default function SaasAppPage() {
   const [recoveryMethod, setRecoveryMethod] = useState<"email" | "reset">(
     "email"
   );
-  const [recoveryEmail, setRecoveryEmail] = useState(
-    "admin@meugestordigital.com.br"
-  );
+  const [recoveryEmail, setRecoveryEmail] = useState("");
   const [recoveryAccessToken, setRecoveryAccessToken] = useState("");
   const [recoveryCronSecret, setRecoveryCronSecret] = useState("");
   const [recoveryNewPassword, setRecoveryNewPassword] = useState("");
@@ -1087,13 +1085,20 @@ export default function SaasAppPage() {
               <form onSubmit={handleLogin} className="mt-4 space-y-4">
                 {loginMode === "credentials" && (
                   <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+                    <label
+                      htmlFor="login-email"
+                      className="block text-xs font-bold uppercase tracking-wider text-slate-600"
+                    >
                       E-mail
                     </label>
                     <input
+                      id="login-email"
+                      name="email"
                       type="email"
+                      autoComplete="email"
                       value={loginEmail}
                       onChange={(e) => setLoginEmail(e.target.value)}
+                      placeholder="Digite seu e-mail..."
                       required
                       className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10"
                     />
@@ -1102,7 +1107,10 @@ export default function SaasAppPage() {
 
                 <div>
                   <div className="flex items-center justify-between">
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+                    <label
+                      htmlFor="login-password"
+                      className="block text-xs font-bold uppercase tracking-wider text-slate-600"
+                    >
                       {loginMode === "cron" ? "Token CRON_SECRET" : "Senha"}
                     </label>
                     {loginMode === "credentials" && (
@@ -1121,7 +1129,12 @@ export default function SaasAppPage() {
                   </div>
                   <div className="relative mt-1.5">
                     <input
+                      id="login-password"
+                      name="password"
                       type={showAuthPassword ? "text" : "password"}
+                      autoComplete={
+                        loginMode === "cron" ? "off" : "current-password"
+                      }
                       value={loginPassword}
                       onChange={(e) => setLoginPassword(e.target.value)}
                       required
