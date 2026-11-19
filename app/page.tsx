@@ -1,474 +1,2993 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  AI_PHOTO_PROMPT_EXAMPLES,
+  LUMINOUS_THEME_PRESETS,
+  NICHE_TOPIC_TEMPLATES,
+  SCHEDULE_TIME_SLOTS,
+  WEEKDAY_LABELS,
+} from "@/lib/presets";
+import {
+  AIProvider,
+  AIPhotoMode,
+  ApprovalMode,
+  AspectRatio,
+  AuditLogItem,
+  BrandSettings,
+  Company,
+  CompanyIntegrationsPublic,
+  CompanyStatus,
+  GeneratedContentPayload,
+  ImageAIProvider,
+  Plan,
+  PostFormat,
+  PostHistoryItem,
+  Topic,
+  TopicPhoto,
+  UserRole,
+} from "@/lib/types";
 
-interface GeneratedPostContent {
-  tema_visual: string;
-  headline_arte: string;
-  subtitulo_arte: string;
-  dor_vs_solucao?: string;
-  destaque_selo?: string;
-  legenda: string;
-  hashtags: string;
+interface SessionUser {
+  id: string;
+  company_id: string | null;
+  role: UserRole;
+  email: string;
+  name: string;
 }
 
-interface PublishResult {
-  success: boolean;
-  mode?: string;
+interface WorkspaceData {
+  database_mode: "supabase" | "memory";
+  company: Company;
+  plan: Plan;
+  brand: BrandSettings;
+  integrations: CompanyIntegrationsPublic;
+  topics: Topic[];
+  photos: TopicPhoto[];
+  posts: PostHistoryItem[];
+  audits: AuditLogItem[];
+}
+
+interface AdminCompanyRow extends Company {
+  plan_name: string;
+  plan_price: number;
+  plan_limit: number;
+  topics_count: number;
+  integrations: CompanyIntegrationsPublic;
+}
+
+interface AdminSnapshot {
+  database_mode: "supabase" | "memory";
+  metrics: {
+    total_companies: number;
+    active_companies: number;
+    trial_companies: number;
+    blocked_or_due: number;
+    mrr_brl: number;
+    total_posts_month: number;
+  };
+  plans: Plan[];
+  companies: AdminCompanyRow[];
+  users: Array<{
+    id: string;
+    company_id: string | null;
+    name: string;
+    email: string;
+    role: UserRole;
+  }>;
+  posts: PostHistoryItem[];
+  audits: AuditLogItem[];
+}
+
+interface StudioPreviewState {
+  companyId: string;
+  topicId: string | null;
+  topicTitle: string;
+  providerUsed: string;
+  format: PostFormat;
+  aspectRatio: AspectRatio;
+  slidesCount: number;
   imageUrl: string;
-  imageUrls?: string[];
-  instagramPostId: string;
-  facebookPostId: string;
-  generatedAt: string;
-  post: GeneratedPostContent;
-  logs?: string[];
+  imageUrls: string[];
+  post: GeneratedContentPayload;
+  logs: string[];
 }
 
-const STORAGE_KEY = "mgd_last_published_post";
+type ClientTab =
+  | "dashboard"
+  | "topics"
+  | "studio"
+  | "brand"
+  | "integrations"
+  | "history";
 
-export default function HomePage() {
-  const [secret, setSecret] = useState("");
-  const [showSecret, setShowSecret] = useState(false);
-  const [postMode, setPostMode] = useState<"imagem" | "carrossel">("imagem");
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [executionLogs, setExecutionLogs] = useState<string[]>([]);
-  const [lastPost, setLastPost] = useState<PublishResult | null>(null);
-  const [copiedCaption, setCopiedCaption] = useState(false);
+type AdminTab = "overview" | "companies" | "plans" | "audit";
 
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved) as PublishResult;
-        setLastPost(parsed);
-        if (parsed.logs) {
-          setExecutionLogs(parsed.logs);
-        }
-      }
-    } catch {
-      // Ignora erro de leitura do localStorage
+function fileToBase64(file: File): Promise<{ base64: string; contentType: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () =>
+      resolve({
+        base64: String(reader.result || ""),
+        contentType: file.type || "image/jpeg",
+      });
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function daysUntil(isoDate?: string | null): number | null {
+  if (!isoDate) return null;
+  return Math.ceil(
+    (new Date(isoDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+  );
+}
+
+export default function SaasAppPage() {
+  const [bootLoading, setBootLoading] = useState(true);
+  const [databaseMode, setDatabaseMode] = useState<"supabase" | "memory">(
+    "memory"
+  );
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
+  const [adminSnapshot, setAdminSnapshot] = useState<AdminSnapshot | null>(
+    null
+  );
+
+  // Login states
+  const [loginMode, setLoginMode] = useState<"credentials" | "cron">(
+    "credentials"
+  );
+  const [loginEmail, setLoginEmail] = useState("admin@meugestordigital.com.br");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+
+  // Navigation
+  const [viewScope, setViewScope] = useState<"client" | "admin">("client");
+  const [clientTab, setClientTab] = useState<ClientTab>("dashboard");
+  const [adminTab, setAdminTab] = useState<AdminTab>("overview");
+  const [globalNotice, setGlobalNotice] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+
+  // Brand form
+  const [brandForm, setBrandForm] = useState<BrandSettings | null>(null);
+  const [savingBrand, setSavingBrand] = useState(false);
+
+  // Integrations form
+  const [integTextAi, setIntegTextAi] = useState<AIProvider>("GEMINI");
+  const [integImageAi, setIntegImageAi] = useState<ImageAIProvider>("GEMINI");
+  const [integGeminiKey, setIntegGeminiKey] = useState("");
+  const [integOpenAiKey, setIntegOpenAiKey] = useState("");
+  const [integAnthropicKey, setIntegAnthropicKey] = useState("");
+  const [integMetaToken, setIntegMetaToken] = useState("");
+  const [integIgUserId, setIntegIgUserId] = useState("");
+  const [integFbPageId, setIntegFbPageId] = useState("");
+  const [integTiktokEnabled, setIntegTiktokEnabled] = useState(false);
+  const [integTiktokOpenId, setIntegTiktokOpenId] = useState("");
+  const [integTiktokToken, setIntegTiktokToken] = useState("");
+  const [savingInteg, setSavingInteg] = useState(false);
+  const [testingInteg, setTestingInteg] = useState(false);
+  const [integTestReport, setIntegTestReport] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+
+  // Topic Editor
+  const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
+  const [topicTitle, setTopicTitle] = useState("");
+  const [topicTemplateId, setTopicTemplateId] = useState("custom");
+  const [topicPrompt, setTopicPrompt] = useState("");
+  const [topicPrice, setTopicPrice] = useState("");
+  const [topicBenefitsText, setTopicBenefitsText] = useState("");
+  const [topicFormat, setTopicFormat] = useState<PostFormat>("SINGLE");
+  const [topicSlides, setTopicSlides] = useState(3);
+  const [topicRatio, setTopicRatio] = useState<AspectRatio>("1:1");
+  const [topicApproval, setTopicApproval] = useState<ApprovalMode>("AUTO");
+  const [topicPhotoMode, setTopicPhotoMode] = useState<AIPhotoMode>("NONE");
+  const [topicPhotoPrompt, setTopicPhotoPrompt] = useState("");
+  const [topicDays, setTopicDays] = useState<number[]>([1, 3, 5]);
+  const [topicTime, setTopicTime] = useState("10:00");
+  const [topicActive, setTopicActive] = useState(true);
+  const [savingTopic, setSavingTopic] = useState(false);
+  const [uploadingPhotoTopicId, setUploadingPhotoTopicId] = useState<
+    string | null
+  >(null);
+
+  // Studio Manual
+  const [studioTopicId, setStudioTopicId] = useState<string>("__free__");
+  const [studioTitle, setStudioTitle] = useState("");
+  const [studioPrompt, setStudioPrompt] = useState("");
+  const [studioPrice, setStudioPrice] = useState("");
+  const [studioFormat, setStudioFormat] = useState<PostFormat>("SINGLE");
+  const [studioSlides, setStudioSlides] = useState(3);
+  const [studioRatio, setStudioRatio] = useState<AspectRatio>("1:1");
+  const [studioPhotoMode, setStudioPhotoMode] = useState<AIPhotoMode>("NONE");
+  const [studioPhotoPrompt, setStudioPhotoPrompt] = useState(
+    AI_PHOTO_PROMPT_EXAMPLES[0].prompt
+  );
+  const [studioPhotoBase64, setStudioPhotoBase64] = useState<string | null>(
+    null
+  );
+  const [studioPhotoType, setStudioPhotoType] = useState<string>("image/jpeg");
+  const [studioLoading, setStudioLoading] = useState(false);
+  const [studioPreview, setStudioPreview] =
+    useState<StudioPreviewState | null>(null);
+  const [studioPublishLogs, setStudioPublishLogs] = useState<string[]>([]);
+  const [approvingPostId, setApprovingPostId] = useState<string | null>(null);
+
+  // Admin: New / Edit Company
+  const [admCompId, setAdmCompId] = useState<string | undefined>(undefined);
+  const [admCompName, setAdmCompName] = useState("");
+  const [admCompOwner, setAdmCompOwner] = useState("");
+  const [admCompWhatsapp, setAdmCompWhatsapp] = useState("");
+  const [admCompEmail, setAdmCompEmail] = useState("");
+  const [admCompPassword, setAdmCompPassword] = useState("");
+  const [admCompPlanId, setAdmCompPlanId] = useState("plan-pro");
+  const [admCompStatus, setAdmCompStatus] = useState<CompanyStatus>("ACTIVE");
+  const [admCompExpires, setAdmCompExpires] = useState(
+    new Date(Date.now() + 30 * 86400_000).toISOString().slice(0, 10)
+  );
+  const [savingAdminComp, setSavingAdminComp] = useState(false);
+
+  const syncWorkspaceForms = useCallback((ws: WorkspaceData | null) => {
+    if (!ws) return;
+    setBrandForm(ws.brand);
+    setIntegTextAi(ws.integrations.preferred_text_ai);
+    setIntegImageAi(ws.integrations.preferred_image_ai);
+    setIntegIgUserId(ws.integrations.ig_user_id || "");
+    setIntegFbPageId(ws.integrations.fb_page_id || "");
+    setIntegTiktokEnabled(ws.integrations.tiktok_enabled);
+    setIntegTiktokOpenId(ws.integrations.tiktok_open_id || "");
+    setIntegGeminiKey("");
+    setIntegOpenAiKey("");
+    setIntegAnthropicKey("");
+    setIntegMetaToken("");
+    setIntegTiktokToken("");
+
+    if (ws.topics.length > 0) {
+      const first = ws.topics[0];
+      setStudioTopicId(first.id);
+      setStudioTitle(first.title);
+      setStudioPrompt(first.prompt_instructions);
+      setStudioPrice(first.offer_price || "");
+      setStudioFormat(first.post_format);
+      setStudioSlides(first.slides_count);
+      setStudioRatio(first.aspect_ratio);
+      setStudioPhotoMode(first.ai_photo_mode);
+      setStudioPhotoPrompt(
+        first.ai_photo_prompt || AI_PHOTO_PROMPT_EXAMPLES[0].prompt
+      );
     }
   }, []);
 
-  async function handleGenerateAndPublish(e: React.FormEvent) {
-    e.preventDefault();
-    setErrorMessage(null);
-    setCopiedCaption(false);
-    setExecutionLogs([]);
+  const loadState = useCallback(
+    async (companyId?: string) => {
+      try {
+        const qs = companyId
+          ? `?companyId=${encodeURIComponent(companyId)}`
+          : "";
+        const res = await fetch(`/api/saas/state${qs}`, { cache: "no-store" });
+        const data = await res.json();
+        setDatabaseMode(data.database_mode || "memory");
+        if (data.authenticated) {
+          setUser(data.user);
+          setWorkspace(data.workspace);
+          setAdminSnapshot(data.adminSnapshot || null);
+          syncWorkspaceForms(data.workspace);
+        } else {
+          setUser(null);
+          setWorkspace(null);
+          setAdminSnapshot(null);
+        }
+      } catch {
+        setGlobalNotice({
+          type: "error",
+          text: "Erro ao carregar dados do servidor.",
+        });
+      } finally {
+        setBootLoading(false);
+      }
+    },
+    [syncWorkspaceForms]
+  );
 
-    const trimmedSecret = secret.trim();
-    if (!trimmedSecret) {
-      setErrorMessage(
-        "Informe a senha (CRON_SECRET) para autorizar a publicação."
-      );
+  useEffect(() => {
+    void loadState();
+  }, [loadState]);
+
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setLoginError(null);
+    setAuthSubmitting(true);
+    try {
+      const payload =
+        loginMode === "cron"
+          ? { action: "login", cronSecret: loginPassword }
+          : { action: "login", email: loginEmail, password: loginPassword };
+
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLoginError(data.error || "Falha ao autenticar.");
+        return;
+      }
+      setDatabaseMode(data.database_mode || "memory");
+      setUser(data.user);
+      setWorkspace(data.workspace);
+      setAdminSnapshot(data.adminSnapshot || null);
+      syncWorkspaceForms(data.workspace);
+      setLoginPassword("");
+    } catch {
+      setLoginError("Erro de conexão com o servidor.");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function handleLogout() {
+    await fetch("/api/saas/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "logout" }),
+    });
+    setUser(null);
+    setWorkspace(null);
+    setAdminSnapshot(null);
+    setStudioPreview(null);
+  }
+
+  async function handleSwitchCompany(companyId: string) {
+    setGlobalNotice(null);
+    const res = await fetch("/api/saas/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "switch_company", companyId }),
+    });
+    const data = await res.json();
+    if (res.ok && data.workspace) {
+      setWorkspace(data.workspace);
+      syncWorkspaceForms(data.workspace);
+      setViewScope("client");
+      setClientTab("dashboard");
+      setStudioPreview(null);
+      setGlobalNotice({
+        type: "success",
+        text: `Visualizando painel da empresa "${data.workspace.company.name}".`,
+      });
+    }
+  }
+
+  async function handleSaveBrand(e: React.FormEvent) {
+    e.preventDefault();
+    if (!workspace || !brandForm) return;
+    setSavingBrand(true);
+    setGlobalNotice(null);
+    try {
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "save_brand",
+          companyId: workspace.company.id,
+          brand: brandForm,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setWorkspace({ ...workspace, brand: data.brand });
+      setGlobalNotice({
+        type: "success",
+        text: "Identidade visual salva com sucesso!",
+      });
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro ao salvar marca.",
+      });
+    } finally {
+      setSavingBrand(false);
+    }
+  }
+
+  async function handleSaveIntegrations(e: React.FormEvent) {
+    e.preventDefault();
+    if (!workspace) return;
+    setSavingInteg(true);
+    setGlobalNotice(null);
+    try {
+      const payload: Record<string, unknown> = {
+        preferred_text_ai: integTextAi,
+        preferred_image_ai: integImageAi,
+        ig_user_id: integIgUserId,
+        fb_page_id: integFbPageId,
+        tiktok_enabled: integTiktokEnabled,
+        tiktok_open_id: integTiktokOpenId,
+      };
+      if (integGeminiKey.trim()) payload.gemini_api_key = integGeminiKey.trim();
+      if (integOpenAiKey.trim()) payload.openai_api_key = integOpenAiKey.trim();
+      if (integAnthropicKey.trim())
+        payload.anthropic_api_key = integAnthropicKey.trim();
+      if (integMetaToken.trim())
+        payload.meta_access_token = integMetaToken.trim();
+      if (integTiktokToken.trim())
+        payload.tiktok_access_token = integTiktokToken.trim();
+
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "save_integrations",
+          companyId: workspace.company.id,
+          integrations: payload,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setWorkspace({ ...workspace, integrations: data.integrations });
+      setIntegGeminiKey("");
+      setIntegOpenAiKey("");
+      setIntegAnthropicKey("");
+      setIntegMetaToken("");
+      setIntegTiktokToken("");
+      setGlobalNotice({
+        type: "success",
+        text: "Chaves criptografadas com AES-256 e salvas com sucesso!",
+      });
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro ao salvar integrações.",
+      });
+    } finally {
+      setSavingInteg(false);
+    }
+  }
+
+  async function handleTestIntegrations() {
+    if (!workspace) return;
+    setTestingInteg(true);
+    setIntegTestReport(null);
+    try {
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "test_integrations",
+          companyId: workspace.company.id,
+        }),
+      });
+      const data = await res.json();
+      setIntegTestReport(data.report || {});
+    } finally {
+      setTestingInteg(false);
+    }
+  }
+
+  function startNewTopic() {
+    setEditingTopicId(null);
+    setTopicTitle("");
+    setTopicTemplateId("custom");
+    setTopicPrompt("");
+    setTopicPrice("");
+    setTopicBenefitsText("");
+    setTopicFormat("SINGLE");
+    setTopicSlides(3);
+    setTopicRatio("1:1");
+    setTopicApproval("AUTO");
+    setTopicPhotoMode("NONE");
+    setTopicPhotoPrompt(AI_PHOTO_PROMPT_EXAMPLES[0].prompt);
+    setTopicDays([1, 3, 5]);
+    setTopicTime("10:00");
+    setTopicActive(true);
+  }
+
+  function loadTopicIntoEditor(t: Topic) {
+    setEditingTopicId(t.id);
+    setTopicTitle(t.title);
+    setTopicTemplateId(t.niche_template || "custom");
+    setTopicPrompt(t.prompt_instructions);
+    setTopicPrice(t.offer_price || "");
+    setTopicBenefitsText((t.benefits_json || []).join("\n"));
+    setTopicFormat(t.post_format);
+    setTopicSlides(t.slides_count || 3);
+    setTopicRatio(t.aspect_ratio || "1:1");
+    setTopicApproval(t.approval_mode || "AUTO");
+    setTopicPhotoMode(t.ai_photo_mode || "NONE");
+    setTopicPhotoPrompt(
+      t.ai_photo_prompt || AI_PHOTO_PROMPT_EXAMPLES[0].prompt
+    );
+    setTopicDays(t.schedule_days || [1, 3, 5]);
+    setTopicTime(t.schedule_time || "10:00");
+    setTopicActive(t.is_active);
+  }
+
+  function applyNicheTemplate(templateId: string) {
+    setTopicTemplateId(templateId);
+    const found = NICHE_TOPIC_TEMPLATES.find((tpl) => tpl.id === templateId);
+    if (!found) return;
+    setTopicTitle(found.title);
+    setTopicPrice(found.offer_price);
+    setTopicBenefitsText(found.benefits.join("\n"));
+    setTopicPrompt(found.prompt_instructions);
+    setTopicPhotoPrompt(found.ai_photo_prompt);
+  }
+
+  async function handleSaveTopic(e: React.FormEvent) {
+    e.preventDefault();
+    if (!workspace) return;
+    setSavingTopic(true);
+    setGlobalNotice(null);
+    try {
+      const benefits = topicBenefitsText
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "upsert_topic",
+          companyId: workspace.company.id,
+          topic: {
+            id: editingTopicId || undefined,
+            title: topicTitle,
+            niche_template: topicTemplateId,
+            prompt_instructions: topicPrompt,
+            offer_price: topicPrice,
+            benefits_json: benefits,
+            post_format: topicFormat,
+            slides_count: topicFormat === "CAROUSEL" ? topicSlides : 1,
+            aspect_ratio: topicRatio,
+            approval_mode: topicApproval,
+            ai_photo_mode: topicPhotoMode,
+            ai_photo_prompt: topicPhotoPrompt,
+            schedule_days: topicDays,
+            schedule_time: topicTime,
+            is_active: topicActive,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      await loadState(workspace.company.id);
+      setGlobalNotice({
+        type: "success",
+        text: `Assunto "${data.topic.title}" salvo na agenda!`,
+      });
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro ao salvar assunto.",
+      });
+    } finally {
+      setSavingTopic(false);
+    }
+  }
+
+  async function handleDeleteTopic(topicId: string) {
+    if (!workspace) return;
+    const res = await fetch("/api/saas/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "delete_topic",
+        companyId: workspace.company.id,
+        topicId,
+      }),
+    });
+    if (res.ok) {
+      await loadState(workspace.company.id);
+      if (editingTopicId === topicId) startNewTopic();
+    }
+  }
+
+  async function handleUploadTopicPhoto(topicId: string, file: File) {
+    if (!workspace) return;
+    setUploadingPhotoTopicId(topicId);
+    try {
+      const { base64, contentType } = await fileToBase64(file);
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "upload_topic_photo",
+          companyId: workspace.company.id,
+          topicId,
+          fileBase64: base64,
+          contentType,
+          aiPromptUsed: topicPhotoPrompt,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      await loadState(workspace.company.id);
+      setGlobalNotice({
+        type: "success",
+        text: "Foto adicionada à fila de rodízio do produto no Cloudflare R2!",
+      });
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro ao enviar foto.",
+      });
+    } finally {
+      setUploadingPhotoTopicId(null);
+    }
+  }
+
+  async function handleDeleteTopicPhoto(photoId: string) {
+    if (!workspace) return;
+    await fetch("/api/saas/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "delete_topic_photo",
+        companyId: workspace.company.id,
+        photoId,
+      }),
+    });
+    await loadState(workspace.company.id);
+  }
+
+  function handleSelectStudioTopic(topicId: string) {
+    setStudioTopicId(topicId);
+    setStudioPreview(null);
+    if (topicId === "__free__") {
+      setStudioTitle("");
+      setStudioPrompt("");
+      setStudioPrice("");
       return;
     }
+    const found = workspace?.topics.find((t) => t.id === topicId);
+    if (!found) return;
+    setStudioTitle(found.title);
+    setStudioPrompt(found.prompt_instructions);
+    setStudioPrice(found.offer_price || "");
+    setStudioFormat(found.post_format);
+    setStudioSlides(found.slides_count);
+    setStudioRatio(found.aspect_ratio);
+    setStudioPhotoMode(found.ai_photo_mode);
+    setStudioPhotoPrompt(
+      found.ai_photo_prompt || AI_PHOTO_PROMPT_EXAMPLES[0].prompt
+    );
+  }
 
-    setIsLoading(true);
+  async function handleRunStudio(options: {
+    previewOnly: boolean;
+    useEditedContent?: boolean;
+  }) {
+    if (!workspace) return;
+    setStudioLoading(true);
+    setGlobalNotice(null);
+    setStudioPublishLogs([]);
+
     try {
-      const endpoint =
-        postMode === "carrossel"
-          ? "/api/cron/gerar-e-postar?tipo=carrossel"
-          : "/api/cron/gerar-e-postar";
-
-      const response = await fetch(endpoint, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${trimmedSecret}`,
-        },
-        cache: "no-store",
-      });
-
-      const data = await response.json().catch(() => null);
-
-      if (Array.isArray(data?.logs)) {
-        setExecutionLogs(data.logs);
-      }
-
-      if (response.status === 401) {
-        setErrorMessage(
-          data?.error ||
-            "Senha inválida (401). Verifique o valor de CRON_SECRET e tente novamente."
-        );
-        return;
-      }
-
-      if (!response.ok) {
-        setErrorMessage(
-          data?.error ||
-            `Erro ao executar automação (HTTP ${response.status}).`
-        );
-        return;
-      }
-
-      const result: PublishResult = {
-        success: true,
-        mode: data.mode,
-        imageUrl: data.imageUrl,
-        imageUrls: data.imageUrls,
-        instagramPostId: data.instagramPostId,
-        facebookPostId: data.facebookPostId,
-        generatedAt: data.generatedAt || new Date().toISOString(),
-        post: data.post,
-        logs: data.logs,
+      const payload: Record<string, unknown> = {
+        companyId: workspace.company.id,
+        topicId: studioTopicId !== "__free__" ? studioTopicId : undefined,
+        customTitle: studioTitle || "Post Especial",
+        customPrompt: studioPrompt,
+        offerPrice: studioPrice,
+        format: studioFormat,
+        slidesCount: studioFormat === "CAROUSEL" ? studioSlides : 1,
+        aspectRatio: studioRatio,
+        aiPhotoMode: studioPhotoMode,
+        aiPhotoPrompt: studioPhotoPrompt,
+        manualPhotoBase64: studioPhotoBase64,
+        manualPhotoContentType: studioPhotoType,
+        previewOnly: options.previewOnly,
       };
 
-      setLastPost(result);
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(result));
-      } catch {
-        // Ignora erro ao salvar no localStorage
+      if (options.useEditedContent && studioPreview) {
+        payload.editedContent = studioPreview.post;
+      }
+
+      const res = await fetch("/api/cron/gerar-e-postar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (Array.isArray(data.logs)) setStudioPublishLogs(data.logs);
+      if (!res.ok) throw new Error(data.error || "Erro ao processar post.");
+
+      if (options.previewOnly) {
+        setStudioPreview(data as StudioPreviewState);
+        setGlobalNotice({
+          type: "success",
+          text: "Prévia gerada! Revise ou edite qualquer texto abaixo antes de publicar.",
+        });
+      } else {
+        setStudioPreview(data as StudioPreviewState);
+        await loadState(workspace.company.id);
+        setGlobalNotice({
+          type: "success",
+          text: "Post publicado com sucesso no Instagram e Página do Facebook!",
+        });
       }
     } catch (err) {
-      setErrorMessage(
-        err instanceof Error
-          ? `Falha na requisição: ${err.message}`
-          : "Erro inesperado ao conectar com o servidor."
-      );
+      setGlobalNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro no Estúdio.",
+      });
     } finally {
-      setIsLoading(false);
+      setStudioLoading(false);
     }
   }
 
-  async function handleCopyCaption() {
-    if (!lastPost?.post) return;
-    const fullText = `${lastPost.post.legenda.trim()}\n\n${lastPost.post.hashtags.trim()}`;
+  async function handleApproveDraft(postId: string) {
+    if (!workspace) return;
+    setApprovingPostId(postId);
+    setGlobalNotice(null);
     try {
-      await navigator.clipboard.writeText(fullText);
-      setCopiedCaption(true);
-      setTimeout(() => setCopiedCaption(false), 2500);
-    } catch {
-      setErrorMessage("Não foi possível copiar a legenda automaticamente.");
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "approve_draft_post",
+          companyId: workspace.company.id,
+          postId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      await loadState(workspace.company.id);
+      setGlobalNotice({
+        type: "success",
+        text: "Rascunho aprovado e publicado nas redes sociais!",
+      });
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro ao publicar rascunho.",
+      });
+    } finally {
+      setApprovingPostId(null);
     }
   }
 
-  return (
-    <main className="min-h-screen bg-[#FAF5EE] text-[#2C1E16] px-4 py-10 md:px-8">
-      <div className="mx-auto max-w-5xl space-y-8">
-        {/* Cabeçalho */}
-        <header className="rounded-2xl border border-[#2C1E16]/10 bg-white/80 p-6 shadow-sm backdrop-blur">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <span className="inline-flex items-center rounded-full bg-[#C85A32]/15 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-[#C85A32]">
-                Social Autopilot MGD
-              </span>
-              <h1 className="mt-2 text-2xl font-bold tracking-tight text-[#2C1E16] md:text-3xl">
-                Meu Gestor Digital — Automação Meta
-              </h1>
-              <p className="mt-1 text-sm text-[#2C1E16]/75">
-                Geração automática com Gemini 3.8 Flash, arte 1080×1080,
-                hospedagem no Cloudflare R2 e publicação no Instagram Business e
-                Página do Facebook.
-              </p>
+  async function handleAdminSaveCompany(e: React.FormEvent) {
+    e.preventDefault();
+    setSavingAdminComp(true);
+    setGlobalNotice(null);
+    try {
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "admin_save_company",
+          company: {
+            id: admCompId,
+            name: admCompName,
+            owner_name: admCompOwner,
+            owner_whatsapp: admCompWhatsapp,
+            admin_email: admCompEmail,
+            admin_password: admCompPassword,
+            plan_id: admCompPlanId,
+            status: admCompStatus,
+            expires_at: new Date(`${admCompExpires}T23:59:59Z`).toISOString(),
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setAdminSnapshot(data.adminSnapshot);
+      setAdmCompId(undefined);
+      setAdmCompName("");
+      setAdmCompOwner("");
+      setAdmCompWhatsapp("");
+      setAdmCompEmail("");
+      setAdmCompPassword("");
+      setGlobalNotice({
+        type: "success",
+        text: `Empresa "${data.company.name}" salva no SaaS!`,
+      });
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro ao salvar empresa.",
+      });
+    } finally {
+      setSavingAdminComp(false);
+    }
+  }
+
+  async function handleAdminQuickToggleBlock(c: AdminCompanyRow) {
+    const nextStatus: CompanyStatus =
+      c.status === "BLOCKED" ? "ACTIVE" : "BLOCKED";
+    const res = await fetch("/api/saas/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "admin_save_company",
+        company: {
+          id: c.id,
+          name: c.name,
+          plan_id: c.plan_id,
+          status: nextStatus,
+          expires_at: c.expires_at,
+        },
+      }),
+    });
+    const data = await res.json();
+    if (res.ok && data.adminSnapshot) setAdminSnapshot(data.adminSnapshot);
+  }
+
+  async function handleAdminSavePlan(p: Plan) {
+    const res = await fetch("/api/saas/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "admin_save_plan", plan: p }),
+    });
+    const data = await res.json();
+    if (res.ok && data.adminSnapshot) {
+      setAdminSnapshot(data.adminSnapshot);
+      setGlobalNotice({
+        type: "success",
+        text: `Plano "${p.name}" atualizado!`,
+      });
+    }
+  }
+
+  if (bootLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="flex items-center gap-3 rounded-2xl border border-indigo-100 bg-white/90 px-6 py-4 shadow-lg shadow-indigo-500/10">
+          <span className="h-5 w-5 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+          <span className="text-sm font-semibold text-slate-700">
+            Carregando Social Autopilot SaaS...
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  // ==================== TELA DE LOGIN LUMINOSA ====================
+  if (!user || !workspace) {
+    return (
+      <main className="flex min-h-screen items-center justify-center px-4 py-12">
+        <div className="w-full max-w-md rounded-3xl border border-white/80 bg-white/90 p-8 shadow-2xl shadow-indigo-500/10 backdrop-blur-xl">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-600 via-violet-600 to-cyan-500 text-lg font-extrabold text-white shadow-lg shadow-indigo-500/30">
+              SA
             </div>
-            <div className="rounded-xl border border-[#1E7E53]/25 bg-[#1E7E53]/10 px-4 py-3 text-right">
-              <p className="text-xs font-semibold uppercase tracking-wide text-[#1E7E53]">
-                Agenda Cron (Vercel)
-              </p>
-              <p className="text-sm font-bold text-[#2C1E16]">
-                Seg, Qua e Sex às 13:00 UTC
-              </p>
-              <p className="text-xs text-[#2C1E16]/70">
-                10:00 (Brasília) • 0 13 * * 1,3,5
-              </p>
+            <div>
+              <span className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-indigo-700">
+                Multi-IA &amp; Multi-Empresas
+              </span>
+              <h1 className="text-xl font-extrabold text-slate-900">
+                Social Autopilot SaaS
+              </h1>
             </div>
           </div>
-        </header>
 
-        {/* Painel Protegido por Senha */}
-        <section className="rounded-2xl border border-[#2C1E16]/10 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-bold text-[#2C1E16]">
-            Disparo Manual Protegido
-          </h2>
-          <p className="mt-1 text-sm text-[#2C1E16]/70">
-            Digite a senha configurada em{" "}
-            <code className="rounded bg-[#FAF5EE] px-1.5 py-0.5 font-mono text-xs text-[#C85A32]">
+          <p className="mt-3 text-sm text-slate-600">
+            Acesse com o login da sua empresa ou entre como Super Admin com o{" "}
+            <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-indigo-700">
               CRON_SECRET
-            </code>{" "}
-            para gerar um post inédito e publicar imediatamente.
+            </code>
+            .
           </p>
 
-          <form
-            onSubmit={handleGenerateAndPublish}
-            className="mt-5 space-y-4"
-          >
-            <div className="flex flex-col gap-4 md:flex-row md:items-end">
-              <div className="flex-1">
-                <label
-                  htmlFor="cron-secret"
-                  className="block text-sm font-semibold text-[#2C1E16]"
-                >
-                  Senha de Acesso (CRON_SECRET)
-                </label>
-                <div className="relative mt-1.5">
-                  <input
-                    id="cron-secret"
-                    type={showSecret ? "text" : "password"}
-                    value={secret}
-                    onChange={(e) => setSecret(e.target.value)}
-                    placeholder="Digite o token CRON_SECRET..."
-                    disabled={isLoading}
-                    autoComplete="current-password"
-                    className="w-full rounded-xl border border-[#2C1E16]/20 bg-[#FAF5EE]/60 px-4 py-3 pr-24 text-sm text-[#2C1E16] placeholder-[#2C1E16]/40 outline-none transition focus:border-[#C85A32] focus:ring-2 focus:ring-[#C85A32]/20 disabled:opacity-60"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowSecret((prev) => !prev)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg px-2.5 py-1 text-xs font-semibold text-[#2C1E16]/70 hover:bg-[#2C1E16]/10"
-                  >
-                    {showSecret ? "Ocultar" : "Mostrar"}
-                  </button>
-                </div>
-              </div>
-
-              <div className="md:w-48">
-                <label
-                  htmlFor="post-mode"
-                  className="block text-sm font-semibold text-[#2C1E16]"
-                >
-                  Formato
-                </label>
-                <select
-                  id="post-mode"
-                  value={postMode}
-                  onChange={(e) =>
-                    setPostMode(
-                      e.target.value === "carrossel" ? "carrossel" : "imagem"
-                    )
-                  }
-                  disabled={isLoading}
-                  className="mt-1.5 w-full rounded-xl border border-[#2C1E16]/20 bg-[#FAF5EE]/60 px-3 py-3 text-sm text-[#2C1E16] outline-none transition focus:border-[#C85A32] focus:ring-2 focus:ring-[#C85A32]/20 disabled:opacity-60"
-                >
-                  <option value="imagem">Imagem Única</option>
-                  <option value="carrossel">Carrossel (3 slides)</option>
-                </select>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#C85A32] px-6 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-[#b04b26] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70 md:min-w-[230px]"
-              >
-                {isLoading ? (
-                  <>
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                    Publicando...
-                  </>
-                ) : (
-                  "Gerar e Publicar Agora"
-                )}
-              </button>
-            </div>
-          </form>
-
-          {isLoading && (
-            <div className="mt-4 rounded-xl border border-[#C85A32]/25 bg-[#FAF5EE] p-4 text-sm text-[#2C1E16]">
-              <p className="font-semibold text-[#C85A32]">
-                Pipeline em execução...
-              </p>
-              <p className="mt-1 text-xs text-[#2C1E16]/80">
-                Gerando copy com Gemini IA, renderizando arte 1080×1080,
-                enviando ao Cloudflare R2 e publicando no Instagram e Facebook
-                (inclui espera de 5s para processamento do container Meta)...
-              </p>
-            </div>
-          )}
-
-          {errorMessage && (
-            <div
-              role="alert"
-              className="mt-4 rounded-xl border border-red-300 bg-red-50 p-4 text-sm font-medium text-red-800"
+          <div className="mt-5 grid grid-cols-2 gap-2 rounded-xl bg-slate-100 p-1">
+            <button
+              type="button"
+              onClick={() => setLoginMode("credentials")}
+              className={`rounded-lg py-2 text-xs font-bold transition ${
+                loginMode === "credentials"
+                  ? "bg-white text-indigo-700 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
             >
-              {errorMessage}
-            </div>
-          )}
-
-          {executionLogs.length > 0 && (
-            <div className="mt-4 rounded-xl border border-[#2C1E16]/15 bg-[#2C1E16] p-4 text-[#FAF5EE]">
-              <p className="text-xs font-bold uppercase tracking-wider text-[#C85A32]">
-                Logs de Execução &amp; Meta Graph API
-              </p>
-              <ul className="mt-2 space-y-1 font-mono text-xs leading-relaxed">
-                {executionLogs.map((logLine, idx) => (
-                  <li
-                    key={`${idx}-${logLine.slice(0, 24)}`}
-                    className={
-                      logLine.includes("ERRO:")
-                        ? "text-red-300"
-                        : "text-[#FAF5EE]/90"
-                    }
-                  >
-                    {logLine}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </section>
-
-        {/* Último Post Gerado */}
-        <section className="rounded-2xl border border-[#2C1E16]/10 bg-white p-6 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-lg font-bold text-[#2C1E16]">
-              Último Post Gerado
-            </h2>
-            {lastPost && (
-              <span className="rounded-full bg-[#1E7E53]/15 px-3 py-1 text-xs font-semibold text-[#1E7E53]">
-                Publicado em{" "}
-                {new Date(lastPost.generatedAt).toLocaleString("pt-BR")}
-              </span>
-            )}
+              E-mail e Senha
+            </button>
+            <button
+              type="button"
+              onClick={() => setLoginMode("cron")}
+              className={`rounded-lg py-2 text-xs font-bold transition ${
+                loginMode === "cron"
+                  ? "bg-white text-indigo-700 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Acesso Rápido (CRON_SECRET)
+            </button>
           </div>
 
-          {!lastPost ? (
-            <div className="mt-4 rounded-xl border border-dashed border-[#2C1E16]/20 bg-[#FAF5EE]/50 p-8 text-center">
-              <p className="text-sm font-medium text-[#2C1E16]/70">
-                Nenhum post foi publicado manualmente neste navegador ainda.
-              </p>
-              <p className="mt-1 text-xs text-[#2C1E16]/50">
-                Informe o CRON_SECRET acima e clique em &quot;Gerar e Publicar
-                Agora&quot; para visualizar a arte, os logs e a legenda aqui.
+          <form onSubmit={handleLogin} className="mt-5 space-y-4">
+            {loginMode === "credentials" && (
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+                  E-mail
+                </label>
+                <input
+                  type="email"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  required
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+                {loginMode === "cron" ? "Token CRON_SECRET" : "Senha"}
+              </label>
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                required
+                placeholder={
+                  loginMode === "cron"
+                    ? "Cole seu CRON_SECRET..."
+                    : "Digite sua senha..."
+                }
+                className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10"
+              />
+            </div>
+
+            {loginError && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">
+                {loginError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={authSubmitting}
+              className="w-full rounded-xl bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-500 py-3.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/25 transition hover:opacity-95 disabled:opacity-60"
+            >
+              {authSubmitting ? "Autenticando..." : "Entrar no Painel"}
+            </button>
+          </form>
+
+          <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4 text-[11px] text-slate-500">
+            <span>Meu Gestor Digital</span>
+            <span>
+              Banco:{" "}
+              <strong className="text-slate-700">
+                {databaseMode === "supabase"
+                  ? "Supabase Conectado"
+                  : "Modo Demonstração Local"}
+              </strong>
+            </span>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  const pendingDrafts = workspace.posts.filter(
+    (p) => p.status === "PENDING_APPROVAL"
+  );
+  const metaDaysLeft = daysUntil(workspace.integrations.meta_token_expires_at);
+  const planDaysLeft = daysUntil(workspace.company.expires_at);
+
+  // ==================== INTERFACE LOGADA LUMINOSA ====================
+  return (
+    <div className="min-h-screen pb-16">
+      {/* Barra Superior Glass */}
+      <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/85 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-3.5 md:px-8">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 via-violet-600 to-cyan-500 text-sm font-extrabold text-white shadow-md shadow-indigo-500/25">
+              SA
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-extrabold text-slate-900">
+                  Social Autopilot SaaS
+                </span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                    databaseMode === "supabase"
+                      ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                      : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
+                  }`}
+                >
+                  {databaseMode === "supabase"
+                    ? "Supabase Ativo"
+                    : "Memória (Falta Supabase)"}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500">
+                Empresa ativa:{" "}
+                <strong className="text-indigo-700">
+                  {workspace.company.name}
+                </strong>{" "}
+                • Plano {workspace.plan.name}
               </p>
             </div>
-          ) : (
-            <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
-              {/* Preview da Arte */}
-              <div className="lg:col-span-5">
-                <div className="overflow-hidden rounded-2xl border border-[#2C1E16]/15 bg-[#FAF5EE] shadow-sm">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={lastPost.imageUrl}
-                    alt={lastPost.post.headline_arte}
-                    className="aspect-square w-full object-cover"
-                  />
-                </div>
-                <div className="mt-3 flex items-center justify-between gap-2 text-xs">
-                  <span className="font-medium text-[#2C1E16]/70">
-                    Arquivo PNG 1080×1080 no R2
-                    {lastPost.mode === "carrossel" &&
-                    lastPost.imageUrls?.length
-                      ? ` (${lastPost.imageUrls.length} slides)`
-                      : ""}
-                  </span>
-                  <a
-                    href={lastPost.imageUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-semibold text-[#C85A32] underline hover:text-[#b04b26]"
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {user.role === "SUPER_ADMIN" && adminSnapshot && (
+              <>
+                <select
+                  value={workspace.company.id}
+                  onChange={(e) => handleSwitchCompany(e.target.value)}
+                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500"
+                  title="Trocar empresa ativa (Impersonate)"
+                >
+                  {adminSnapshot.companies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      Empresa: {c.name} ({c.status})
+                    </option>
+                  ))}
+                </select>
+
+                <div className="flex rounded-xl bg-slate-100 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setViewScope("client")}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                      viewScope === "client"
+                        ? "bg-white text-indigo-700 shadow-sm"
+                        : "text-slate-600"
+                    }`}
                   >
-                    Abrir imagem original
-                  </a>
+                    Painel da Empresa
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewScope("admin")}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                      viewScope === "admin"
+                        ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-sm"
+                        : "text-slate-600"
+                    }`}
+                  >
+                    Super Admin
+                  </button>
                 </div>
-                {lastPost.imageUrls && lastPost.imageUrls.length > 1 && (
-                  <div className="mt-4 grid grid-cols-3 gap-2">
-                    {lastPost.imageUrls.map((slideUrl, slideIdx) => (
-                      <a
-                        key={slideUrl}
-                        href={slideUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="group overflow-hidden rounded-xl border border-[#2C1E16]/15 bg-[#FAF5EE]"
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+            >
+              Sair
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-7xl space-y-6 px-4 pt-6 md:px-8">
+        {databaseMode === "memory" && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/90 p-4 text-xs text-amber-900 shadow-sm">
+            <strong>Modo Demonstração:</strong> As variáveis{" "}
+            <code>SUPABASE_URL</code> e <code>SUPABASE_SERVICE_ROLE_KEY</code>{" "}
+            ainda não foram configuradas no ambiente. Você já pode testar todas
+            as telas; assim que rodar o arquivo{" "}
+            <code>supabase/schema.sql</code> no Supabase e adicionar essas duas
+            variáveis, todos os dados ficam persistidos permanentemente no seu
+            banco gratuito!
+          </div>
+        )}
+
+        {globalNotice && (
+          <div
+            className={`flex items-center justify-between rounded-2xl border px-4 py-3 text-sm font-semibold shadow-sm ${
+              globalNotice.type === "success"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : "border-rose-200 bg-rose-50 text-rose-800"
+            }`}
+          >
+            <span>{globalNotice.text}</span>
+            <button
+              type="button"
+              onClick={() => setGlobalNotice(null)}
+              className="ml-4 text-xs underline opacity-75"
+            >
+              Fechar
+            </button>
+          </div>
+        )}
+
+        {/* ==================== VISÃO SUPER ADMIN ==================== */}
+        {viewScope === "admin" && user.role === "SUPER_ADMIN" && adminSnapshot && (
+          <div className="space-y-6">
+            <div className="flex flex-wrap gap-2">
+              {(
+                [
+                  ["overview", "Dashboard Executivo SaaS"],
+                  ["companies", "Empresas Clientes"],
+                  ["plans", "Planos & Limites"],
+                  ["audit", "Auditoria & Logs Globais"],
+                ] as Array<[AdminTab, string]>
+              ).map(([tabKey, label]) => (
+                <button
+                  key={tabKey}
+                  type="button"
+                  onClick={() => setAdminTab(tabKey)}
+                  className={`rounded-xl px-4 py-2.5 text-xs font-bold transition ${
+                    adminTab === tabKey
+                      ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md shadow-indigo-500/20"
+                      : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {adminTab === "overview" && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      MRR Estimado (Ativas)
+                    </p>
+                    <p className="mt-2 text-3xl font-extrabold text-emerald-600">
+                      R$ {adminSnapshot.metrics.mrr_brl.toFixed(2)}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {adminSnapshot.metrics.active_companies} empresas pagantes
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Total de Empresas
+                    </p>
+                    <p className="mt-2 text-3xl font-extrabold text-indigo-600">
+                      {adminSnapshot.metrics.total_companies}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {adminSnapshot.metrics.trial_companies} em Trial •{" "}
+                      {adminSnapshot.metrics.blocked_or_due} bloqueadas/vencidas
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Posts Publicados (Mês)
+                    </p>
+                    <p className="mt-2 text-3xl font-extrabold text-cyan-600">
+                      {adminSnapshot.metrics.total_posts_month}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Mídias 100% no Cloudflare R2
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Infraestrutura Free
+                    </p>
+                    <p className="mt-2 text-xl font-extrabold text-slate-900">
+                      {databaseMode === "supabase"
+                        ? "Supabase + R2 OK"
+                        : "Aguardando Supabase"}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Auditoria com retenção de 90 dias
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+                  <h2 className="text-base font-extrabold text-slate-900">
+                    Saúde Rápida das Empresas
+                  </h2>
+                  <div className="mt-4 overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-500">
+                          <th className="pb-2">Empresa</th>
+                          <th className="pb-2">Plano</th>
+                          <th className="pb-2">Uso Mês</th>
+                          <th className="pb-2">Vencimento</th>
+                          <th className="pb-2">Status</th>
+                          <th className="pb-2 text-right">Acesso</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {adminSnapshot.companies.map((c) => (
+                          <tr key={c.id}>
+                            <td className="py-3 font-bold text-slate-900">
+                              {c.name}
+                            </td>
+                            <td className="py-3">{c.plan_name}</td>
+                            <td className="py-3">
+                              {c.posts_used_month}/{c.plan_limit}
+                            </td>
+                            <td className="py-3">
+                              {new Date(c.expires_at).toLocaleDateString(
+                                "pt-BR"
+                              )}
+                            </td>
+                            <td className="py-3">
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                  c.status === "ACTIVE"
+                                    ? "bg-emerald-50 text-emerald-700"
+                                    : c.status === "TRIAL"
+                                    ? "bg-cyan-50 text-cyan-700"
+                                    : "bg-rose-50 text-rose-700"
+                                }`}
+                              >
+                                {c.status}
+                              </span>
+                            </td>
+                            <td className="py-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleSwitchCompany(c.id)}
+                                className="rounded-lg bg-indigo-50 px-3 py-1 font-bold text-indigo-700 hover:bg-indigo-100"
+                              >
+                                Entrar no Painel
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {adminTab === "companies" && (
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+                <form
+                  onSubmit={handleAdminSaveCompany}
+                  className="space-y-3 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-4"
+                >
+                  <h2 className="text-base font-extrabold text-slate-900">
+                    {admCompId ? "Editar Empresa" : "Cadastrar Nova Empresa"}
+                  </h2>
+                  <input
+                    placeholder="Nome da Empresa (ex: Loja Bella)"
+                    value={admCompName}
+                    onChange={(e) => setAdmCompName(e.target.value)}
+                    required
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
+                  />
+                  <input
+                    placeholder="Nome do Responsável"
+                    value={admCompOwner}
+                    onChange={(e) => setAdmCompOwner(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
+                  />
+                  <input
+                    placeholder="WhatsApp (com DDD)"
+                    value={admCompWhatsapp}
+                    onChange={(e) => setAdmCompWhatsapp(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={admCompPlanId}
+                      onChange={(e) => setAdmCompPlanId(e.target.value)}
+                      className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-semibold outline-none focus:border-indigo-500"
+                    >
+                      {adminSnapshot.plans.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} (R${p.price_brl})
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={admCompStatus}
+                      onChange={(e) =>
+                        setAdmCompStatus(e.target.value as CompanyStatus)
+                      }
+                      className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-semibold outline-none focus:border-indigo-500"
+                    >
+                      <option value="ACTIVE">ACTIVE</option>
+                      <option value="TRIAL">TRIAL</option>
+                      <option value="PAST_DUE">PAST_DUE</option>
+                      <option value="BLOCKED">BLOCKED</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600">
+                      Data de Vencimento
+                    </label>
+                    <input
+                      type="date"
+                      value={admCompExpires}
+                      onChange={(e) => setAdmCompExpires(e.target.value)}
+                      required
+                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <div className="border-t border-slate-100 pt-3">
+                    <p className="mb-2 text-xs font-bold text-indigo-700">
+                      Login da Empresa (Opcional ao editar)
+                    </p>
+                    <input
+                      type="email"
+                      placeholder="E-mail de acesso do cliente"
+                      value={admCompEmail}
+                      onChange={(e) => setAdmCompEmail(e.target.value)}
+                      className="mb-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+                    />
+                    <input
+                      type="password"
+                      placeholder="Senha de acesso"
+                      value={admCompPassword}
+                      onChange={(e) => setAdmCompPassword(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={savingAdminComp}
+                    className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 py-3 text-xs font-bold text-white shadow-md"
+                  >
+                    {savingAdminComp
+                      ? "Salvando..."
+                      : admCompId
+                      ? "Atualizar Empresa"
+                      : "Criar Empresa & Login"}
+                  </button>
+                </form>
+
+                <div className="space-y-3 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-8">
+                  <h2 className="text-base font-extrabold text-slate-900">
+                    Empresas Cadastradas ({adminSnapshot.companies.length})
+                  </h2>
+                  <div className="space-y-3">
+                    {adminSnapshot.companies.map((c) => (
+                      <div
+                        key={c.id}
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4"
                       >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={slideUrl}
-                          alt={`Slide ${slideIdx + 1}`}
-                          className="aspect-square w-full object-cover transition group-hover:opacity-90"
-                        />
-                        <span className="block py-1 text-center text-[11px] font-semibold text-[#2C1E16]/75">
-                          Slide {slideIdx + 1}
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-extrabold text-slate-900">
+                              {c.name}
+                            </span>
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                c.status === "ACTIVE"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : c.status === "TRIAL"
+                                  ? "bg-cyan-100 text-cyan-800"
+                                  : "bg-rose-100 text-rose-800"
+                              }`}
+                            >
+                              {c.status}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-slate-600">
+                            Plano: <strong>{c.plan_name}</strong> • Uso:{" "}
+                            {c.posts_used_month}/{c.plan_limit} posts • Vence em{" "}
+                            {new Date(c.expires_at).toLocaleDateString("pt-BR")}{" "}
+                            • Assuntos: {c.topics_count}
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleSwitchCompany(c.id)}
+                            className="rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700"
+                          >
+                            Acessar como Cliente
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAdmCompId(c.id);
+                              setAdmCompName(c.name);
+                              setAdmCompOwner(c.owner_name || "");
+                              setAdmCompWhatsapp(c.owner_whatsapp || "");
+                              setAdmCompPlanId(c.plan_id);
+                              setAdmCompStatus(c.status);
+                              setAdmCompExpires(c.expires_at.slice(0, 10));
+                            }}
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleAdminQuickToggleBlock(c)}
+                            className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700"
+                          >
+                            {c.status === "BLOCKED"
+                              ? "Desbloquear"
+                              : "Bloquear"}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {adminTab === "plans" && (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                {adminSnapshot.plans.map((p) => (
+                  <div
+                    key={p.id}
+                    className="space-y-3 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+                  >
+                    <h3 className="text-lg font-extrabold text-slate-900">
+                      {p.name}
+                    </h3>
+                    <p className="text-2xl font-extrabold text-indigo-600">
+                      R$ {Number(p.price_brl).toFixed(2)}/mês
+                    </p>
+                    <ul className="space-y-1 text-xs text-slate-600">
+                      <li>Limite: {p.max_posts_month} posts/mês</li>
+                      <li>
+                        Carrosséis: {p.allow_carousel ? "Liberado" : "Bloqueado"}
+                      </li>
+                      <li>
+                        Foto com IA:{" "}
+                        {p.allow_ai_photo ? "Liberado" : "Bloqueado"}
+                      </li>
+                      <li>
+                        Multi-IA (Claude/GPT/Gemini):{" "}
+                        {p.allow_multi_ai ? "Liberado" : "Bloqueado"}
+                      </li>
+                    </ul>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newLimit = prompt(
+                          `Novo limite mensal para ${p.name}:`,
+                          String(p.max_posts_month)
+                        );
+                        if (newLimit && !Number.isNaN(Number(newLimit))) {
+                          void handleAdminSavePlan({
+                            ...p,
+                            max_posts_month: Number(newLimit),
+                          });
+                        }
+                      }}
+                      className="w-full rounded-xl border border-indigo-200 bg-indigo-50 py-2 text-xs font-bold text-indigo-700"
+                    >
+                      Ajustar Limite Mensal
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {adminTab === "audit" && (
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-base font-extrabold text-slate-900">
+                  Auditoria Global (Últimos Eventos)
+                </h2>
+                <div className="mt-4 space-y-2">
+                  {adminSnapshot.audits.map((a) => (
+                    <div
+                      key={a.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-4 py-2.5 text-xs"
+                    >
+                      <div>
+                        <span className="rounded bg-indigo-100 px-2 py-0.5 font-mono text-[11px] font-bold text-indigo-800">
+                          {a.action}
+                        </span>{" "}
+                        <span className="ml-2 text-slate-600">
+                          {JSON.stringify(a.details_json)}
                         </span>
-                      </a>
+                      </div>
+                      <span className="text-slate-400">
+                        {new Date(a.created_at).toLocaleString("pt-BR")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ==================== VISÃO EMPRESA CLIENTE ==================== */}
+        {viewScope === "client" && (
+          <div className="space-y-6">
+            {/* Abas Cliente */}
+            <nav className="flex flex-wrap gap-2">
+              {(
+                [
+                  ["dashboard", "Dashboard da Empresa"],
+                  ["topics", "Meus Assuntos & Produtos"],
+                  ["studio", "Estúdio Manual (Preview)"],
+                  ["brand", "Identidade Visual"],
+                  ["integrations", "Integrações (Multi-IA & Redes)"],
+                  ["history", "Histórico de Posts"],
+                ] as Array<[ClientTab, string]>
+              ).map(([tabKey, label]) => (
+                <button
+                  key={tabKey}
+                  type="button"
+                  onClick={() => setClientTab(tabKey)}
+                  className={`rounded-xl px-4 py-2.5 text-xs font-bold transition ${
+                    clientTab === tabKey
+                      ? "bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-500 text-white shadow-md shadow-indigo-500/20"
+                      : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  {label}
+                  {tabKey === "dashboard" && pendingDrafts.length > 0 && (
+                    <span className="ml-2 rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] text-slate-900">
+                      {pendingDrafts.length}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </nav>
+
+            {/* ---------- ABA 1: DASHBOARD DA EMPRESA ---------- */}
+            {clientTab === "dashboard" && (
+              <div className="space-y-6">
+                {metaDaysLeft !== null && metaDaysLeft <= 7 && (
+                  <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+                    Alerta de Validade Meta: seu token expira em{" "}
+                    {metaDaysLeft} dia(s). Vá em{" "}
+                    <button
+                      type="button"
+                      onClick={() => setClientTab("integrations")}
+                      className="underline"
+                    >
+                      Integrações
+                    </button>{" "}
+                    para atualizar com um Token Permanente.
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Uso do Plano ({workspace.plan.name})
+                    </p>
+                    <p className="mt-2 text-2xl font-extrabold text-indigo-600">
+                      {workspace.company.posts_used_month} /{" "}
+                      {workspace.plan.max_posts_month} posts
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Vence em{" "}
+                      {new Date(workspace.company.expires_at).toLocaleDateString(
+                        "pt-BR"
+                      )}{" "}
+                      ({planDaysLeft ?? 0} dias)
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      IA Conectada ({workspace.integrations.preferred_text_ai})
+                    </p>
+                    <p className="mt-2 text-lg font-extrabold text-slate-900">
+                      {workspace.integrations.has_gemini_key ||
+                      workspace.integrations.has_openai_key ||
+                      workspace.integrations.has_anthropic_key ? (
+                        <span className="text-emerald-600">Chave Ativa</span>
+                      ) : (
+                        <span className="text-rose-600">Configurar Chave</span>
+                      )}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Gemini:{" "}
+                      {workspace.integrations.has_gemini_key ? "OK" : "—"} •
+                      GPT: {workspace.integrations.has_openai_key ? "OK" : "—"}{" "}
+                      • Claude:{" "}
+                      {workspace.integrations.has_anthropic_key ? "OK" : "—"}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Instagram &amp; Facebook
+                    </p>
+                    <p className="mt-2 text-lg font-extrabold">
+                      {workspace.integrations.has_meta_token &&
+                      workspace.integrations.ig_user_id ? (
+                        <span className="text-emerald-600">Conectado</span>
+                      ) : (
+                        <span className="text-amber-600">Pendente</span>
+                      )}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      TikTok:{" "}
+                      {workspace.integrations.tiktok_enabled
+                        ? "Ativado"
+                        : "Pronto p/ conectar"}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Assuntos Ativos
+                    </p>
+                    <p className="mt-2 text-2xl font-extrabold text-cyan-600">
+                      {workspace.topics.filter((t) => t.is_active).length} temas
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setClientTab("studio")}
+                      className="mt-1 text-xs font-bold text-indigo-600 hover:underline"
+                    >
+                      Abrir Estúdio Manual →
+                    </button>
+                  </div>
+                </div>
+
+                {/* Rascunhos Aguardando Aprovação */}
+                {pendingDrafts.length > 0 && (
+                  <div className="rounded-2xl border border-indigo-200 bg-indigo-50/70 p-6">
+                    <h2 className="text-base font-extrabold text-indigo-950">
+                      Rascunhos Aguardando Sua Aprovação ({pendingDrafts.length})
+                    </h2>
+                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                      {pendingDrafts.map((d) => (
+                        <div
+                          key={d.id}
+                          className="flex gap-4 rounded-2xl border border-white bg-white p-4 shadow-sm"
+                        >
+                          {d.image_urls_json[0] && (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img
+                              src={d.image_urls_json[0]}
+                              alt={d.headline}
+                              className="h-24 w-24 rounded-xl object-cover"
+                            />
+                          )}
+                          <div className="flex-1 space-y-2">
+                            <p className="text-sm font-extrabold text-slate-900">
+                              {d.headline}
+                            </p>
+                            <p className="line-clamp-2 text-xs text-slate-600">
+                              {d.content_json.legenda}
+                            </p>
+                            <button
+                              type="button"
+                              disabled={approvingPostId === d.id}
+                              onClick={() => handleApproveDraft(d.id)}
+                              className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700"
+                            >
+                              {approvingPostId === d.id
+                                ? "Publicando..."
+                                : "Aprovar e Publicar Agora"}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Grade Semanal */}
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-base font-extrabold text-slate-900">
+                      Grade Semanal de Postagens Automáticas
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={() => setClientTab("topics")}
+                      className="text-xs font-bold text-indigo-600 hover:underline"
+                    >
+                      Editar Assuntos &amp; Horários →
+                    </button>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-7">
+                    {WEEKDAY_LABELS.map((day) => {
+                      const dayTopics = workspace.topics.filter(
+                        (t) =>
+                          t.is_active && t.schedule_days.includes(day.value)
+                      );
+                      return (
+                        <div
+                          key={day.value}
+                          className="rounded-xl border border-slate-200 bg-slate-50/70 p-3"
+                        >
+                          <p className="text-xs font-extrabold uppercase text-slate-700">
+                            {day.full}
+                          </p>
+                          <div className="mt-2 space-y-1.5">
+                            {dayTopics.length === 0 ? (
+                              <p className="text-[11px] text-slate-400">
+                                Sem agendamento
+                              </p>
+                            ) : (
+                              dayTopics.map((t) => (
+                                <div
+                                  key={`${day.value}-${t.id}`}
+                                  className="rounded-lg border border-indigo-100 bg-white p-2 text-[11px] shadow-xs"
+                                >
+                                  <span className="font-bold text-indigo-700">
+                                    {t.schedule_time}
+                                  </span>{" "}
+                                  <span className="font-semibold text-slate-800">
+                                    {t.title}
+                                  </span>
+                                  <p className="mt-0.5 text-[10px] text-slate-500">
+                                    {t.post_format === "CAROUSEL"
+                                      ? `Carrossel ${t.slides_count}x`
+                                      : "Imagem"}{" "}
+                                    • {t.aspect_ratio}
+                                  </p>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ---------- ABA 2: MEUS ASSUNTOS & PRODUTOS ---------- */}
+            {clientTab === "topics" && (
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+                {/* Lista de assuntos */}
+                <div className="space-y-3 lg:col-span-5">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-base font-extrabold text-slate-900">
+                      Assuntos &amp; Produtos ({workspace.topics.length})
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={startNewTopic}
+                      className="rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white"
+                    >
+                      + Novo Assunto
+                    </button>
+                  </div>
+
+                  {workspace.topics.map((t) => {
+                    const topicPhotos = workspace.photos.filter(
+                      (p) => p.topic_id === t.id
+                    );
+                    return (
+                      <div
+                        key={t.id}
+                        className={`rounded-2xl border p-4 transition ${
+                          editingTopicId === t.id
+                            ? "border-indigo-500 bg-indigo-50/40 shadow-sm"
+                            : "border-slate-200 bg-white"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-sm font-extrabold text-slate-900">
+                                {t.title}
+                              </h3>
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                  t.is_active
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : "bg-slate-200 text-slate-600"
+                                }`}
+                              >
+                                {t.is_active ? "Ativo" : "Pausado"}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-xs text-slate-600">
+                              Dias:{" "}
+                              {t.schedule_days
+                                .map(
+                                  (d) =>
+                                    WEEKDAY_LABELS.find((w) => w.value === d)
+                                      ?.short
+                                )
+                                .join(", ")}{" "}
+                              às <strong>{t.schedule_time}</strong> •{" "}
+                              {t.post_format === "CAROUSEL"
+                                ? `Carrossel (${t.slides_count} slides)`
+                                : "Imagem Única"}{" "}
+                              • {t.aspect_ratio}
+                            </p>
+                            <p className="mt-1 text-[11px] text-slate-500">
+                              Modo:{" "}
+                              {t.approval_mode === "DRAFT"
+                                ? "Aprovação Manual"
+                                : "100% Automático"}{" "}
+                              • Fotos na fila: {topicPhotos.length}
+                            </p>
+                          </div>
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => loadTopicIntoEditor(t)}
+                              className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-indigo-100 hover:text-indigo-700"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteTopic(t.id)}
+                              className="rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700"
+                            >
+                              Excluir
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Upload rápido de foto do produto para esse assunto */}
+                        <div className="mt-3 border-t border-slate-100 pt-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-[11px] font-bold text-slate-600">
+                              Fotos do Produto (Fila sem Repetição):
+                            </span>
+                            <label className="cursor-pointer rounded-lg bg-cyan-50 px-2.5 py-1 text-[11px] font-bold text-cyan-800 hover:bg-cyan-100">
+                              {uploadingPhotoTopicId === t.id
+                                ? "Enviando ao R2..."
+                                : "+ Subir Foto Original"}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0];
+                                  if (f) void handleUploadTopicPhoto(t.id, f);
+                                }}
+                              />
+                            </label>
+                          </div>
+                          {topicPhotos.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {topicPhotos.map((ph) => (
+                                <div
+                                  key={ph.id}
+                                  className="relative h-14 w-14 overflow-hidden rounded-lg border border-slate-200"
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={ph.enhanced_url || ph.original_url}
+                                    alt="Produto"
+                                    className="h-full w-full object-cover"
+                                  />
+                                  <span className="absolute bottom-0 left-0 bg-slate-900/75 px-1 text-[9px] text-white">
+                                    {ph.times_used}x
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleDeleteTopicPhoto(ph.id)
+                                    }
+                                    className="absolute right-0 top-0 bg-rose-600 px-1 text-[9px] font-bold text-white"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Editor de Assunto */}
+                <form
+                  onSubmit={handleSaveTopic}
+                  className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-7"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="text-base font-extrabold text-slate-900">
+                      {editingTopicId
+                        ? "Editar Assunto / Produto"
+                        : "Criar Novo Assunto / Produto"}
+                    </h2>
+                    <select
+                      value={topicTemplateId}
+                      onChange={(e) => applyNicheTemplate(e.target.value)}
+                      className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-800 outline-none"
+                    >
+                      <option value="custom">
+                        Carregar Exemplo de Prompt...
+                      </option>
+                      {NICHE_TOPIC_TEMPLATES.map((tpl) => (
+                        <option key={tpl.id} value={tpl.id}>
+                          {tpl.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600">
+                        Nome do Assunto / Produto
+                      </label>
+                      <input
+                        value={topicTitle}
+                        onChange={(e) => setTopicTitle(e.target.value)}
+                        required
+                        placeholder="Ex: Calçados Femininos ou Tráfego Pago"
+                        className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600">
+                        Preço / Condição na Arte (Opcional)
+                      </label>
+                      <input
+                        value={topicPrice}
+                        onChange={(e) => setTopicPrice(e.target.value)}
+                        placeholder="Ex: 12x de R$149,90 ou A partir de R$99"
+                        className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600">
+                      Prompt / Briefing para a IA
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={topicPrompt}
+                      onChange={(e) => setTopicPrompt(e.target.value)}
+                      required
+                      placeholder="Descreva o produto/serviço, público-alvo, dores e oferta..."
+                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600">
+                      Benefícios / Diferenciais (1 por linha)
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={topicBenefitsText}
+                      onChange={(e) => setTopicBenefitsText(e.target.value)}
+                      placeholder="Entrega rápida&#10;Garantia de 30 dias&#10;Atendimento no WhatsApp"
+                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  {/* Dias da Semana e Horário */}
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                    <p className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
+                      Dia e Hora Exclusivos Deste Assunto (Horário de Brasília)
+                    </p>
+                    <div className="mt-2.5 flex flex-wrap gap-1.5">
+                      {WEEKDAY_LABELS.map((d) => {
+                        const checked = topicDays.includes(d.value);
+                        return (
+                          <button
+                            key={d.value}
+                            type="button"
+                            onClick={() =>
+                              setTopicDays((prev) =>
+                                checked
+                                  ? prev.filter((x) => x !== d.value)
+                                  : [...prev, d.value].sort()
+                              )
+                            }
+                            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                              checked
+                                ? "bg-indigo-600 text-white"
+                                : "border border-slate-200 bg-white text-slate-600"
+                            }`}
+                          >
+                            {d.short}
+                          </button>
+                        );
+                      })}
+                      <select
+                        value={topicTime}
+                        onChange={(e) => setTopicTime(e.target.value)}
+                        className="ml-auto rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-800"
+                      >
+                        {SCHEDULE_TIME_SLOTS.map((slot) => (
+                          <option key={slot} value={slot}>
+                            {slot}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Formato, Proporção e Modo */}
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600">
+                        Formato
+                      </label>
+                      <select
+                        value={topicFormat}
+                        onChange={(e) =>
+                          setTopicFormat(e.target.value as PostFormat)
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-200 px-2.5 py-2 text-xs font-bold"
+                      >
+                        <option value="SINGLE">Imagem Única</option>
+                        <option value="CAROUSEL">Carrossel</option>
+                      </select>
+                    </div>
+
+                    {topicFormat === "CAROUSEL" && (
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600">
+                          Qtd. Slides (2-8)
+                        </label>
+                        <input
+                          type="number"
+                          min={2}
+                          max={8}
+                          value={topicSlides}
+                          onChange={(e) =>
+                            setTopicSlides(Number(e.target.value))
+                          }
+                          className="mt-1 w-full rounded-xl border border-slate-200 px-2.5 py-2 text-xs font-bold"
+                        />
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600">
+                        Proporção
+                      </label>
+                      <select
+                        value={topicRatio}
+                        onChange={(e) =>
+                          setTopicRatio(e.target.value as AspectRatio)
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-200 px-2.5 py-2 text-xs font-bold"
+                      >
+                        <option value="1:1">1080×1080 (1:1)</option>
+                        <option value="4:5">1080×1350 (4:5 Feed)</option>
+                        <option value="9:16">1080×1920 (9:16 Stories/TikTok)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600">
+                        Automação
+                      </label>
+                      <select
+                        value={topicApproval}
+                        onChange={(e) =>
+                          setTopicApproval(e.target.value as ApprovalMode)
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-200 px-2.5 py-2 text-xs font-bold"
+                      >
+                        <option value="AUTO">100% Automático</option>
+                        <option value="DRAFT">Aprovar Antes (Rascunho)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Ambientação da Foto do Produto com IA + Chips Clicáveis */}
+                  <div className="rounded-xl border border-cyan-200 bg-cyan-50/50 p-4 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label className="text-xs font-extrabold uppercase tracking-wider text-cyan-900">
+                        Foto Original do Produto &amp; Melhoria com IA
+                      </label>
+                      <select
+                        value={topicPhotoMode}
+                        onChange={(e) =>
+                          setTopicPhotoMode(e.target.value as AIPhotoMode)
+                        }
+                        className="rounded-lg border border-cyan-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-800"
+                      >
+                        <option value="NONE">Sem foto de produto</option>
+                        <option value="ORIGINAL_FRAME">
+                          Foto original com layout da marca
+                        </option>
+                        <option value="ENHANCE">
+                          IA melhora/ambienta a foto original
+                        </option>
+                      </select>
+                    </div>
+
+                    {topicPhotoMode !== "NONE" && (
+                      <>
+                        <div className="flex flex-wrap gap-1.5">
+                          {AI_PHOTO_PROMPT_EXAMPLES.map((ex) => (
+                            <button
+                              key={ex.label}
+                              type="button"
+                              onClick={() => setTopicPhotoPrompt(ex.prompt)}
+                              className="rounded-full border border-cyan-300 bg-white px-3 py-1 text-[11px] font-bold text-cyan-800 hover:bg-cyan-100"
+                            >
+                              {ex.label}
+                            </button>
+                          ))}
+                        </div>
+                        <textarea
+                          rows={2}
+                          value={topicPhotoPrompt}
+                          onChange={(e) => setTopicPhotoPrompt(e.target.value)}
+                          placeholder='Ex: "Colocar o produto na mão de uma pessoa em ambiente moderno e iluminado"'
+                          className="w-full rounded-xl border border-cyan-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-500"
+                        />
+                      </>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={topicActive}
+                        onChange={(e) => setTopicActive(e.target.checked)}
+                      />
+                      Assunto ativo no agendador automático
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={savingTopic}
+                      className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-6 py-3 text-xs font-bold text-white shadow-md"
+                    >
+                      {savingTopic ? "Salvando..." : "Salvar Assunto"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* ---------- ABA 3: ESTÚDIO MANUAL & PREVIEW EDITÁVEL ---------- */}
+            {clientTab === "studio" && (
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+                <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-5">
+                  <h2 className="text-base font-extrabold text-slate-900">
+                    Estúdio de Criação Manual
+                  </h2>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600">
+                      Basear em Assunto Cadastrado ou Prompt Livre
+                    </label>
+                    <select
+                      value={studioTopicId}
+                      onChange={(e) => handleSelectStudioTopic(e.target.value)}
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-semibold outline-none focus:border-indigo-500"
+                    >
+                      <option value="__free__">
+                        Prompt Livre Avulso (Escrever agora)
+                      </option>
+                      {workspace.topics.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <input
+                    value={studioTitle}
+                    onChange={(e) => setStudioTitle(e.target.value)}
+                    placeholder="Título do assunto (ex: Calçados Lançamento)"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
+                  />
+
+                  <textarea
+                    rows={3}
+                    value={studioPrompt}
+                    onChange={(e) => setStudioPrompt(e.target.value)}
+                    placeholder="Cole seu prompt para a IA gerar a arte e legenda..."
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
+                  />
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      value={studioPrice}
+                      onChange={(e) => setStudioPrice(e.target.value)}
+                      placeholder="Preço (ex: 12x R$149,90)"
+                      className="rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-500"
+                    />
+                    <select
+                      value={studioRatio}
+                      onChange={(e) =>
+                        setStudioRatio(e.target.value as AspectRatio)
+                      }
+                      className="rounded-xl border border-slate-200 px-2.5 py-2 text-xs font-bold"
+                    >
+                      <option value="1:1">1080×1080 (1:1)</option>
+                      <option value="4:5">1080×1350 (4:5 Feed)</option>
+                      <option value="9:16">1080×1920 (9:16 Vertical)</option>
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={studioFormat}
+                      onChange={(e) =>
+                        setStudioFormat(e.target.value as PostFormat)
+                      }
+                      className="rounded-xl border border-slate-200 px-2.5 py-2 text-xs font-bold"
+                    >
+                      <option value="SINGLE">Imagem Única</option>
+                      <option value="CAROUSEL">Carrossel</option>
+                    </select>
+                    {studioFormat === "CAROUSEL" && (
+                      <input
+                        type="number"
+                        min={2}
+                        max={8}
+                        value={studioSlides}
+                        onChange={(e) =>
+                          setStudioSlides(Number(e.target.value))
+                        }
+                        className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold"
+                      />
+                    )}
+                  </div>
+
+                  {/* Foto do produto na hora */}
+                  <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700">
+                        Foto Original do Produto (Opcional)
+                      </span>
+                      <label className="cursor-pointer rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700">
+                        Selecionar Imagem
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            const { base64, contentType } = await fileToBase64(
+                              f
+                            );
+                            setStudioPhotoBase64(base64);
+                            setStudioPhotoType(contentType);
+                            if (studioPhotoMode === "NONE") {
+                              setStudioPhotoMode("ENHANCE");
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                    {studioPhotoBase64 && (
+                      <p className="text-[11px] font-semibold text-emerald-700">
+                        Foto carregada pronta para envio!
+                      </p>
+                    )}
+
+                    <select
+                      value={studioPhotoMode}
+                      onChange={(e) =>
+                        setStudioPhotoMode(e.target.value as AIPhotoMode)
+                      }
+                      className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold"
+                    >
+                      <option value="NONE">
+                        Usar fila automática / Sem foto manual
+                      </option>
+                      <option value="ORIGINAL_FRAME">
+                        Usar foto original com moldura da marca
+                      </option>
+                      <option value="ENHANCE">
+                        IA melhora e ambienta a foto do produto
+                      </option>
+                    </select>
+
+                    {studioPhotoMode === "ENHANCE" && (
+                      <>
+                        <div className="flex flex-wrap gap-1">
+                          {AI_PHOTO_PROMPT_EXAMPLES.map((ex) => (
+                            <button
+                              key={ex.label}
+                              type="button"
+                              onClick={() => setStudioPhotoPrompt(ex.prompt)}
+                              className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-700 hover:bg-indigo-50"
+                            >
+                              {ex.label}
+                            </button>
+                          ))}
+                        </div>
+                        <textarea
+                          rows={2}
+                          value={studioPhotoPrompt}
+                          onChange={(e) => setStudioPhotoPrompt(e.target.value)}
+                          className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+                        />
+                      </>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      disabled={studioLoading}
+                      onClick={() => handleRunStudio({ previewOnly: true })}
+                      className="rounded-xl border border-indigo-200 bg-indigo-50 py-3 text-xs font-extrabold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
+                    >
+                      {studioLoading
+                        ? "Gerando..."
+                        : "1. Gerar Prévia (Editável)"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={studioLoading}
+                      onClick={() =>
+                        handleRunStudio({
+                          previewOnly: false,
+                          useEditedContent: Boolean(studioPreview),
+                        })
+                      }
+                      className="rounded-xl bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-500 py-3 text-xs font-extrabold text-white shadow-md disabled:opacity-60"
+                    >
+                      {studioLoading
+                        ? "Publicando..."
+                        : "2. Publicar Agora"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Preview Editável + Logs */}
+                <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-7">
+                  <h2 className="text-base font-extrabold text-slate-900">
+                    Pré-visualização &amp; Edição Antes de Postar
+                  </h2>
+
+                  {!studioPreview ? (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 p-10 text-center text-xs text-slate-500">
+                      Clique em <strong>&quot;1. Gerar Prévia (Editável)&quot;</strong>{" "}
+                      para visualizar as artes geradas no Cloudflare R2,
+                      comparar a foto melhorada pela IA e editar qualquer texto
+                      antes de publicar no Instagram e Facebook.
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {studioPreview.imageUrls.map((url, idx) => (
+                          <a
+                            key={url}
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={url}
+                              alt={`Arte ${idx + 1}`}
+                              className="w-full object-cover"
+                            />
+                          </a>
+                        ))}
+                      </div>
+
+                      {studioPreview.post.original_photo_url &&
+                        studioPreview.post.enhanced_photo_url && (
+                          <div className="grid grid-cols-2 gap-3 rounded-xl border border-cyan-200 bg-cyan-50/50 p-3">
+                            <div>
+                              <p className="mb-1 text-[11px] font-bold text-slate-600">
+                                Foto Original
+                              </p>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={studioPreview.post.original_photo_url}
+                                alt="Original"
+                                className="h-32 w-full rounded-lg object-cover"
+                              />
+                            </div>
+                            <div>
+                              <p className="mb-1 text-[11px] font-bold text-emerald-700">
+                                Foto Ambientada pela IA
+                              </p>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={studioPreview.post.enhanced_photo_url}
+                                alt="Melhorada IA"
+                                className="h-32 w-full rounded-lg object-cover"
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                      <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                        <p className="text-xs font-extrabold text-indigo-700">
+                          Editar Textos Gerados ({studioPreview.providerUsed})
+                        </p>
+                        <input
+                          value={studioPreview.post.headline_arte}
+                          onChange={(e) =>
+                            setStudioPreview({
+                              ...studioPreview,
+                              post: {
+                                ...studioPreview.post,
+                                headline_arte: e.target.value,
+                              },
+                            })
+                          }
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold"
+                        />
+                        <input
+                          value={studioPreview.post.subtitulo_arte}
+                          onChange={(e) =>
+                            setStudioPreview({
+                              ...studioPreview,
+                              post: {
+                                ...studioPreview.post,
+                                subtitulo_arte: e.target.value,
+                              },
+                            })
+                          }
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                        />
+                        <textarea
+                          rows={4}
+                          value={studioPreview.post.legenda}
+                          onChange={(e) =>
+                            setStudioPreview({
+                              ...studioPreview,
+                              post: {
+                                ...studioPreview.post,
+                                legenda: e.target.value,
+                              },
+                            })
+                          }
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                        />
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={studioLoading}
+                            onClick={() =>
+                              handleRunStudio({
+                                previewOnly: true,
+                                useEditedContent: true,
+                              })
+                            }
+                            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-800"
+                          >
+                            Atualizar Arte com Meus Textos
+                          </button>
+                          <button
+                            type="button"
+                            disabled={studioLoading}
+                            onClick={() =>
+                              handleRunStudio({
+                                previewOnly: false,
+                                useEditedContent: true,
+                              })
+                            }
+                            className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white hover:bg-emerald-700"
+                          >
+                            Aprovar e Publicar Agora
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {studioPublishLogs.length > 0 && (
+                    <div className="rounded-xl bg-slate-900 p-4 font-mono text-[11px] text-slate-200">
+                      <p className="mb-1.5 font-bold text-cyan-400">
+                        LOGS DE EXECUÇÃO &amp; META API
+                      </p>
+                      {studioPublishLogs.map((l, i) => (
+                        <p key={i} className="leading-relaxed">
+                          {l}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ---------- ABA 4: IDENTIDADE VISUAL (BRAND KIT LUMINOSO) ---------- */}
+            {clientTab === "brand" && brandForm && (
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+                <form
+                  onSubmit={handleSaveBrand}
+                  className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-7"
+                >
+                  <h2 className="text-base font-extrabold text-slate-900">
+                    Temas Luminosos &amp; Cores da Marca
+                  </h2>
+
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                    {LUMINOUS_THEME_PRESETS.map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() =>
+                          setBrandForm({
+                            ...brandForm,
+                            theme_preset: preset.id,
+                            primary_color: preset.primary_color,
+                            secondary_color: preset.secondary_color,
+                            accent_color: preset.accent_color,
+                            bg_color: preset.bg_color,
+                            text_color: preset.text_color,
+                          })
+                        }
+                        className={`rounded-xl border p-3 text-left transition ${
+                          brandForm.theme_preset === preset.id
+                            ? "border-indigo-500 bg-indigo-50/50"
+                            : "border-slate-200 bg-white hover:bg-slate-50"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-extrabold text-slate-900">
+                            {preset.name}
+                          </span>
+                          <div className="flex gap-1">
+                            {[
+                              preset.primary_color,
+                              preset.secondary_color,
+                              preset.accent_color,
+                            ].map((hex) => (
+                              <span
+                                key={hex}
+                                className="h-3.5 w-3.5 rounded-full border border-white shadow-xs"
+                                style={{ backgroundColor: hex }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          {preset.description}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                    {(
+                      [
+                        ["primary_color", "Primária"],
+                        ["secondary_color", "Secundária"],
+                        ["accent_color", "Selo/Sucesso"],
+                        ["bg_color", "Fundo"],
+                        ["text_color", "Texto"],
+                      ] as Array<[keyof BrandSettings, string]>
+                    ).map(([field, label]) => (
+                      <div key={field}>
+                        <label className="block text-[11px] font-bold text-slate-600">
+                          {label}
+                        </label>
+                        <input
+                          type="color"
+                          value={String(brandForm[field] || "#4F46E5")}
+                          onChange={(e) =>
+                            setBrandForm({
+                              ...brandForm,
+                              theme_preset: "personalizado",
+                              [field]: e.target.value,
+                            })
+                          }
+                          className="mt-1 h-10 w-full cursor-pointer rounded-lg border border-slate-200"
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600">
+                        Assinatura no Rodapé
+                      </label>
+                      <input
+                        value={brandForm.footer_name}
+                        onChange={(e) =>
+                          setBrandForm({
+                            ...brandForm,
+                            footer_name: e.target.value,
+                          })
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600">
+                        CTA Padrão do Botão
+                      </label>
+                      <input
+                        value={brandForm.cta_default}
+                        onChange={(e) =>
+                          setBrandForm({
+                            ...brandForm,
+                            cta_default: e.target.value,
+                          })
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <input
+                    value={brandForm.subtitle_default}
+                    onChange={(e) =>
+                      setBrandForm({
+                        ...brandForm,
+                        subtitle_default: e.target.value,
+                      })
+                    }
+                    placeholder="Subtítulo no rodapé (ex: Enviamos para todo o Brasil)"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  />
+
+                  <button
+                    type="submit"
+                    disabled={savingBrand}
+                    className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-6 py-3 text-xs font-bold text-white shadow-md"
+                  >
+                    {savingBrand ? "Salvando..." : "Salvar Identidade Visual"}
+                  </button>
+                </form>
+
+                {/* Preview ao vivo da identidade */}
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-5">
+                  <p className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
+                    Prévia ao Vivo das Cores Luminosas
+                  </p>
+                  <div
+                    className="mt-4 flex aspect-square flex-col justify-between overflow-hidden rounded-2xl border border-slate-200 p-5 shadow-inner"
+                    style={{
+                      backgroundColor: brandForm.bg_color,
+                      color: brandForm.text_color,
+                    }}
+                  >
+                    <div
+                      className="rounded-2xl p-5 text-white"
+                      style={{
+                        backgroundImage: `linear-gradient(135deg, ${brandForm.primary_color} 0%, ${brandForm.secondary_color} 100%)`,
+                      }}
+                    >
+                      <span
+                        className="inline-block rounded-full px-3 py-1 text-[10px] font-extrabold uppercase"
+                        style={{ backgroundColor: brandForm.accent_color }}
+                      >
+                        OFERTA EM DESTAQUE
+                      </span>
+                      <p className="mt-3 text-xl font-extrabold leading-tight">
+                        Sua Headline Publicitária Aparece Aqui
+                      </p>
+                      <p className="mt-1 text-xs opacity-90">
+                        Design moderno e luminoso gerado sob medida.
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200/70 bg-white p-4 text-xs shadow-xs">
+                      <p className="font-bold">Diferenciais da sua empresa</p>
+                      <p className="mt-1 text-slate-500">
+                        Cards luminosos com ícones nítidos e foto do produto.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-xs">
+                      <div>
+                        <p className="text-xs font-extrabold">
+                          {brandForm.footer_name}
+                        </p>
+                        <p className="text-[10px] text-slate-500">
+                          {brandForm.subtitle_default}
+                        </p>
+                      </div>
+                      <span
+                        className="rounded-lg px-3 py-1.5 text-[10px] font-extrabold text-white"
+                        style={{
+                          backgroundImage: `linear-gradient(135deg, ${brandForm.primary_color} 0%, ${brandForm.secondary_color} 100%)`,
+                        }}
+                      >
+                        {brandForm.cta_default}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ---------- ABA 5: INTEGRAÇÕES (MULTI-IA + META + TIKTOK) ---------- */}
+            {clientTab === "integrations" && (
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+                <form
+                  onSubmit={handleSaveIntegrations}
+                  className="space-y-5 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-7"
+                >
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-base font-extrabold text-slate-900">
+                      Chaves Próprias da Empresa (Criptografia AES-256)
+                    </h2>
+                    <button
+                      type="button"
+                      disabled={testingInteg}
+                      onClick={handleTestIntegrations}
+                      className="rounded-xl border border-cyan-200 bg-cyan-50 px-3.5 py-2 text-xs font-bold text-cyan-800 hover:bg-cyan-100"
+                    >
+                      {testingInteg ? "Testando..." : "Testar Conexões"}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600">
+                        IA Principal de Texto / Copy
+                      </label>
+                      <select
+                        value={integTextAi}
+                        onChange={(e) =>
+                          setIntegTextAi(e.target.value as AIProvider)
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold"
+                      >
+                        <option value="GEMINI">Google Gemini</option>
+                        <option value="CLAUDE">Anthropic Claude</option>
+                        <option value="OPENAI">OpenAI (ChatGPT)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600">
+                        IA para Melhorar Fotos de Produtos
+                      </label>
+                      <select
+                        value={integImageAi}
+                        onChange={(e) =>
+                          setIntegImageAi(e.target.value as ImageAIProvider)
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold"
+                      >
+                        <option value="GEMINI">Google Gemini Image</option>
+                        <option value="OPENAI">OpenAI (gpt-image-1)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                    <p className="text-xs font-extrabold uppercase tracking-wider text-indigo-700">
+                      Provedores de Inteligência Artificial (BYOK)
+                    </p>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700">
+                        GEMINI_API_KEY{" "}
+                        {workspace.integrations.has_gemini_key && (
+                          <span className="ml-1 font-mono text-emerald-700">
+                            (Salva: {workspace.integrations.gemini_key_mask})
+                          </span>
+                        )}
+                      </label>
+                      <input
+                        type="password"
+                        value={integGeminiKey}
+                        onChange={(e) => setIntegGeminiKey(e.target.value)}
+                        placeholder="Cole para cadastrar ou substituir..."
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700">
+                        OPENAI_API_KEY (ChatGPT / gpt-image-1){" "}
+                        {workspace.integrations.has_openai_key && (
+                          <span className="ml-1 font-mono text-emerald-700">
+                            (Salva: {workspace.integrations.openai_key_mask})
+                          </span>
+                        )}
+                      </label>
+                      <input
+                        type="password"
+                        value={integOpenAiKey}
+                        onChange={(e) => setIntegOpenAiKey(e.target.value)}
+                        placeholder="sk-..."
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700">
+                        ANTHROPIC_API_KEY (Claude){" "}
+                        {workspace.integrations.has_anthropic_key && (
+                          <span className="ml-1 font-mono text-emerald-700">
+                            (Salva: {workspace.integrations.anthropic_key_mask})
+                          </span>
+                        )}
+                      </label>
+                      <input
+                        type="password"
+                        value={integAnthropicKey}
+                        onChange={(e) => setIntegAnthropicKey(e.target.value)}
+                        placeholder="sk-ant-..."
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                    <p className="text-xs font-extrabold uppercase tracking-wider text-indigo-700">
+                      Meta Graph API (Instagram Business &amp; Página Facebook)
+                    </p>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700">
+                        META_ACCESS_TOKEN{" "}
+                        {workspace.integrations.has_meta_token && (
+                          <span className="ml-1 font-mono text-emerald-700">
+                            (Salvo: {workspace.integrations.meta_token_mask})
+                          </span>
+                        )}
+                      </label>
+                      <input
+                        type="password"
+                        value={integMetaToken}
+                        onChange={(e) => setIntegMetaToken(e.target.value)}
+                        placeholder="EAA..."
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        value={integIgUserId}
+                        onChange={(e) => setIntegIgUserId(e.target.value)}
+                        placeholder="IG_USER_ID"
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                      />
+                      <input
+                        value={integFbPageId}
+                        onChange={(e) => setIntegFbPageId(e.target.value)}
+                        placeholder="FB_PAGE_ID"
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold uppercase tracking-wider text-slate-800">
+                        TikTok Photo &amp; Content API v2 (Estrutura Pronta)
+                      </span>
+                      <label className="flex items-center gap-1.5 text-xs font-bold">
+                        <input
+                          type="checkbox"
+                          checked={integTiktokEnabled}
+                          onChange={(e) =>
+                            setIntegTiktokEnabled(e.target.checked)
+                          }
+                        />
+                        Ativar
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        value={integTiktokOpenId}
+                        onChange={(e) => setIntegTiktokOpenId(e.target.value)}
+                        placeholder="TikTok Open ID"
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                      />
+                      <input
+                        type="password"
+                        value={integTiktokToken}
+                        onChange={(e) => setIntegTiktokToken(e.target.value)}
+                        placeholder="TikTok Access Token"
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={savingInteg}
+                    className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 py-3 text-xs font-bold text-white shadow-md"
+                  >
+                    {savingInteg
+                      ? "Criptografando e Salvando..."
+                      : "Salvar Credenciais com Criptografia AES-256"}
+                  </button>
+
+                  {integTestReport && (
+                    <pre className="overflow-x-auto rounded-xl bg-slate-900 p-4 text-[11px] text-emerald-300">
+                      {JSON.stringify(integTestReport, null, 2)}
+                    </pre>
+                  )}
+                </form>
+
+                {/* Tutorial Guiado para o Cliente */}
+                <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-5">
+                  <h2 className="text-base font-extrabold text-slate-900">
+                    Tutorial Rápido Para Clientes
+                  </h2>
+                  <div className="space-y-3 text-xs text-slate-600">
+                    <div className="rounded-xl bg-slate-50 p-3.5">
+                      <p className="font-extrabold text-indigo-700">
+                        1. Google Gemini (Gratuito para Textos)
+                      </p>
+                      <p className="mt-1">
+                        Acesse <code>aistudio.google.com</code> → clique em{" "}
+                        <strong>Get API key</strong> → crie uma chave e cole no
+                        campo <code>GEMINI_API_KEY</code>. Para edição avançada
+                        de fotos na IA, ative o faturamento no projeto Google.
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3.5">
+                      <p className="font-extrabold text-indigo-700">
+                        2. OpenAI (ChatGPT) ou Anthropic (Claude)
+                      </p>
+                      <p className="mt-1">
+                        Para copywriting com Claude, gere sua chave em{" "}
+                        <code>console.anthropic.com</code>. Para ambientação
+                        avançada de produtos (<code>gpt-image-1</code>), gere em{" "}
+                        <code>platform.openai.com</code>.
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3.5">
+                      <p className="font-extrabold text-indigo-700">
+                        3. Instagram Business &amp; Facebook Page
+                      </p>
+                      <p className="mt-1">
+                        Garanta que o Instagram está como{" "}
+                        <strong>Conta Profissional</strong> vinculada à Página do
+                        Facebook. No Business Manager → Usuários do Sistema →
+                        gere um token permanente com{" "}
+                        <code>
+                          instagram_basic, instagram_content_publish,
+                          pages_show_list, pages_read_engagement,
+                          pages_manage_posts
+                        </code>
+                        .
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ---------- ABA 6: HISTÓRICO DE PUBLICAÇÕES ---------- */}
+            {clientTab === "history" && (
+              <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+                <h2 className="text-base font-extrabold text-slate-900">
+                  Histórico de Publicações ({workspace.posts.length})
+                </h2>
+                {workspace.posts.length === 0 ? (
+                  <p className="mt-4 text-xs text-slate-500">
+                    Nenhum post gerado ainda para esta empresa.
+                  </p>
+                ) : (
+                  <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    {workspace.posts.map((p) => (
+                      <div
+                        key={p.id}
+                        className="flex gap-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4"
+                      >
+                        {p.image_urls_json[0] && (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img
+                            src={p.image_urls_json[0]}
+                            alt={p.headline}
+                            className="h-28 w-28 rounded-xl object-cover"
+                          />
+                        )}
+                        <div className="flex-1 space-y-1 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                              {p.status}
+                            </span>
+                            <span className="text-[11px] text-slate-400">
+                              {new Date(p.created_at).toLocaleString("pt-BR")}
+                            </span>
+                          </div>
+                          <p className="text-sm font-extrabold text-slate-900">
+                            {p.headline}
+                          </p>
+                          <p className="text-[11px] text-slate-600">
+                            IA: {p.ai_provider_used} • {p.format} ({p.slides_count}x{" "}
+                            {p.aspect_ratio})
+                          </p>
+                          <p className="font-mono text-[10px] text-indigo-700">
+                            IG: {p.ig_post_id || "—"} | FB:{" "}
+                            {p.fb_post_id || "—"}
+                          </p>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 )}
               </div>
-
-              {/* Detalhes e IDs */}
-              <div className="space-y-4 lg:col-span-7">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className="rounded-xl border border-[#2C1E16]/10 bg-[#FAF5EE]/60 p-3.5">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#2C1E16]/60">
-                      Instagram Post ID
-                    </p>
-                    <p className="mt-1 break-all font-mono text-xs font-bold text-[#1E7E53]">
-                      {lastPost.instagramPostId}
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-[#2C1E16]/10 bg-[#FAF5EE]/60 p-3.5">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#2C1E16]/60">
-                      Facebook Post ID
-                    </p>
-                    <p className="mt-1 break-all font-mono text-xs font-bold text-[#1E7E53]">
-                      {lastPost.facebookPostId}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-[#2C1E16]/10 bg-[#FAF5EE]/40 p-4">
-                  {lastPost.post.tema_visual && (
-                    <>
-                      <p className="text-xs font-semibold uppercase tracking-wider text-[#1E7E53]">
-                        Tema Visual
-                      </p>
-                      <p className="mt-1 mb-3 text-sm font-bold text-[#2C1E16]">
-                        {lastPost.post.tema_visual}
-                      </p>
-                    </>
-                  )}
-
-                  <p className="text-xs font-semibold uppercase tracking-wider text-[#C85A32]">
-                    Headline da Arte
-                  </p>
-                  <p className="mt-1 text-base font-bold text-[#2C1E16]">
-                    {lastPost.post.headline_arte}
-                  </p>
-
-                  <p className="mt-3 text-xs font-semibold uppercase tracking-wider text-[#C85A32]">
-                    Subtítulo da Arte
-                  </p>
-                  <p className="mt-1 text-sm font-medium text-[#2C1E16]/85">
-                    {lastPost.post.subtitulo_arte}
-                  </p>
-
-                  {lastPost.post.dor_vs_solucao && (
-                    <>
-                      <p className="mt-3 text-xs font-semibold uppercase tracking-wider text-[#1E7E53]">
-                        Dor vs. Solução
-                      </p>
-                      <p className="mt-1 text-sm font-medium text-[#2C1E16]/85">
-                        {lastPost.post.dor_vs_solucao}
-                      </p>
-                    </>
-                  )}
-                </div>
-
-                <div className="rounded-xl border border-[#2C1E16]/10 bg-[#FAF5EE]/40 p-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-[#2C1E16]/70">
-                      Legenda e Hashtags
-                    </p>
-                    <button
-                      type="button"
-                      onClick={handleCopyCaption}
-                      className="rounded-lg border border-[#2C1E16]/15 bg-white px-3 py-1 text-xs font-semibold text-[#2C1E16] transition hover:bg-[#FAF5EE]"
-                    >
-                      {copiedCaption ? "Copiado!" : "Copiar Legenda"}
-                    </button>
-                  </div>
-                  <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-[#2C1E16]">
-                    {lastPost.post.legenda}
-                  </p>
-                  <p className="mt-3 text-xs font-medium text-[#1E7E53]">
-                    {lastPost.post.hashtags}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-        </section>
-      </div>
-    </main>
+            )}
+          </div>
+        )}
+      </main>
+    </div>
   );
 }

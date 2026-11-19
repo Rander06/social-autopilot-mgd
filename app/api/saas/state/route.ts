@@ -1,0 +1,513 @@
+import { NextRequest, NextResponse } from "next/server";
+import { GoogleGenAI } from "@google/genai";
+import {
+  inspectMetaTokenValidity,
+  publishToMetaChannels,
+  publishToTikTok,
+  uploadBufferToR2,
+} from "@/lib/ai-engine";
+import {
+  getSessionFromRequest,
+  SESSION_COOKIE,
+  SessionPayload,
+  signSession,
+} from "@/lib/crypto";
+import {
+  addTopicPhoto,
+  appendAuditLog,
+  authenticateLogin,
+  checkCompanyQuotaAndStatus,
+  createOrUpdateCompanyByAdmin,
+  deleteTopic,
+  deleteTopicPhoto,
+  getCompanySecrets,
+  getCompanyWorkspace,
+  getDatabaseMode,
+  getSuperAdminSnapshot,
+  listPostsHistory,
+  saveBrandSettings,
+  saveCompanyIntegrations,
+  updatePlanByAdmin,
+  updatePostRecord,
+  upsertTopic,
+} from "@/lib/store";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function GET(request: NextRequest) {
+  const session = getSessionFromRequest(request);
+  if (!session) {
+    return NextResponse.json(
+      { authenticated: false, database_mode: getDatabaseMode() },
+      { status: 200 }
+    );
+  }
+
+  const requestedCompanyId =
+    request.nextUrl.searchParams.get("companyId")?.trim() || null;
+
+  const activeCompanyId =
+    session.role === "SUPER_ADMIN" && requestedCompanyId
+      ? requestedCompanyId
+      : session.companyId || "comp-mgd";
+
+  const workspace = await getCompanyWorkspace(activeCompanyId);
+  const adminSnapshot =
+    session.role === "SUPER_ADMIN" ? await getSuperAdminSnapshot() : null;
+
+  return NextResponse.json({
+    authenticated: true,
+    database_mode: getDatabaseMode(),
+    user: {
+      id: session.userId,
+      company_id: session.companyId,
+      role: session.role,
+      email: session.email,
+      name: session.name,
+    },
+    workspace,
+    adminSnapshot,
+  });
+}
+
+export async function POST(request: NextRequest) {
+  const body = (await request.json().catch(() => ({}))) as Record<
+    string,
+    unknown
+  >;
+  const action = String(body.action || "");
+
+  if (action === "login") {
+    const authResult = await authenticateLogin({
+      email: typeof body.email === "string" ? body.email : undefined,
+      password: typeof body.password === "string" ? body.password : undefined,
+      cronSecret:
+        typeof body.cronSecret === "string" ? body.cronSecret : undefined,
+    });
+
+    if (!authResult) {
+      return NextResponse.json(
+        { error: "E-mail, senha ou CRON_SECRET inválido." },
+        { status: 401 }
+      );
+    }
+
+    const { user } = authResult;
+    const activeCompanyId = user.company_id || "comp-mgd";
+    const sessionPayload: SessionPayload = {
+      userId: user.id,
+      companyId: user.company_id,
+      role: user.role,
+      email: user.email,
+      name: user.name,
+      exp: Date.now() + 7 * 24 * 60 * 60 * 1000,
+    };
+
+    const workspace = await getCompanyWorkspace(activeCompanyId);
+    const adminSnapshot =
+      user.role === "SUPER_ADMIN" ? await getSuperAdminSnapshot() : null;
+
+    const res = NextResponse.json({
+      authenticated: true,
+      database_mode: getDatabaseMode(),
+      user,
+      workspace,
+      adminSnapshot,
+    });
+
+    res.cookies.set(SESSION_COOKIE, signSession(sessionPayload), {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 7 * 24 * 60 * 60,
+    });
+
+    return res;
+  }
+
+  if (action === "logout") {
+    const res = NextResponse.json({ authenticated: false });
+    res.cookies.delete(SESSION_COOKIE);
+    return res;
+  }
+
+  const session = getSessionFromRequest(request);
+  if (!session) {
+    return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
+  }
+
+  const requestedCompanyId =
+    typeof body.companyId === "string" ? body.companyId.trim() : "";
+  const targetCompanyId =
+    session.role === "SUPER_ADMIN" && requestedCompanyId
+      ? requestedCompanyId
+      : session.companyId || "comp-mgd";
+
+  try {
+    if (action === "switch_company") {
+      if (session.role !== "SUPER_ADMIN") {
+        return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
+      }
+      await appendAuditLog({
+        company_id: targetCompanyId,
+        user_id: session.userId,
+        action: "ADMIN_IMPERSONATE_COMPANY",
+        details_json: { targetCompanyId },
+      });
+      const workspace = await getCompanyWorkspace(targetCompanyId);
+      return NextResponse.json({ workspace });
+    }
+
+    if (action === "save_brand") {
+      const brand = await saveBrandSettings(
+        targetCompanyId,
+        (body.brand || {}) as Record<string, string>,
+        session.userId
+      );
+      return NextResponse.json({ brand });
+    }
+
+    if (action === "save_integrations") {
+      const integInput = (body.integrations || {}) as Record<string, unknown>;
+      let metaExpiresAt: string | null | undefined = undefined;
+      if (
+        typeof integInput.meta_access_token === "string" &&
+        integInput.meta_access_token.trim()
+      ) {
+        const inspection = await inspectMetaTokenValidity(
+          integInput.meta_access_token.trim()
+        );
+        metaExpiresAt = inspection.expires_at;
+      }
+
+      const integrations = await saveCompanyIntegrations(
+        targetCompanyId,
+        {
+          preferred_text_ai: integInput.preferred_text_ai as
+            | "GEMINI"
+            | "OPENAI"
+            | "CLAUDE"
+            | undefined,
+          preferred_image_ai: integInput.preferred_image_ai as
+            | "GEMINI"
+            | "OPENAI"
+            | undefined,
+          gemini_api_key:
+            typeof integInput.gemini_api_key === "string"
+              ? integInput.gemini_api_key
+              : undefined,
+          openai_api_key:
+            typeof integInput.openai_api_key === "string"
+              ? integInput.openai_api_key
+              : undefined,
+          anthropic_api_key:
+            typeof integInput.anthropic_api_key === "string"
+              ? integInput.anthropic_api_key
+              : undefined,
+          meta_access_token:
+            typeof integInput.meta_access_token === "string"
+              ? integInput.meta_access_token
+              : undefined,
+          meta_token_expires_at: metaExpiresAt,
+          ig_user_id:
+            typeof integInput.ig_user_id === "string"
+              ? integInput.ig_user_id
+              : undefined,
+          fb_page_id:
+            typeof integInput.fb_page_id === "string"
+              ? integInput.fb_page_id
+              : undefined,
+          tiktok_access_token:
+            typeof integInput.tiktok_access_token === "string"
+              ? integInput.tiktok_access_token
+              : undefined,
+          tiktok_open_id:
+            typeof integInput.tiktok_open_id === "string"
+              ? integInput.tiktok_open_id
+              : undefined,
+          tiktok_enabled:
+            typeof integInput.tiktok_enabled === "boolean"
+              ? integInput.tiktok_enabled
+              : undefined,
+        },
+        session.userId
+      );
+
+      return NextResponse.json({ integrations });
+    }
+
+    if (action === "test_integrations") {
+      const secrets = await getCompanySecrets(targetCompanyId);
+      const report: Record<string, unknown> = {};
+
+      if (secrets.meta_access_token) {
+        report.meta = await inspectMetaTokenValidity(secrets.meta_access_token);
+      } else {
+        report.meta = { valid: false, warning: "Token Meta não configurado." };
+      }
+
+      if (secrets.gemini_api_key) {
+        try {
+          const ai = new GoogleGenAI({ apiKey: secrets.gemini_api_key });
+          await ai.models.generateContent({
+            model: "gemini-3.5-flash-lite",
+            contents: "OK",
+          });
+          report.gemini = { valid: true, message: "Chave Gemini ativa." };
+        } catch (err) {
+          report.gemini = {
+            valid: false,
+            message: err instanceof Error ? err.message : "Erro na chave Gemini",
+          };
+        }
+      }
+
+      if (secrets.openai_api_key) {
+        const res = await fetch("https://api.openai.com/v1/models", {
+          headers: { Authorization: `Bearer ${secrets.openai_api_key}` },
+        });
+        report.openai = {
+          valid: res.ok,
+          message: res.ok
+            ? "Chave OpenAI ativa."
+            : `Erro HTTP ${res.status} na OpenAI.`,
+        };
+      }
+
+      if (secrets.anthropic_api_key) {
+        const res = await fetch("https://api.anthropic.com/v1/models", {
+          headers: {
+            "x-api-key": secrets.anthropic_api_key,
+            "anthropic-version": "2023-06-01",
+          },
+        });
+        report.claude = {
+          valid: res.ok,
+          message: res.ok
+            ? "Chave Anthropic Claude ativa."
+            : `Erro HTTP ${res.status} no Claude.`,
+        };
+      }
+
+      return NextResponse.json({ report });
+    }
+
+    if (action === "upsert_topic") {
+      const topicPayload = (body.topic || {}) as Record<string, unknown>;
+      const topic = await upsertTopic(
+        targetCompanyId,
+        {
+          id:
+            typeof topicPayload.id === "string" ? topicPayload.id : undefined,
+          title: String(topicPayload.title || "Novo Assunto"),
+          niche_template: String(topicPayload.niche_template || "custom"),
+          prompt_instructions: String(topicPayload.prompt_instructions || ""),
+          offer_price:
+            typeof topicPayload.offer_price === "string"
+              ? topicPayload.offer_price
+              : null,
+          benefits_json: Array.isArray(topicPayload.benefits_json)
+            ? (topicPayload.benefits_json as string[])
+            : [],
+          post_format:
+            topicPayload.post_format === "CAROUSEL" ? "CAROUSEL" : "SINGLE",
+          slides_count: Number(topicPayload.slides_count || 1),
+          aspect_ratio: (topicPayload.aspect_ratio as "1:1" | "4:5" | "9:16") || "1:1",
+          approval_mode:
+            topicPayload.approval_mode === "DRAFT" ? "DRAFT" : "AUTO",
+          ai_photo_mode:
+            (topicPayload.ai_photo_mode as
+              | "NONE"
+              | "ENHANCE"
+              | "ORIGINAL_FRAME") || "NONE",
+          ai_photo_prompt:
+            typeof topicPayload.ai_photo_prompt === "string"
+              ? topicPayload.ai_photo_prompt
+              : null,
+          schedule_days: Array.isArray(topicPayload.schedule_days)
+            ? (topicPayload.schedule_days as number[])
+            : [1, 3, 5],
+          schedule_time: String(topicPayload.schedule_time || "10:00"),
+          is_active:
+            typeof topicPayload.is_active === "boolean"
+              ? topicPayload.is_active
+              : true,
+        },
+        session.userId
+      );
+      return NextResponse.json({ topic });
+    }
+
+    if (action === "delete_topic") {
+      await deleteTopic(
+        targetCompanyId,
+        String(body.topicId || ""),
+        session.userId
+      );
+      return NextResponse.json({ ok: true });
+    }
+
+    if (action === "upload_topic_photo") {
+      const topicId = String(body.topicId || "");
+      const aiPromptUsed =
+        typeof body.aiPromptUsed === "string" ? body.aiPromptUsed : null;
+      let originalUrl =
+        typeof body.imageUrl === "string" ? body.imageUrl.trim() : "";
+
+      if (!originalUrl && typeof body.fileBase64 === "string") {
+        const base64Clean = body.fileBase64.replace(
+          /^data:[^;]+;base64,/,
+          ""
+        );
+        const contentType =
+          typeof body.contentType === "string"
+            ? body.contentType
+            : "image/jpeg";
+        const ext = contentType.includes("png") ? "png" : "jpg";
+        const buffer = Buffer.from(base64Clean, "base64");
+        originalUrl = await uploadBufferToR2(
+          buffer,
+          `companies/${targetCompanyId}/originals/${Date.now()}.${ext}`,
+          contentType
+        );
+      }
+
+      if (!originalUrl || !topicId) {
+        return NextResponse.json(
+          { error: "Informe topicId e uma imagem válida." },
+          { status: 400 }
+        );
+      }
+
+      const photo = await addTopicPhoto({
+        company_id: targetCompanyId,
+        topic_id: topicId,
+        original_url: originalUrl,
+        ai_prompt_used: aiPromptUsed,
+        user_id: session.userId,
+      });
+
+      return NextResponse.json({ photo });
+    }
+
+    if (action === "delete_topic_photo") {
+      await deleteTopicPhoto(targetCompanyId, String(body.photoId || ""));
+      return NextResponse.json({ ok: true });
+    }
+
+    if (action === "approve_draft_post") {
+      const postId = String(body.postId || "");
+      const posts = await listPostsHistory(targetCompanyId, 50);
+      const draft = posts.find((p) => p.id === postId);
+      if (!draft) {
+        return NextResponse.json(
+          { error: "Rascunho não encontrado." },
+          { status: 404 }
+        );
+      }
+
+      const quota = await checkCompanyQuotaAndStatus(targetCompanyId);
+      if (!quota.allowed) {
+        return NextResponse.json({ error: quota.reason }, { status: 403 });
+      }
+
+      const secrets = await getCompanySecrets(targetCompanyId);
+      const logs = [...(draft.logs_json || [])];
+      const fullCaption = `${draft.content_json.legenda}\n\n${draft.content_json.hashtags}`;
+
+      const { instagramPostId, facebookPostId } = await publishToMetaChannels({
+        igUserId: secrets.ig_user_id,
+        fbPageId: secrets.fb_page_id,
+        metaAccessToken: secrets.meta_access_token,
+        imageUrls: draft.image_urls_json,
+        caption: fullCaption,
+        logs,
+      });
+
+      const tiktokPostId = await publishToTikTok({
+        tiktokAccessToken: secrets.tiktok_access_token,
+        enabled: secrets.tiktok_enabled,
+        imageUrls: draft.image_urls_json,
+        caption: fullCaption,
+        logs,
+      });
+
+      const updated = await updatePostRecord(draft.id, {
+        status: "PUBLISHED",
+        ig_post_id: instagramPostId,
+        fb_post_id: facebookPostId,
+        tiktok_post_id: tiktokPostId,
+        logs_json: logs,
+      });
+
+      await appendAuditLog({
+        company_id: targetCompanyId,
+        user_id: session.userId,
+        action: "DRAFT_APPROVED_AND_PUBLISHED",
+        details_json: { post_id: draft.id, ig_post_id: instagramPostId },
+      });
+
+      return NextResponse.json({ post: updated });
+    }
+
+    if (action === "admin_save_company") {
+      if (session.role !== "SUPER_ADMIN") {
+        return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
+      }
+      const c = (body.company || {}) as Record<string, unknown>;
+      const saved = await createOrUpdateCompanyByAdmin({
+        id: typeof c.id === "string" ? c.id : undefined,
+        name: String(c.name || "Nova Empresa"),
+        plan_id: String(c.plan_id || "plan-pro"),
+        status:
+          (c.status as "ACTIVE" | "TRIAL" | "PAST_DUE" | "BLOCKED") ||
+          "ACTIVE",
+        expires_at:
+          typeof c.expires_at === "string" && c.expires_at
+            ? c.expires_at
+            : new Date(Date.now() + 30 * 86400_000).toISOString(),
+        owner_name: typeof c.owner_name === "string" ? c.owner_name : "",
+        owner_whatsapp:
+          typeof c.owner_whatsapp === "string" ? c.owner_whatsapp : "",
+        admin_email: typeof c.admin_email === "string" ? c.admin_email : "",
+        admin_password:
+          typeof c.admin_password === "string" ? c.admin_password : "",
+        reset_usage: Boolean(c.reset_usage),
+      });
+      const adminSnapshot = await getSuperAdminSnapshot();
+      return NextResponse.json({ company: saved, adminSnapshot });
+    }
+
+    if (action === "admin_save_plan") {
+      if (session.role !== "SUPER_ADMIN") {
+        return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
+      }
+      const p = (body.plan || {}) as Record<string, unknown>;
+      const plan = await updatePlanByAdmin({
+        id: String(p.id),
+        name: String(p.name),
+        price_brl: Number(p.price_brl || 0),
+        max_posts_month: Number(p.max_posts_month || 12),
+        allow_carousel: Boolean(p.allow_carousel),
+        allow_ai_photo: Boolean(p.allow_ai_photo),
+        allow_multi_ai: Boolean(p.allow_multi_ai),
+      });
+      const adminSnapshot = await getSuperAdminSnapshot();
+      return NextResponse.json({ plan, adminSnapshot });
+    }
+
+    return NextResponse.json({ error: "Ação desconhecida." }, { status: 400 });
+  } catch (err) {
+    return NextResponse.json(
+      {
+        error:
+          err instanceof Error
+            ? err.message
+            : "Erro interno no servidor SaaS.",
+      },
+      { status: 500 }
+    );
+  }
+}

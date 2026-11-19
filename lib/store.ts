@@ -1,0 +1,1499 @@
+import {
+  decryptSecret,
+  encryptSecret,
+  generateId,
+  hashPassword,
+  maskSecret,
+  verifyPassword,
+} from "./crypto";
+import { LUMINOUS_THEME_PRESETS, NICHE_TOPIC_TEMPLATES } from "./presets";
+import {
+  AuditLogItem,
+  BrandSettings,
+  Company,
+  CompanyIntegrations,
+  CompanyIntegrationsPublic,
+  CompanyStatus,
+  Plan,
+  PostHistoryItem,
+  Topic,
+  TopicPhoto,
+  UserAccount,
+} from "./types";
+
+interface InMemoryDatabase {
+  plans: Plan[];
+  companies: Company[];
+  users: UserAccount[];
+  brands: BrandSettings[];
+  integrations: CompanyIntegrations[];
+  topics: Topic[];
+  photos: TopicPhoto[];
+  posts: PostHistoryItem[];
+  audits: AuditLogItem[];
+  seededSupabase: boolean;
+}
+
+const DEFAULT_PLANS: Plan[] = [
+  {
+    id: "plan-starter",
+    name: "Starter",
+    price_brl: 147,
+    max_posts_month: 12,
+    allow_carousel: false,
+    allow_ai_photo: false,
+    allow_multi_ai: false,
+  },
+  {
+    id: "plan-pro",
+    name: "Pro IA",
+    price_brl: 297,
+    max_posts_month: 30,
+    allow_carousel: true,
+    allow_ai_photo: true,
+    allow_multi_ai: true,
+  },
+  {
+    id: "plan-agency",
+    name: "Agência Ilimitado",
+    price_brl: 597,
+    max_posts_month: 999,
+    allow_carousel: true,
+    allow_ai_photo: true,
+    allow_multi_ai: true,
+  },
+];
+
+function createInitialSeedData(): InMemoryDatabase {
+  const nowIso = new Date().toISOString();
+  const nextYearIso = new Date(
+    Date.now() + 365 * 24 * 60 * 60 * 1000
+  ).toISOString();
+  const trialIso = new Date(
+    Date.now() + 14 * 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  const adminPass = process.env.CRON_SECRET?.trim() || "mgd123456";
+  const techPreset = LUMINOUS_THEME_PRESETS[0];
+  const modaPreset = LUMINOUS_THEME_PRESETS[1];
+
+  const tplChacara = NICHE_TOPIC_TEMPLATES[0];
+  const tplSites = NICHE_TOPIC_TEMPLATES[1];
+  const tplTrafego = NICHE_TOPIC_TEMPLATES[2];
+  const tplRedes = NICHE_TOPIC_TEMPLATES[3];
+  const tplCalcados = NICHE_TOPIC_TEMPLATES[4];
+  const tplIntimas = NICHE_TOPIC_TEMPLATES[5];
+  const tplJeans = NICHE_TOPIC_TEMPLATES[6];
+
+  const companies: Company[] = [
+    {
+      id: "comp-mgd",
+      name: "Meu Gestor Digital",
+      slug: "meu-gestor-digital",
+      plan_id: "plan-agency",
+      status: "ACTIVE",
+      expires_at: nextYearIso,
+      posts_used_month: 1,
+      owner_name: "Rander (Agência MGD)",
+      owner_whatsapp: "",
+      created_at: nowIso,
+    },
+    {
+      id: "comp-fashion-demo",
+      name: "Loja Vitrine Fashion (Exemplo)",
+      slug: "loja-vitrine-fashion",
+      plan_id: "plan-pro",
+      status: "TRIAL",
+      expires_at: trialIso,
+      posts_used_month: 0,
+      owner_name: "Cliente Exemplo Moda",
+      owner_whatsapp: "",
+      created_at: nowIso,
+    },
+  ];
+
+  const users: UserAccount[] = [
+    {
+      id: "usr-super-admin",
+      company_id: "comp-mgd",
+      name: "Rander (Super Admin)",
+      email: "admin@meugestordigital.com.br",
+      password_hash: hashPassword(adminPass),
+      role: "SUPER_ADMIN",
+      last_login_at: nowIso,
+      created_at: nowIso,
+    },
+    {
+      id: "usr-fashion-demo",
+      company_id: "comp-fashion-demo",
+      name: "Gestora Loja Fashion",
+      email: "contato@lojafashion.exemplo",
+      password_hash: hashPassword("fashion123"),
+      role: "COMPANY_ADMIN",
+      last_login_at: null,
+      created_at: nowIso,
+    },
+  ];
+
+  const brands: BrandSettings[] = [
+    {
+      company_id: "comp-mgd",
+      theme_preset: techPreset.id,
+      footer_name: "Meu Gestor Digital",
+      subtitle_default: "Sites, Tráfego Pago & Automação com IA",
+      cta_default: 'COMENTE "EU QUERO"',
+      logo_url: null,
+      primary_color: techPreset.primary_color,
+      secondary_color: techPreset.secondary_color,
+      accent_color: techPreset.accent_color,
+      bg_color: techPreset.bg_color,
+      text_color: techPreset.text_color,
+    },
+    {
+      company_id: "comp-fashion-demo",
+      theme_preset: modaPreset.id,
+      footer_name: "Vitrine Fashion Store",
+      subtitle_default: "Moda Feminina, Calçados & Jeans • Enviamos p/ todo Brasil",
+      cta_default: "CHAME NO WHATSAPP",
+      logo_url: null,
+      primary_color: modaPreset.primary_color,
+      secondary_color: modaPreset.secondary_color,
+      accent_color: modaPreset.accent_color,
+      bg_color: modaPreset.bg_color,
+      text_color: modaPreset.text_color,
+    },
+  ];
+
+  const integrations: CompanyIntegrations[] = [
+    {
+      company_id: "comp-mgd",
+      preferred_text_ai: "GEMINI",
+      preferred_image_ai: "GEMINI",
+      gemini_key_enc: encryptSecret(process.env.GEMINI_API_KEY),
+      openai_key_enc: encryptSecret(process.env.OPENAI_API_KEY),
+      anthropic_key_enc: encryptSecret(process.env.ANTHROPIC_API_KEY),
+      meta_token_enc: encryptSecret(process.env.META_ACCESS_TOKEN),
+      meta_token_expires_at: null,
+      ig_user_id: process.env.IG_USER_ID?.trim() || null,
+      fb_page_id: process.env.FB_PAGE_ID?.trim() || null,
+      tiktok_token_enc: null,
+      tiktok_open_id: null,
+      tiktok_enabled: false,
+    },
+    {
+      company_id: "comp-fashion-demo",
+      preferred_text_ai: "OPENAI",
+      preferred_image_ai: "OPENAI",
+      gemini_key_enc: null,
+      openai_key_enc: null,
+      anthropic_key_enc: null,
+      meta_token_enc: null,
+      meta_token_expires_at: null,
+      ig_user_id: null,
+      fb_page_id: null,
+      tiktok_token_enc: null,
+      tiktok_open_id: null,
+      tiktok_enabled: false,
+    },
+  ];
+
+  const topics: Topic[] = [
+    {
+      id: "top-mgd-chacaras",
+      company_id: "comp-mgd",
+      title: tplChacara.title,
+      niche_template: tplChacara.id,
+      prompt_instructions: tplChacara.prompt_instructions,
+      offer_price: tplChacara.offer_price,
+      benefits_json: tplChacara.benefits,
+      post_format: "CAROUSEL",
+      slides_count: 3,
+      aspect_ratio: "1:1",
+      approval_mode: "AUTO",
+      ai_photo_mode: "ORIGINAL_FRAME",
+      ai_photo_prompt: tplChacara.ai_photo_prompt,
+      schedule_days: [1, 3, 5],
+      schedule_time: "10:00",
+      is_active: true,
+      last_posted_at: null,
+      created_at: nowIso,
+    },
+    {
+      id: "top-mgd-sites",
+      company_id: "comp-mgd",
+      title: tplSites.title,
+      niche_template: tplSites.id,
+      prompt_instructions: tplSites.prompt_instructions,
+      offer_price: tplSites.offer_price,
+      benefits_json: tplSites.benefits,
+      post_format: "SINGLE",
+      slides_count: 1,
+      aspect_ratio: "4:5",
+      approval_mode: "AUTO",
+      ai_photo_mode: "NONE",
+      ai_photo_prompt: tplSites.ai_photo_prompt,
+      schedule_days: [2],
+      schedule_time: "14:00",
+      is_active: true,
+      last_posted_at: null,
+      created_at: nowIso,
+    },
+    {
+      id: "top-mgd-trafego",
+      company_id: "comp-mgd",
+      title: tplTrafego.title,
+      niche_template: tplTrafego.id,
+      prompt_instructions: tplTrafego.prompt_instructions,
+      offer_price: tplTrafego.offer_price,
+      benefits_json: tplTrafego.benefits,
+      post_format: "CAROUSEL",
+      slides_count: 3,
+      aspect_ratio: "1:1",
+      approval_mode: "AUTO",
+      ai_photo_mode: "NONE",
+      ai_photo_prompt: tplTrafego.ai_photo_prompt,
+      schedule_days: [4],
+      schedule_time: "18:00",
+      is_active: true,
+      last_posted_at: null,
+      created_at: nowIso,
+    },
+    {
+      id: "top-mgd-redes",
+      company_id: "comp-mgd",
+      title: tplRedes.title,
+      niche_template: tplRedes.id,
+      prompt_instructions: tplRedes.prompt_instructions,
+      offer_price: tplRedes.offer_price,
+      benefits_json: tplRedes.benefits,
+      post_format: "SINGLE",
+      slides_count: 1,
+      aspect_ratio: "1:1",
+      approval_mode: "DRAFT",
+      ai_photo_mode: "NONE",
+      ai_photo_prompt: tplRedes.ai_photo_prompt,
+      schedule_days: [6],
+      schedule_time: "10:00",
+      is_active: true,
+      last_posted_at: null,
+      created_at: nowIso,
+    },
+    {
+      id: "top-demo-calcados",
+      company_id: "comp-fashion-demo",
+      title: tplCalcados.title,
+      niche_template: tplCalcados.id,
+      prompt_instructions: tplCalcados.prompt_instructions,
+      offer_price: tplCalcados.offer_price,
+      benefits_json: tplCalcados.benefits,
+      post_format: "SINGLE",
+      slides_count: 1,
+      aspect_ratio: "4:5",
+      approval_mode: "AUTO",
+      ai_photo_mode: "ENHANCE",
+      ai_photo_prompt: tplCalcados.ai_photo_prompt,
+      schedule_days: [1, 4],
+      schedule_time: "18:30",
+      is_active: true,
+      last_posted_at: null,
+      created_at: nowIso,
+    },
+    {
+      id: "top-demo-intimas",
+      company_id: "comp-fashion-demo",
+      title: tplIntimas.title,
+      niche_template: tplIntimas.id,
+      prompt_instructions: tplIntimas.prompt_instructions,
+      offer_price: tplIntimas.offer_price,
+      benefits_json: tplIntimas.benefits,
+      post_format: "CAROUSEL",
+      slides_count: 2,
+      aspect_ratio: "4:5",
+      approval_mode: "DRAFT",
+      ai_photo_mode: "ENHANCE",
+      ai_photo_prompt: tplIntimas.ai_photo_prompt,
+      schedule_days: [3],
+      schedule_time: "20:00",
+      is_active: true,
+      last_posted_at: null,
+      created_at: nowIso,
+    },
+    {
+      id: "top-demo-jeans",
+      company_id: "comp-fashion-demo",
+      title: tplJeans.title,
+      niche_template: tplJeans.id,
+      prompt_instructions: tplJeans.prompt_instructions,
+      offer_price: tplJeans.offer_price,
+      benefits_json: tplJeans.benefits,
+      post_format: "SINGLE",
+      slides_count: 1,
+      aspect_ratio: "1:1",
+      approval_mode: "AUTO",
+      ai_photo_mode: "ENHANCE",
+      ai_photo_prompt: tplJeans.ai_photo_prompt,
+      schedule_days: [5],
+      schedule_time: "12:00",
+      is_active: true,
+      last_posted_at: null,
+      created_at: nowIso,
+    },
+  ];
+
+  const audits: AuditLogItem[] = [
+    {
+      id: "aud-init-1",
+      company_id: "comp-mgd",
+      company_name: "Meu Gestor Digital",
+      user_id: "usr-super-admin",
+      user_email: "admin@meugestordigital.com.br",
+      action: "SAAS_BOOTSTRAP",
+      details_json: {
+        message:
+          "Sistema inicializado com Meu Gestor Digital e Loja Vitrine Fashion (Exemplo).",
+      },
+      created_at: nowIso,
+    },
+  ];
+
+  return {
+    plans: DEFAULT_PLANS,
+    companies,
+    users,
+    brands,
+    integrations,
+    topics,
+    photos: [],
+    posts: [],
+    audits,
+    seededSupabase: false,
+  };
+}
+
+const globalForStore = globalThis as unknown as {
+  __mgdSaasMemoryDb?: InMemoryDatabase;
+};
+
+function getMemDb(): InMemoryDatabase {
+  if (!globalForStore.__mgdSaasMemoryDb) {
+    globalForStore.__mgdSaasMemoryDb = createInitialSeedData();
+  }
+  return globalForStore.__mgdSaasMemoryDb;
+}
+
+export function isSupabaseConfigured(): boolean {
+  return Boolean(
+    process.env.SUPABASE_URL?.trim() &&
+      process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()
+  );
+}
+
+export function getDatabaseMode(): "supabase" | "memory" {
+  return isSupabaseConfigured() ? "supabase" : "memory";
+}
+
+async function sbRequest<T>(
+  pathWithQuery: string,
+  init: RequestInit = {}
+): Promise<T> {
+  const baseUrl = process.env.SUPABASE_URL!.trim().replace(/\/+$/, "");
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!.trim();
+
+  const headers: Record<string, string> = {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    "Content-Type": "application/json",
+    ...(init.headers as Record<string, string> | undefined),
+  };
+
+  const res = await fetch(`${baseUrl}/rest/v1/${pathWithQuery}`, {
+    ...init,
+    headers,
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(
+      `Supabase REST falhou (${res.status} em ${pathWithQuery}): ${bodyText}`
+    );
+  }
+
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+async function ensureSeededInSupabase(): Promise<void> {
+  if (!isSupabaseConfigured()) return;
+  const mem = getMemDb();
+  if (mem.seededSupabase) return;
+
+  try {
+    const existing = await sbRequest<Array<{ id: string }>>(
+      "companies?select=id&limit=1"
+    );
+    if (existing.length > 0) {
+      mem.seededSupabase = true;
+      return;
+    }
+
+    await sbRequest("plans?on_conflict=id", {
+      method: "POST",
+      headers: { Prefer: "resolution=ignore-duplicates" },
+      body: JSON.stringify(mem.plans),
+    });
+    await sbRequest("companies?on_conflict=id", {
+      method: "POST",
+      headers: { Prefer: "resolution=ignore-duplicates" },
+      body: JSON.stringify(mem.companies),
+    });
+    await sbRequest("users?on_conflict=id", {
+      method: "POST",
+      headers: { Prefer: "resolution=ignore-duplicates" },
+      body: JSON.stringify(mem.users),
+    });
+    await sbRequest("brand_settings?on_conflict=company_id", {
+      method: "POST",
+      headers: { Prefer: "resolution=ignore-duplicates" },
+      body: JSON.stringify(mem.brands),
+    });
+    await sbRequest("integrations?on_conflict=company_id", {
+      method: "POST",
+      headers: { Prefer: "resolution=ignore-duplicates" },
+      body: JSON.stringify(mem.integrations),
+    });
+    await sbRequest("topics?on_conflict=id", {
+      method: "POST",
+      headers: { Prefer: "resolution=ignore-duplicates" },
+      body: JSON.stringify(mem.topics),
+    });
+
+    mem.seededSupabase = true;
+  } catch (err) {
+    console.warn(
+      "[store] Falha ao semear Supabase (verifique se schema.sql já foi executado):",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
+export function toPublicIntegrations(
+  integ: CompanyIntegrations
+): CompanyIntegrationsPublic {
+  return {
+    company_id: integ.company_id,
+    preferred_text_ai: integ.preferred_text_ai,
+    preferred_image_ai: integ.preferred_image_ai,
+    has_gemini_key: Boolean(decryptSecret(integ.gemini_key_enc)),
+    gemini_key_mask: maskSecret(integ.gemini_key_enc),
+    has_openai_key: Boolean(decryptSecret(integ.openai_key_enc)),
+    openai_key_mask: maskSecret(integ.openai_key_enc),
+    has_anthropic_key: Boolean(decryptSecret(integ.anthropic_key_enc)),
+    anthropic_key_mask: maskSecret(integ.anthropic_key_enc),
+    has_meta_token: Boolean(decryptSecret(integ.meta_token_enc)),
+    meta_token_mask: maskSecret(integ.meta_token_enc),
+    meta_token_expires_at: integ.meta_token_expires_at || null,
+    ig_user_id: integ.ig_user_id || "",
+    fb_page_id: integ.fb_page_id || "",
+    has_tiktok_token: Boolean(decryptSecret(integ.tiktok_token_enc)),
+    tiktok_open_id: integ.tiktok_open_id || "",
+    tiktok_enabled: Boolean(integ.tiktok_enabled),
+  };
+}
+
+export async function appendAuditLog(params: {
+  company_id?: string | null;
+  user_id?: string | null;
+  action: string;
+  details_json?: Record<string, unknown>;
+}): Promise<void> {
+  const item: AuditLogItem = {
+    id: generateId("aud"),
+    company_id: params.company_id ?? null,
+    user_id: params.user_id ?? null,
+    action: params.action,
+    details_json: params.details_json ?? {},
+    created_at: new Date().toISOString(),
+  };
+
+  if (isSupabaseConfigured()) {
+    try {
+      await sbRequest("audit_logs", {
+        method: "POST",
+        body: JSON.stringify(item),
+      });
+      return;
+    } catch {
+      // Fallback para memória se falhar
+    }
+  }
+
+  const mem = getMemDb();
+  mem.audits.unshift(item);
+  if (mem.audits.length > 200) mem.audits.length = 200;
+}
+
+export async function authenticateLogin(params: {
+  email?: string;
+  password?: string;
+  cronSecret?: string;
+}): Promise<{ user: Omit<UserAccount, "password_hash">; mode: "supabase" | "memory" } | null> {
+  await ensureSeededInSupabase();
+  const envCronSecret = process.env.CRON_SECRET?.trim();
+
+  // Suporte direto ao CRON_SECRET ou campo senha com CRON_SECRET para Super Admin
+  const rawSecret = params.cronSecret?.trim() || params.password?.trim() || "";
+  if (
+    envCronSecret &&
+    rawSecret === envCronSecret &&
+    (!params.email?.trim() ||
+      params.email.trim().toLowerCase() === "admin@meugestordigital.com.br")
+  ) {
+    const users = await listUsersInternal();
+    const superAdmin =
+      users.find((u) => u.role === "SUPER_ADMIN") || getMemDb().users[0];
+    const { password_hash: _ignored, ...safeUser } = superAdmin;
+    void _ignored;
+    await appendAuditLog({
+      company_id: safeUser.company_id,
+      user_id: safeUser.id,
+      action: "USER_LOGIN_CRON_SECRET",
+      details_json: { email: safeUser.email },
+    });
+    return { user: safeUser, mode: getDatabaseMode() };
+  }
+
+  const email = params.email?.trim().toLowerCase();
+  const password = params.password?.trim() || "";
+  if (!email || !password) return null;
+
+  const users = await listUsersInternal();
+  const found = users.find((u) => u.email.toLowerCase() === email);
+  if (!found) return null;
+  if (!verifyPassword(password, found.password_hash)) return null;
+
+  const { password_hash: _ignored, ...safeUser } = found;
+  void _ignored;
+  await appendAuditLog({
+    company_id: safeUser.company_id,
+    user_id: safeUser.id,
+    action: "USER_LOGIN",
+    details_json: { email: safeUser.email, role: safeUser.role },
+  });
+  return { user: safeUser, mode: getDatabaseMode() };
+}
+
+async function listUsersInternal(): Promise<UserAccount[]> {
+  if (isSupabaseConfigured()) {
+    try {
+      return await sbRequest<UserAccount[]>("users?select=*&order=created_at.asc");
+    } catch {
+      return getMemDb().users;
+    }
+  }
+  return getMemDb().users;
+}
+
+export async function listPlans(): Promise<Plan[]> {
+  await ensureSeededInSupabase();
+  if (isSupabaseConfigured()) {
+    try {
+      return await sbRequest<Plan[]>("plans?select=*&order=price_brl.asc");
+    } catch {
+      return getMemDb().plans;
+    }
+  }
+  return getMemDb().plans;
+}
+
+export async function listCompanies(): Promise<Company[]> {
+  await ensureSeededInSupabase();
+  if (isSupabaseConfigured()) {
+    try {
+      return await sbRequest<Company[]>(
+        "companies?select=*&order=created_at.asc"
+      );
+    } catch {
+      return getMemDb().companies;
+    }
+  }
+  return getMemDb().companies;
+}
+
+export async function getCompanyById(companyId: string): Promise<Company | null> {
+  const companies = await listCompanies();
+  return companies.find((c) => c.id === companyId) || null;
+}
+
+export async function getBrandSettings(
+  companyId: string
+): Promise<BrandSettings> {
+  await ensureSeededInSupabase();
+  if (isSupabaseConfigured()) {
+    try {
+      const rows = await sbRequest<BrandSettings[]>(
+        `brand_settings?company_id=eq.${encodeURIComponent(companyId)}&limit=1`
+      );
+      if (rows[0]) return rows[0];
+    } catch {
+      // Fallback
+    }
+  }
+  const found = getMemDb().brands.find((b) => b.company_id === companyId);
+  if (found) return found;
+
+  const preset = LUMINOUS_THEME_PRESETS[0];
+  return {
+    company_id: companyId,
+    theme_preset: preset.id,
+    footer_name: "Sua Empresa",
+    subtitle_default: "",
+    cta_default: 'COMENTE "EU QUERO"',
+    logo_url: null,
+    primary_color: preset.primary_color,
+    secondary_color: preset.secondary_color,
+    accent_color: preset.accent_color,
+    bg_color: preset.bg_color,
+    text_color: preset.text_color,
+  };
+}
+
+export async function getCompanyIntegrations(
+  companyId: string
+): Promise<CompanyIntegrations> {
+  await ensureSeededInSupabase();
+  if (isSupabaseConfigured()) {
+    try {
+      const rows = await sbRequest<CompanyIntegrations[]>(
+        `integrations?company_id=eq.${encodeURIComponent(companyId)}&limit=1`
+      );
+      if (rows[0]) return rows[0];
+    } catch {
+      // Fallback
+    }
+  }
+  const found = getMemDb().integrations.find((i) => i.company_id === companyId);
+  if (found) return found;
+
+  return {
+    company_id: companyId,
+    preferred_text_ai: "GEMINI",
+    preferred_image_ai: "GEMINI",
+    gemini_key_enc: null,
+    openai_key_enc: null,
+    anthropic_key_enc: null,
+    meta_token_enc: null,
+    meta_token_expires_at: null,
+    ig_user_id: null,
+    fb_page_id: null,
+    tiktok_token_enc: null,
+    tiktok_open_id: null,
+    tiktok_enabled: false,
+  };
+}
+
+export async function getCompanySecrets(companyId: string) {
+  const integ = await getCompanyIntegrations(companyId);
+  return {
+    preferred_text_ai: integ.preferred_text_ai,
+    preferred_image_ai: integ.preferred_image_ai,
+    gemini_api_key: decryptSecret(integ.gemini_key_enc),
+    openai_api_key: decryptSecret(integ.openai_key_enc),
+    anthropic_api_key: decryptSecret(integ.anthropic_key_enc),
+    meta_access_token: decryptSecret(integ.meta_token_enc),
+    meta_token_expires_at: integ.meta_token_expires_at || null,
+    ig_user_id: integ.ig_user_id?.trim() || null,
+    fb_page_id: integ.fb_page_id?.trim() || null,
+    tiktok_access_token: decryptSecret(integ.tiktok_token_enc),
+    tiktok_open_id: integ.tiktok_open_id?.trim() || null,
+    tiktok_enabled: Boolean(integ.tiktok_enabled),
+  };
+}
+
+export async function listTopicsByCompany(companyId: string): Promise<Topic[]> {
+  await ensureSeededInSupabase();
+  if (isSupabaseConfigured()) {
+    try {
+      return await sbRequest<Topic[]>(
+        `topics?company_id=eq.${encodeURIComponent(companyId)}&order=created_at.asc`
+      );
+    } catch {
+      // Fallback
+    }
+  }
+  return getMemDb().topics.filter((t) => t.company_id === companyId);
+}
+
+export async function listPhotosByCompany(
+  companyId: string
+): Promise<TopicPhoto[]> {
+  await ensureSeededInSupabase();
+  if (isSupabaseConfigured()) {
+    try {
+      return await sbRequest<TopicPhoto[]>(
+        `topic_photos?company_id=eq.${encodeURIComponent(companyId)}&order=created_at.desc`
+      );
+    } catch {
+      // Fallback
+    }
+  }
+  return getMemDb().photos.filter((p) => p.company_id === companyId);
+}
+
+export async function listPostsHistory(
+  companyId?: string,
+  limit = 40
+): Promise<PostHistoryItem[]> {
+  await ensureSeededInSupabase();
+  if (isSupabaseConfigured()) {
+    try {
+      const filter = companyId
+        ? `company_id=eq.${encodeURIComponent(companyId)}&`
+        : "";
+      return await sbRequest<PostHistoryItem[]>(
+        `posts_history?${filter}order=created_at.desc&limit=${limit}`
+      );
+    } catch {
+      // Fallback
+    }
+  }
+  const all = getMemDb().posts;
+  const filtered = companyId
+    ? all.filter((p) => p.company_id === companyId)
+    : all;
+  return filtered.slice(0, limit);
+}
+
+export async function listAuditLogs(
+  companyId?: string,
+  limit = 60
+): Promise<AuditLogItem[]> {
+  await ensureSeededInSupabase();
+  if (isSupabaseConfigured()) {
+    try {
+      const filter = companyId
+        ? `company_id=eq.${encodeURIComponent(companyId)}&`
+        : "";
+      return await sbRequest<AuditLogItem[]>(
+        `audit_logs?${filter}order=created_at.desc&limit=${limit}`
+      );
+    } catch {
+      // Fallback
+    }
+  }
+  const all = getMemDb().audits;
+  const filtered = companyId
+    ? all.filter((a) => a.company_id === companyId)
+    : all;
+  return filtered.slice(0, limit);
+}
+
+export async function getCompanyWorkspace(companyId: string) {
+  const [company, plans, brand, integrations, topics, photos, posts, audits] =
+    await Promise.all([
+      getCompanyById(companyId),
+      listPlans(),
+      getBrandSettings(companyId),
+      getCompanyIntegrations(companyId),
+      listTopicsByCompany(companyId),
+      listPhotosByCompany(companyId),
+      listPostsHistory(companyId, 30),
+      listAuditLogs(companyId, 30),
+    ]);
+
+  if (!company) return null;
+  const plan = plans.find((p) => p.id === company.plan_id) || plans[0];
+
+  return {
+    database_mode: getDatabaseMode(),
+    company,
+    plan,
+    brand,
+    integrations: toPublicIntegrations(integrations),
+    topics,
+    photos,
+    posts,
+    audits,
+  };
+}
+
+export async function getSuperAdminSnapshot() {
+  const [plans, companies, users, posts, audits] = await Promise.all([
+    listPlans(),
+    listCompanies(),
+    listUsersInternal(),
+    listPostsHistory(undefined, 50),
+    listAuditLogs(undefined, 80),
+  ]);
+
+  const enrichedCompanies = await Promise.all(
+    companies.map(async (c) => {
+      const integ = await getCompanyIntegrations(c.id);
+      const topics = await listTopicsByCompany(c.id);
+      const plan = plans.find((p) => p.id === c.plan_id) || plans[0];
+      return {
+        ...c,
+        plan_name: plan?.name || c.plan_id,
+        plan_price: plan?.price_brl || 0,
+        plan_limit: plan?.max_posts_month || 12,
+        topics_count: topics.length,
+        integrations: toPublicIntegrations(integ),
+      };
+    })
+  );
+
+  const safeUsers = users.map(({ password_hash: _p, ...u }) => {
+    void _p;
+    return u;
+  });
+
+  const activeMrr = enrichedCompanies
+    .filter((c) => c.status === "ACTIVE")
+    .reduce((sum, c) => sum + Number(c.plan_price || 0), 0);
+
+  return {
+    database_mode: getDatabaseMode(),
+    metrics: {
+      total_companies: companies.length,
+      active_companies: companies.filter((c) => c.status === "ACTIVE").length,
+      trial_companies: companies.filter((c) => c.status === "TRIAL").length,
+      blocked_or_due: companies.filter(
+        (c) => c.status === "BLOCKED" || c.status === "PAST_DUE"
+      ).length,
+      mrr_brl: activeMrr,
+      total_posts_month: companies.reduce(
+        (sum, c) => sum + (c.posts_used_month || 0),
+        0
+      ),
+    },
+    plans,
+    companies: enrichedCompanies,
+    users: safeUsers,
+    posts,
+    audits,
+  };
+}
+
+export async function saveBrandSettings(
+  companyId: string,
+  payload: Partial<BrandSettings>,
+  userId?: string
+): Promise<BrandSettings> {
+  const current = await getBrandSettings(companyId);
+  const next: BrandSettings = {
+    ...current,
+    ...payload,
+    company_id: companyId,
+  };
+
+  if (isSupabaseConfigured()) {
+    await sbRequest("brand_settings?on_conflict=company_id", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify({ ...next, updated_at: new Date().toISOString() }),
+    });
+  } else {
+    const mem = getMemDb();
+    const idx = mem.brands.findIndex((b) => b.company_id === companyId);
+    if (idx >= 0) mem.brands[idx] = next;
+    else mem.brands.push(next);
+  }
+
+  await appendAuditLog({
+    company_id: companyId,
+    user_id: userId,
+    action: "BRAND_UPDATED",
+    details_json: { theme_preset: next.theme_preset, footer_name: next.footer_name },
+  });
+
+  return next;
+}
+
+export async function saveCompanyIntegrations(
+  companyId: string,
+  input: {
+    preferred_text_ai?: "GEMINI" | "OPENAI" | "CLAUDE";
+    preferred_image_ai?: "GEMINI" | "OPENAI";
+    gemini_api_key?: string;
+    openai_api_key?: string;
+    anthropic_api_key?: string;
+    meta_access_token?: string;
+    meta_token_expires_at?: string | null;
+    ig_user_id?: string;
+    fb_page_id?: string;
+    tiktok_access_token?: string;
+    tiktok_open_id?: string;
+    tiktok_enabled?: boolean;
+  },
+  userId?: string
+): Promise<CompanyIntegrationsPublic> {
+  const current = await getCompanyIntegrations(companyId);
+
+  const next: CompanyIntegrations = {
+    ...current,
+    company_id: companyId,
+    preferred_text_ai: input.preferred_text_ai || current.preferred_text_ai,
+    preferred_image_ai: input.preferred_image_ai || current.preferred_image_ai,
+    gemini_key_enc:
+      input.gemini_api_key !== undefined
+        ? encryptSecret(input.gemini_api_key)
+        : current.gemini_key_enc,
+    openai_key_enc:
+      input.openai_api_key !== undefined
+        ? encryptSecret(input.openai_api_key)
+        : current.openai_key_enc,
+    anthropic_key_enc:
+      input.anthropic_api_key !== undefined
+        ? encryptSecret(input.anthropic_api_key)
+        : current.anthropic_key_enc,
+    meta_token_enc:
+      input.meta_access_token !== undefined
+        ? encryptSecret(input.meta_access_token)
+        : current.meta_token_enc,
+    meta_token_expires_at:
+      input.meta_token_expires_at !== undefined
+        ? input.meta_token_expires_at
+        : current.meta_token_expires_at,
+    ig_user_id:
+      input.ig_user_id !== undefined
+        ? input.ig_user_id.trim() || null
+        : current.ig_user_id,
+    fb_page_id:
+      input.fb_page_id !== undefined
+        ? input.fb_page_id.trim() || null
+        : current.fb_page_id,
+    tiktok_token_enc:
+      input.tiktok_access_token !== undefined
+        ? encryptSecret(input.tiktok_access_token)
+        : current.tiktok_token_enc,
+    tiktok_open_id:
+      input.tiktok_open_id !== undefined
+        ? input.tiktok_open_id.trim() || null
+        : current.tiktok_open_id,
+    tiktok_enabled:
+      input.tiktok_enabled !== undefined
+        ? input.tiktok_enabled
+        : current.tiktok_enabled,
+  };
+
+  if (isSupabaseConfigured()) {
+    await sbRequest("integrations?on_conflict=company_id", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify({ ...next, updated_at: new Date().toISOString() }),
+    });
+  } else {
+    const mem = getMemDb();
+    const idx = mem.integrations.findIndex((i) => i.company_id === companyId);
+    if (idx >= 0) mem.integrations[idx] = next;
+    else mem.integrations.push(next);
+  }
+
+  await appendAuditLog({
+    company_id: companyId,
+    user_id: userId,
+    action: "INTEGRATIONS_UPDATED",
+    details_json: {
+      preferred_text_ai: next.preferred_text_ai,
+      preferred_image_ai: next.preferred_image_ai,
+      tiktok_enabled: next.tiktok_enabled,
+    },
+  });
+
+  return toPublicIntegrations(next);
+}
+
+export async function upsertTopic(
+  companyId: string,
+  input: Partial<Topic> & { title: string; prompt_instructions: string },
+  userId?: string
+): Promise<Topic> {
+  const existingTopics = await listTopicsByCompany(companyId);
+  const existing = input.id
+    ? existingTopics.find((t) => t.id === input.id)
+    : undefined;
+
+  const topic: Topic = {
+    id: existing?.id || generateId("top"),
+    company_id: companyId,
+    title: input.title.trim(),
+    niche_template: input.niche_template || existing?.niche_template || "custom",
+    prompt_instructions: input.prompt_instructions.trim(),
+    offer_price:
+      input.offer_price !== undefined
+        ? input.offer_price
+        : existing?.offer_price || null,
+    benefits_json:
+      input.benefits_json ?? existing?.benefits_json ?? [],
+    post_format: input.post_format || existing?.post_format || "SINGLE",
+    slides_count: Math.min(
+      8,
+      Math.max(1, Number(input.slides_count ?? existing?.slides_count ?? 1))
+    ),
+    aspect_ratio: input.aspect_ratio || existing?.aspect_ratio || "1:1",
+    approval_mode: input.approval_mode || existing?.approval_mode || "AUTO",
+    ai_photo_mode: input.ai_photo_mode || existing?.ai_photo_mode || "NONE",
+    ai_photo_prompt:
+      input.ai_photo_prompt !== undefined
+        ? input.ai_photo_prompt
+        : existing?.ai_photo_prompt || null,
+    schedule_days:
+      input.schedule_days ?? existing?.schedule_days ?? [1, 3, 5],
+    schedule_time: input.schedule_time || existing?.schedule_time || "10:00",
+    is_active: input.is_active ?? existing?.is_active ?? true,
+    last_posted_at: existing?.last_posted_at || null,
+    created_at: existing?.created_at || new Date().toISOString(),
+  };
+
+  if (isSupabaseConfigured()) {
+    await sbRequest("topics?on_conflict=id", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(topic),
+    });
+  } else {
+    const mem = getMemDb();
+    const idx = mem.topics.findIndex((t) => t.id === topic.id);
+    if (idx >= 0) mem.topics[idx] = topic;
+    else mem.topics.push(topic);
+  }
+
+  await appendAuditLog({
+    company_id: companyId,
+    user_id: userId,
+    action: existing ? "TOPIC_UPDATED" : "TOPIC_CREATED",
+    details_json: {
+      topic_id: topic.id,
+      title: topic.title,
+      schedule_days: topic.schedule_days,
+      schedule_time: topic.schedule_time,
+    },
+  });
+
+  return topic;
+}
+
+export async function deleteTopic(
+  companyId: string,
+  topicId: string,
+  userId?: string
+): Promise<void> {
+  if (isSupabaseConfigured()) {
+    await sbRequest(
+      `topics?id=eq.${encodeURIComponent(topicId)}&company_id=eq.${encodeURIComponent(companyId)}`,
+      { method: "DELETE" }
+    );
+  } else {
+    const mem = getMemDb();
+    mem.topics = mem.topics.filter(
+      (t) => !(t.id === topicId && t.company_id === companyId)
+    );
+    mem.photos = mem.photos.filter((p) => p.topic_id !== topicId);
+  }
+
+  await appendAuditLog({
+    company_id: companyId,
+    user_id: userId,
+    action: "TOPIC_DELETED",
+    details_json: { topic_id: topicId },
+  });
+}
+
+export async function addTopicPhoto(params: {
+  company_id: string;
+  topic_id: string;
+  original_url: string;
+  ai_prompt_used?: string | null;
+  user_id?: string;
+}): Promise<TopicPhoto> {
+  const photo: TopicPhoto = {
+    id: generateId("pho"),
+    topic_id: params.topic_id,
+    company_id: params.company_id,
+    original_url: params.original_url,
+    enhanced_url: null,
+    ai_prompt_used: params.ai_prompt_used || null,
+    times_used: 0,
+    last_used_at: null,
+    created_at: new Date().toISOString(),
+  };
+
+  if (isSupabaseConfigured()) {
+    await sbRequest("topic_photos", {
+      method: "POST",
+      body: JSON.stringify(photo),
+    });
+  } else {
+    getMemDb().photos.unshift(photo);
+  }
+
+  await appendAuditLog({
+    company_id: params.company_id,
+    user_id: params.user_id,
+    action: "TOPIC_PHOTO_UPLOADED",
+    details_json: { topic_id: params.topic_id, photo_id: photo.id },
+  });
+
+  return photo;
+}
+
+export async function deleteTopicPhoto(
+  companyId: string,
+  photoId: string
+): Promise<void> {
+  if (isSupabaseConfigured()) {
+    await sbRequest(
+      `topic_photos?id=eq.${encodeURIComponent(photoId)}&company_id=eq.${encodeURIComponent(companyId)}`,
+      { method: "DELETE" }
+    );
+  } else {
+    const mem = getMemDb();
+    mem.photos = mem.photos.filter(
+      (p) => !(p.id === photoId && p.company_id === companyId)
+    );
+  }
+}
+
+export async function pickNextTopicPhoto(
+  companyId: string,
+  topicId: string
+): Promise<TopicPhoto | null> {
+  const all = await listPhotosByCompany(companyId);
+  const candidates = all.filter((p) => p.topic_id === topicId);
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => {
+    if (a.times_used !== b.times_used) return a.times_used - b.times_used;
+    const aTime = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
+    const bTime = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
+    return aTime - bTime;
+  });
+
+  return candidates[0];
+}
+
+export async function markTopicPhotoUsed(
+  photo: TopicPhoto,
+  enhancedUrl: string | null,
+  aiPromptUsed?: string | null
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const patch = {
+    times_used: photo.times_used + 1,
+    last_used_at: nowIso,
+    enhanced_url: enhancedUrl || photo.enhanced_url || null,
+    ai_prompt_used: aiPromptUsed || photo.ai_prompt_used || null,
+  };
+
+  if (isSupabaseConfigured()) {
+    await sbRequest(`topic_photos?id=eq.${encodeURIComponent(photo.id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+  } else {
+    const found = getMemDb().photos.find((p) => p.id === photo.id);
+    if (found) Object.assign(found, patch);
+  }
+}
+
+export async function getLastTopicHeadlines(
+  companyId: string,
+  topicId?: string | null,
+  limit = 10
+): Promise<string[]> {
+  const posts = await listPostsHistory(companyId, 30);
+  return posts
+    .filter((p) => (!topicId || p.topic_id === topicId) && p.headline)
+    .slice(0, limit)
+    .map((p) => p.headline);
+}
+
+export async function recordGeneratedPost(
+  item: Omit<PostHistoryItem, "id" | "created_at">
+): Promise<PostHistoryItem> {
+  const entry: PostHistoryItem = {
+    ...item,
+    id: generateId("pst"),
+    created_at: new Date().toISOString(),
+  };
+
+  if (isSupabaseConfigured()) {
+    await sbRequest("posts_history", {
+      method: "POST",
+      body: JSON.stringify(entry),
+    });
+  } else {
+    getMemDb().posts.unshift(entry);
+  }
+
+  if (entry.status === "PUBLISHED") {
+    await incrementCompanyPostUsage(entry.company_id, entry.topic_id);
+  }
+
+  return entry;
+}
+
+export async function updatePostRecord(
+  postId: string,
+  patch: Partial<PostHistoryItem>
+): Promise<PostHistoryItem | null> {
+  if (isSupabaseConfigured()) {
+    const updated = await sbRequest<PostHistoryItem[]>(
+      `posts_history?id=eq.${encodeURIComponent(postId)}`,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify(patch),
+      }
+    );
+    return updated[0] || null;
+  }
+
+  const found = getMemDb().posts.find((p) => p.id === postId);
+  if (!found) return null;
+  Object.assign(found, patch);
+  return found;
+}
+
+export async function incrementCompanyPostUsage(
+  companyId: string,
+  topicId?: string | null
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const company = await getCompanyById(companyId);
+  if (company) {
+    const newCount = (company.posts_used_month || 0) + 1;
+    if (isSupabaseConfigured()) {
+      await sbRequest(`companies?id=eq.${encodeURIComponent(companyId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ posts_used_month: newCount }),
+      });
+    } else {
+      company.posts_used_month = newCount;
+    }
+  }
+
+  if (topicId) {
+    if (isSupabaseConfigured()) {
+      await sbRequest(`topics?id=eq.${encodeURIComponent(topicId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ last_posted_at: nowIso }),
+      });
+    } else {
+      const topic = getMemDb().topics.find((t) => t.id === topicId);
+      if (topic) topic.last_posted_at = nowIso;
+    }
+  }
+}
+
+export async function checkCompanyQuotaAndStatus(companyId: string): Promise<{
+  allowed: boolean;
+  reason?: string;
+  company: Company;
+  plan: Plan;
+}> {
+  const company = await getCompanyById(companyId);
+  const plans = await listPlans();
+  if (!company) {
+    throw new Error(`Empresa não encontrada: ${companyId}`);
+  }
+  const plan = plans.find((p) => p.id === company.plan_id) || plans[0];
+
+  if (company.status === "BLOCKED" || company.status === "PAST_DUE") {
+    return {
+      allowed: false,
+      reason: `Assinatura da empresa "${company.name}" está ${company.status}. Renove ou desbloqueie no Super Admin.`,
+      company,
+      plan,
+    };
+  }
+
+  if (new Date(company.expires_at).getTime() < Date.now()) {
+    return {
+      allowed: false,
+      reason: `Assinatura da empresa "${company.name}" expirou em ${new Date(
+        company.expires_at
+      ).toLocaleDateString("pt-BR")}.`,
+      company,
+      plan,
+    };
+  }
+
+  if ((company.posts_used_month || 0) >= plan.max_posts_month) {
+    return {
+      allowed: false,
+      reason: `Limite mensal do plano ${plan.name} atingido (${company.posts_used_month}/${plan.max_posts_month} posts).`,
+      company,
+      plan,
+    };
+  }
+
+  return { allowed: true, company, plan };
+}
+
+export async function createOrUpdateCompanyByAdmin(input: {
+  id?: string;
+  name: string;
+  plan_id: string;
+  status: CompanyStatus;
+  expires_at: string;
+  owner_name?: string;
+  owner_whatsapp?: string;
+  admin_email?: string;
+  admin_password?: string;
+  reset_usage?: boolean;
+}) {
+  const existing = input.id ? await getCompanyById(input.id) : null;
+  const nowIso = new Date().toISOString();
+  const slug = input.name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  const company: Company = {
+    id: existing?.id || generateId("comp"),
+    name: input.name.trim(),
+    slug: existing?.slug || `${slug}-${Date.now().toString().slice(-4)}`,
+    plan_id: input.plan_id,
+    status: input.status,
+    expires_at: input.expires_at,
+    posts_used_month: input.reset_usage ? 0 : existing?.posts_used_month ?? 0,
+    owner_name: input.owner_name ?? existing?.owner_name ?? "",
+    owner_whatsapp: input.owner_whatsapp ?? existing?.owner_whatsapp ?? "",
+    created_at: existing?.created_at || nowIso,
+  };
+
+  if (isSupabaseConfigured()) {
+    await sbRequest("companies?on_conflict=id", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(company),
+    });
+  } else {
+    const mem = getMemDb();
+    const idx = mem.companies.findIndex((c) => c.id === company.id);
+    if (idx >= 0) mem.companies[idx] = company;
+    else mem.companies.push(company);
+  }
+
+  if (!existing) {
+    const preset = LUMINOUS_THEME_PRESETS[0];
+    await saveBrandSettings(company.id, {
+      theme_preset: preset.id,
+      footer_name: company.name,
+      subtitle_default: "Atendimento e Qualidade Garantida",
+      cta_default: 'COMENTE "EU QUERO"',
+      primary_color: preset.primary_color,
+      secondary_color: preset.secondary_color,
+      accent_color: preset.accent_color,
+      bg_color: preset.bg_color,
+      text_color: preset.text_color,
+    });
+    await saveCompanyIntegrations(company.id, {
+      preferred_text_ai: "GEMINI",
+      preferred_image_ai: "GEMINI",
+    });
+  }
+
+  if (input.admin_email?.trim() && input.admin_password?.trim()) {
+    const user: UserAccount = {
+      id: generateId("usr"),
+      company_id: company.id,
+      name: input.owner_name?.trim() || company.name,
+      email: input.admin_email.trim().toLowerCase(),
+      password_hash: hashPassword(input.admin_password.trim()),
+      role: "COMPANY_ADMIN",
+      last_login_at: null,
+      created_at: nowIso,
+    };
+    if (isSupabaseConfigured()) {
+      await sbRequest("users?on_conflict=email", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify(user),
+      });
+    } else {
+      getMemDb().users.push(user);
+    }
+  }
+
+  await appendAuditLog({
+    company_id: company.id,
+    action: existing ? "ADMIN_COMPANY_UPDATED" : "ADMIN_COMPANY_CREATED",
+    details_json: {
+      name: company.name,
+      plan_id: company.plan_id,
+      status: company.status,
+      expires_at: company.expires_at,
+    },
+  });
+
+  return company;
+}
+
+export async function updatePlanByAdmin(plan: Plan): Promise<Plan> {
+  if (isSupabaseConfigured()) {
+    await sbRequest("plans?on_conflict=id", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(plan),
+    });
+  } else {
+    const mem = getMemDb();
+    const idx = mem.plans.findIndex((p) => p.id === plan.id);
+    if (idx >= 0) mem.plans[idx] = plan;
+    else mem.plans.push(plan);
+  }
+
+  await appendAuditLog({
+    action: "ADMIN_PLAN_UPDATED",
+    details_json: { plan_id: plan.id, name: plan.name, price_brl: plan.price_brl },
+  });
+
+  return plan;
+}
+
+export async function findDueScheduledTopics(
+  slotHHmm: string,
+  weekday: number
+): Promise<Array<{ company: Company; topic: Topic }>> {
+  const companies = await listCompanies();
+  const due: Array<{ company: Company; topic: Topic }> = [];
+
+  for (const company of companies) {
+    if (company.status !== "ACTIVE" && company.status !== "TRIAL") continue;
+    if (new Date(company.expires_at).getTime() < Date.now()) continue;
+
+    const topics = await listTopicsByCompany(company.id);
+    for (const topic of topics) {
+      if (!topic.is_active) continue;
+      if (
+        topic.schedule_days.includes(weekday) &&
+        topic.schedule_time === slotHHmm
+      ) {
+        due.push({ company, topic });
+      }
+    }
+  }
+  return due;
+}
+
+export async function pickNextTopicForCompany(
+  companyId: string
+): Promise<Topic | null> {
+  const topics = (await listTopicsByCompany(companyId)).filter(
+    (t) => t.is_active
+  );
+  if (topics.length === 0) return null;
+
+  topics.sort((a, b) => {
+    const aTime = a.last_posted_at ? new Date(a.last_posted_at).getTime() : 0;
+    const bTime = b.last_posted_at ? new Date(b.last_posted_at).getTime() : 0;
+    return aTime - bTime;
+  });
+
+  return topics[0];
+}
