@@ -176,6 +176,11 @@ function createInitialSeedData(): InMemoryDatabase {
       meta_token_expires_at: null,
       ig_user_id: process.env.IG_USER_ID?.trim() || null,
       fb_page_id: process.env.FB_PAGE_ID?.trim() || null,
+      r2_account_id: process.env.R2_ACCOUNT_ID?.trim() || null,
+      r2_access_key_id_enc: encryptSecret(process.env.R2_ACCESS_KEY_ID),
+      r2_secret_access_key_enc: encryptSecret(process.env.R2_SECRET_ACCESS_KEY),
+      r2_bucket_name: process.env.R2_BUCKET_NAME?.trim() || null,
+      r2_public_url: process.env.R2_PUBLIC_URL?.trim() || null,
       tiktok_token_enc: null,
       tiktok_open_id: null,
       tiktok_enabled: false,
@@ -191,6 +196,11 @@ function createInitialSeedData(): InMemoryDatabase {
       meta_token_expires_at: null,
       ig_user_id: null,
       fb_page_id: null,
+      r2_account_id: null,
+      r2_access_key_id_enc: null,
+      r2_secret_access_key_enc: null,
+      r2_bucket_name: null,
+      r2_public_url: null,
       tiktok_token_enc: null,
       tiktok_open_id: null,
       tiktok_enabled: false,
@@ -878,9 +888,68 @@ async function ensureSeededInSupabase(): Promise<void> {
   }
 }
 
+function unpackIntegrationsRow(raw: CompanyIntegrations): CompanyIntegrations {
+  const result: CompanyIntegrations = { ...raw };
+  const decryptedTk = decryptSecret(raw.tiktok_token_enc);
+  if (decryptedTk && decryptedTk.startsWith('{"__packed":true')) {
+    try {
+      const packed = JSON.parse(decryptedTk) as {
+        __packed?: boolean;
+        tiktok_token?: string | null;
+        r2?: {
+          account_id?: string | null;
+          access_key_id?: string | null;
+          secret_access_key?: string | null;
+          bucket_name?: string | null;
+          public_url?: string | null;
+        };
+      };
+      result.tiktok_token_enc = packed.tiktok_token
+        ? encryptSecret(packed.tiktok_token)
+        : null;
+      if (packed.r2) {
+        result.r2_account_id = result.r2_account_id || packed.r2.account_id || null;
+        result.r2_access_key_id_enc =
+          result.r2_access_key_id_enc ||
+          (packed.r2.access_key_id
+            ? encryptSecret(packed.r2.access_key_id)
+            : null);
+        result.r2_secret_access_key_enc =
+          result.r2_secret_access_key_enc ||
+          (packed.r2.secret_access_key
+            ? encryptSecret(packed.r2.secret_access_key)
+            : null);
+        result.r2_bucket_name =
+          result.r2_bucket_name || packed.r2.bucket_name || null;
+        result.r2_public_url =
+          result.r2_public_url || packed.r2.public_url || null;
+      }
+    } catch {
+      // Ignora JSON inválido
+    }
+  }
+  return result;
+}
+
 export function toPublicIntegrations(
-  integ: CompanyIntegrations
+  rawInteg: CompanyIntegrations
 ): CompanyIntegrationsPublic {
+  const integ = unpackIntegrationsRow(rawInteg);
+  const hasCustomR2 = Boolean(
+    integ.r2_account_id?.trim() &&
+      decryptSecret(integ.r2_access_key_id_enc) &&
+      decryptSecret(integ.r2_secret_access_key_enc) &&
+      integ.r2_bucket_name?.trim() &&
+      integ.r2_public_url?.trim()
+  );
+  const hasGlobalR2 = Boolean(
+    process.env.R2_ACCOUNT_ID?.trim() &&
+      process.env.R2_ACCESS_KEY_ID?.trim() &&
+      process.env.R2_SECRET_ACCESS_KEY?.trim() &&
+      process.env.R2_BUCKET_NAME?.trim() &&
+      process.env.R2_PUBLIC_URL?.trim()
+  );
+
   return {
     company_id: integ.company_id,
     preferred_text_ai: integ.preferred_text_ai,
@@ -896,6 +965,14 @@ export function toPublicIntegrations(
     meta_token_expires_at: integ.meta_token_expires_at || null,
     ig_user_id: integ.ig_user_id || "",
     fb_page_id: integ.fb_page_id || "",
+    r2_account_id: integ.r2_account_id || "",
+    has_r2_access_key: Boolean(decryptSecret(integ.r2_access_key_id_enc)),
+    r2_access_key_mask: maskSecret(integ.r2_access_key_id_enc),
+    has_r2_secret_key: Boolean(decryptSecret(integ.r2_secret_access_key_enc)),
+    r2_secret_key_mask: maskSecret(integ.r2_secret_access_key_enc),
+    r2_bucket_name: integ.r2_bucket_name || "",
+    r2_public_url: integ.r2_public_url || "",
+    using_global_r2_fallback: !hasCustomR2 && hasGlobalR2,
     has_tiktok_token: Boolean(decryptSecret(integ.tiktok_token_enc)),
     tiktok_open_id: integ.tiktok_open_id || "",
     tiktok_enabled: Boolean(integ.tiktok_enabled),
@@ -1096,13 +1173,13 @@ export async function getCompanyIntegrations(
       const rows = await sbRequest<CompanyIntegrations[]>(
         `integrations?company_id=eq.${encodeURIComponent(companyId)}&limit=1`
       );
-      if (rows[0]) return rows[0];
+      if (rows[0]) return unpackIntegrationsRow(rows[0]);
     } catch {
       // Fallback
     }
   }
   const found = getMemDb().integrations.find((i) => i.company_id === companyId);
-  if (found) return found;
+  if (found) return unpackIntegrationsRow(found);
 
   return {
     company_id: companyId,
@@ -1115,6 +1192,11 @@ export async function getCompanyIntegrations(
     meta_token_expires_at: null,
     ig_user_id: null,
     fb_page_id: null,
+    r2_account_id: null,
+    r2_access_key_id_enc: null,
+    r2_secret_access_key_enc: null,
+    r2_bucket_name: null,
+    r2_public_url: null,
     tiktok_token_enc: null,
     tiktok_open_id: null,
     tiktok_enabled: false,
@@ -1133,6 +1215,13 @@ export async function getCompanySecrets(companyId: string) {
     meta_token_expires_at: integ.meta_token_expires_at || null,
     ig_user_id: integ.ig_user_id?.trim() || null,
     fb_page_id: integ.fb_page_id?.trim() || null,
+    r2_config: {
+      accountId: integ.r2_account_id?.trim() || null,
+      accessKeyId: decryptSecret(integ.r2_access_key_id_enc),
+      secretAccessKey: decryptSecret(integ.r2_secret_access_key_enc),
+      bucketName: integ.r2_bucket_name?.trim() || null,
+      publicUrl: integ.r2_public_url?.trim() || null,
+    },
     tiktok_access_token: decryptSecret(integ.tiktok_token_enc),
     tiktok_open_id: integ.tiktok_open_id?.trim() || null,
     tiktok_enabled: Boolean(integ.tiktok_enabled),
@@ -1350,6 +1439,11 @@ export async function saveCompanyIntegrations(
     meta_token_expires_at?: string | null;
     ig_user_id?: string;
     fb_page_id?: string;
+    r2_account_id?: string;
+    r2_access_key_id?: string;
+    r2_secret_access_key?: string;
+    r2_bucket_name?: string;
+    r2_public_url?: string;
     tiktok_access_token?: string;
     tiktok_open_id?: string;
     tiktok_enabled?: boolean;
@@ -1391,6 +1485,26 @@ export async function saveCompanyIntegrations(
       input.fb_page_id !== undefined
         ? input.fb_page_id.trim() || null
         : current.fb_page_id,
+    r2_account_id:
+      input.r2_account_id !== undefined
+        ? input.r2_account_id.trim() || null
+        : current.r2_account_id ?? null,
+    r2_access_key_id_enc:
+      input.r2_access_key_id !== undefined
+        ? encryptSecret(input.r2_access_key_id)
+        : current.r2_access_key_id_enc ?? null,
+    r2_secret_access_key_enc:
+      input.r2_secret_access_key !== undefined
+        ? encryptSecret(input.r2_secret_access_key)
+        : current.r2_secret_access_key_enc ?? null,
+    r2_bucket_name:
+      input.r2_bucket_name !== undefined
+        ? input.r2_bucket_name.trim() || null
+        : current.r2_bucket_name ?? null,
+    r2_public_url:
+      input.r2_public_url !== undefined
+        ? input.r2_public_url.trim().replace(/\/+$/, "") || null
+        : current.r2_public_url ?? null,
     tiktok_token_enc:
       input.tiktok_access_token !== undefined
         ? encryptSecret(input.tiktok_access_token)
@@ -1406,11 +1520,53 @@ export async function saveCompanyIntegrations(
   };
 
   if (isSupabaseConfigured()) {
-    await sbRequest("integrations?on_conflict=company_id", {
-      method: "POST",
-      headers: { Prefer: "resolution=merge-duplicates" },
-      body: JSON.stringify({ ...next, updated_at: new Date().toISOString() }),
-    });
+    const nowIso = new Date().toISOString();
+    try {
+      await sbRequest("integrations?on_conflict=company_id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify({ ...next, updated_at: nowIso }),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("PGRST204")) {
+        // Fallback compatível quando a tabela integrations no Supabase ainda não recebeu ALTER TABLE com colunas r2_*
+        const packedPayload = JSON.stringify({
+          __packed: true,
+          tiktok_token: decryptSecret(next.tiktok_token_enc),
+          r2: {
+            account_id: next.r2_account_id,
+            access_key_id: decryptSecret(next.r2_access_key_id_enc),
+            secret_access_key: decryptSecret(next.r2_secret_access_key_enc),
+            bucket_name: next.r2_bucket_name,
+            public_url: next.r2_public_url,
+          },
+        });
+        const legacyRow = {
+          company_id: next.company_id,
+          preferred_text_ai: next.preferred_text_ai,
+          preferred_image_ai: next.preferred_image_ai,
+          gemini_key_enc: next.gemini_key_enc,
+          openai_key_enc: next.openai_key_enc,
+          anthropic_key_enc: next.anthropic_key_enc,
+          meta_token_enc: next.meta_token_enc,
+          meta_token_expires_at: next.meta_token_expires_at,
+          ig_user_id: next.ig_user_id,
+          fb_page_id: next.fb_page_id,
+          tiktok_token_enc: encryptSecret(packedPayload),
+          tiktok_open_id: next.tiktok_open_id,
+          tiktok_enabled: next.tiktok_enabled,
+          updated_at: nowIso,
+        };
+        await sbRequest("integrations?on_conflict=company_id", {
+          method: "POST",
+          headers: { Prefer: "resolution=merge-duplicates" },
+          body: JSON.stringify(legacyRow),
+        });
+      } else {
+        throw err;
+      }
+    }
   } else {
     const mem = getMemDb();
     const idx = mem.integrations.findIndex((i) => i.company_id === companyId);

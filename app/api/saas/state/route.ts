@@ -4,6 +4,7 @@ import {
   inspectMetaTokenValidity,
   publishToMetaChannels,
   publishToTikTok,
+  testR2Connection,
   uploadBufferToR2,
 } from "@/lib/ai-engine";
 import {
@@ -331,6 +332,26 @@ export async function POST(request: NextRequest) {
             typeof integInput.fb_page_id === "string"
               ? integInput.fb_page_id
               : undefined,
+          r2_account_id:
+            typeof integInput.r2_account_id === "string"
+              ? integInput.r2_account_id
+              : undefined,
+          r2_access_key_id:
+            typeof integInput.r2_access_key_id === "string"
+              ? integInput.r2_access_key_id
+              : undefined,
+          r2_secret_access_key:
+            typeof integInput.r2_secret_access_key === "string"
+              ? integInput.r2_secret_access_key
+              : undefined,
+          r2_bucket_name:
+            typeof integInput.r2_bucket_name === "string"
+              ? integInput.r2_bucket_name
+              : undefined,
+          r2_public_url:
+            typeof integInput.r2_public_url === "string"
+              ? integInput.r2_public_url
+              : undefined,
           tiktok_access_token:
             typeof integInput.tiktok_access_token === "string"
               ? integInput.tiktok_access_token
@@ -402,6 +423,8 @@ export async function POST(request: NextRequest) {
             : `Erro HTTP ${res.status} no Claude.`,
         };
       }
+
+      report.cloudflare_r2 = await testR2Connection(secrets.r2_config);
 
       return NextResponse.json({ report });
     }
@@ -479,10 +502,12 @@ export async function POST(request: NextRequest) {
             : "image/jpeg";
         const ext = contentType.includes("png") ? "png" : "jpg";
         const buffer = Buffer.from(base64Clean, "base64");
+        const secrets = await getCompanySecrets(targetCompanyId);
         originalUrl = await uploadBufferToR2(
           buffer,
           `companies/${targetCompanyId}/originals/${Date.now()}.${ext}`,
-          contentType
+          contentType,
+          secrets.r2_config
         );
       }
 

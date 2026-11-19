@@ -1,4 +1,8 @@
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { GoogleGenAI, Type } from "@google/genai";
 import {
   AIProvider,
@@ -10,12 +14,40 @@ import {
 
 const META_GRAPH_BASE_URL = "https://graph.facebook.com/v21.0";
 
-function getR2Client() {
-  const accountId = process.env.R2_ACCOUNT_ID?.trim();
-  const accessKeyId = process.env.R2_ACCESS_KEY_ID?.trim();
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY?.trim();
-  const bucketName = process.env.R2_BUCKET_NAME?.trim();
-  const publicUrl = process.env.R2_PUBLIC_URL?.trim().replace(/\/+$/, "");
+export interface R2StorageConfig {
+  accountId?: string | null;
+  accessKeyId?: string | null;
+  secretAccessKey?: string | null;
+  bucketName?: string | null;
+  publicUrl?: string | null;
+}
+
+function getR2Client(r2Config?: R2StorageConfig) {
+  const hasCompleteCustomR2 = Boolean(
+    r2Config?.accountId?.trim() &&
+      r2Config?.accessKeyId?.trim() &&
+      r2Config?.secretAccessKey?.trim() &&
+      r2Config?.bucketName?.trim() &&
+      r2Config?.publicUrl?.trim()
+  );
+
+  const accountId = hasCompleteCustomR2
+    ? r2Config!.accountId!.trim()
+    : process.env.R2_ACCOUNT_ID?.trim();
+  const accessKeyId = hasCompleteCustomR2
+    ? r2Config!.accessKeyId!.trim()
+    : process.env.R2_ACCESS_KEY_ID?.trim();
+  const secretAccessKey = hasCompleteCustomR2
+    ? r2Config!.secretAccessKey!.trim()
+    : process.env.R2_SECRET_ACCESS_KEY?.trim();
+  const bucketName = hasCompleteCustomR2
+    ? r2Config!.bucketName!.trim()
+    : process.env.R2_BUCKET_NAME?.trim();
+  const publicUrl = (
+    hasCompleteCustomR2
+      ? r2Config!.publicUrl!.trim()
+      : process.env.R2_PUBLIC_URL?.trim() || ""
+  ).replace(/\/+$/, "");
 
   if (
     !accountId ||
@@ -25,7 +57,7 @@ function getR2Client() {
     !publicUrl
   ) {
     throw new Error(
-      "Credenciais do Cloudflare R2 ausentes no ambiente (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, R2_PUBLIC_URL)."
+      "Credenciais do Cloudflare R2 ausentes (configure na aba Integrações ou nas variáveis de ambiente)."
     );
   }
 
@@ -41,9 +73,10 @@ function getR2Client() {
 export async function uploadBufferToR2(
   buffer: Buffer,
   key: string,
-  contentType = "image/png"
+  contentType = "image/png",
+  r2Config?: R2StorageConfig
 ): Promise<string> {
-  const { client, bucketName, publicUrl } = getR2Client();
+  const { client, bucketName, publicUrl } = getR2Client(r2Config);
   await client.send(
     new PutObjectCommand({
       Bucket: bucketName,
@@ -53,6 +86,45 @@ export async function uploadBufferToR2(
     })
   );
   return `${publicUrl}/${key}`;
+}
+
+export async function testR2Connection(r2Config?: R2StorageConfig): Promise<{
+  valid: boolean;
+  mode: "custom" | "global_fallback";
+  bucket?: string;
+  message: string;
+}> {
+  const hasCompleteCustomR2 = Boolean(
+    r2Config?.accountId?.trim() &&
+      r2Config?.accessKeyId?.trim() &&
+      r2Config?.secretAccessKey?.trim() &&
+      r2Config?.bucketName?.trim() &&
+      r2Config?.publicUrl?.trim()
+  );
+
+  try {
+    const { client, bucketName } = getR2Client(r2Config);
+    await client.send(
+      new ListObjectsV2Command({ Bucket: bucketName, MaxKeys: 1 })
+    );
+    return {
+      valid: true,
+      mode: hasCompleteCustomR2 ? "custom" : "global_fallback",
+      bucket: bucketName,
+      message: hasCompleteCustomR2
+        ? `Bucket próprio "${bucketName}" conectado com sucesso.`
+        : `Usando bucket padrão do servidor ("${bucketName}").`,
+    };
+  } catch (err) {
+    return {
+      valid: false,
+      mode: hasCompleteCustomR2 ? "custom" : "global_fallback",
+      message:
+        err instanceof Error
+          ? `Falha no Cloudflare R2: ${err.message}`
+          : "Falha ao conectar no Cloudflare R2.",
+    };
+  }
 }
 
 function appendLog(logs: string[], msg: string) {
@@ -459,6 +531,7 @@ export async function enhanceProductPhotoWithAI(params: {
   aiPhotoPrompt?: string | null;
   preferredImageAI: ImageAIProvider;
   keys: { gemini?: string | null; openai?: string | null };
+  r2Config?: R2StorageConfig;
   logs: string[];
 }): Promise<string | null> {
   if (
@@ -518,7 +591,8 @@ export async function enhanceProductPhotoWithAI(params: {
         const uploaded = await uploadBufferToR2(
           outBuf,
           `companies/${params.companyId}/enhanced/${Date.now()}.png`,
-          "image/png"
+          "image/png",
+          params.r2Config
         );
         appendLog(
           params.logs,
@@ -569,7 +643,8 @@ export async function enhanceProductPhotoWithAI(params: {
         const uploaded = await uploadBufferToR2(
           outBuf,
           `companies/${params.companyId}/enhanced/${Date.now()}.png`,
-          outMime
+          outMime,
+          params.r2Config
         );
         appendLog(
           params.logs,
@@ -868,33 +943,126 @@ export async function publishToMetaChannels(params: {
       );
     }
 
-    const fbRes = await fetch(`${META_GRAPH_BASE_URL}/${fbId}/photos`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url: params.imageUrls[0],
-        message: params.caption,
-        access_token: pageTokenData.access_token,
-      }),
-    });
-    const fbData = (await fbRes.json()) as {
-      id?: string;
-      post_id?: string;
-      error?: { message?: string };
-    };
-    const fbPostId = fbData.post_id || fbData.id;
-    if (!fbRes.ok || !fbPostId) {
-      throw new Error(
-        `Meta FB /photos falhou: ${fbData.error?.message || fbRes.statusText}`
+    if (params.imageUrls.length === 1) {
+      const fbRes = await fetch(`${META_GRAPH_BASE_URL}/${fbId}/photos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: params.imageUrls[0],
+          message: params.caption,
+          access_token: pageTokenData.access_token,
+        }),
+      });
+      const fbData = (await fbRes.json()) as {
+        id?: string;
+        post_id?: string;
+        error?: { message?: string };
+      };
+      const fbPostId = fbData.post_id || fbData.id;
+      if (!fbRes.ok || !fbPostId) {
+        throw new Error(
+          `Meta FB /photos falhou: ${fbData.error?.message || fbRes.statusText}`
+        );
+      }
+      facebookPostId = fbPostId;
+      appendLog(
+        params.logs,
+        `Meta FB: Foto única publicada na Página "${
+          pageTokenData.name || fbId
+        }" (ID ${facebookPostId}).`
       );
+    } else {
+      appendLog(
+        params.logs,
+        `Meta FB Multi-Fotos: Enviando ${params.imageUrls.length} slides sem publicar para compor o álbum no feed...`
+      );
+      const attachedMedia: Array<{ media_fbid: string }> = [];
+
+      for (let i = 0; i < params.imageUrls.length; i++) {
+        const photoRes = await fetch(`${META_GRAPH_BASE_URL}/${fbId}/photos`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: params.imageUrls[i],
+            published: false,
+            access_token: pageTokenData.access_token,
+          }),
+        });
+        const photoData = (await photoRes.json()) as {
+          id?: string;
+          error?: { message?: string };
+        };
+        if (!photoRes.ok || !photoData.id) {
+          throw new Error(
+            `Meta FB slide ${i + 1} (/photos published=false) falhou: ${
+              photoData.error?.message || photoRes.statusText
+            }`
+          );
+        }
+        attachedMedia.push({ media_fbid: photoData.id });
+      }
+
+      const feedRes = await fetch(`${META_GRAPH_BASE_URL}/${fbId}/feed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: params.caption,
+          attached_media: attachedMedia,
+          access_token: pageTokenData.access_token,
+        }),
+      });
+      const feedData = (await feedRes.json()) as {
+        id?: string;
+        error?: { message?: string };
+      };
+
+      if (feedRes.ok && feedData.id) {
+        facebookPostId = feedData.id;
+        appendLog(
+          params.logs,
+          `Meta FB Multi-Fotos: Post com ${attachedMedia.length} imagens publicado na Página "${
+            pageTokenData.name || fbId
+          }" (ID ${facebookPostId}).`
+        );
+      } else {
+        appendLog(
+          params.logs,
+          `Meta FB /feed aviso (${
+            feedData.error?.message || feedRes.statusText
+          }). Executando fallback para foto de capa em /photos...`
+        );
+        const fallbackRes = await fetch(
+          `${META_GRAPH_BASE_URL}/${fbId}/photos`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              url: params.imageUrls[0],
+              message: params.caption,
+              access_token: pageTokenData.access_token,
+            }),
+          }
+        );
+        const fallbackData = (await fallbackRes.json()) as {
+          id?: string;
+          post_id?: string;
+          error?: { message?: string };
+        };
+        const fbPostId = fallbackData.post_id || fallbackData.id;
+        if (!fallbackRes.ok || !fbPostId) {
+          throw new Error(
+            `Meta FB fallback /photos falhou: ${
+              fallbackData.error?.message || fallbackRes.statusText
+            }`
+          );
+        }
+        facebookPostId = fbPostId;
+        appendLog(
+          params.logs,
+          `Meta FB: Capa publicada via fallback (ID ${facebookPostId}).`
+        );
+      }
     }
-    facebookPostId = fbPostId;
-    appendLog(
-      params.logs,
-      `Meta FB: Publicado na Página "${
-        pageTokenData.name || fbId
-      }" (ID ${facebookPostId}).`
-    );
   } else {
     appendLog(params.logs, "Meta FB: FB_PAGE_ID não informado, pulando.");
   }

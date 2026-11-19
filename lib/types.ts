@@ -67,6 +67,11 @@ export interface CompanyIntegrations {
   meta_token_expires_at?: string | null;
   ig_user_id?: string | null;
   fb_page_id?: string | null;
+  r2_account_id?: string | null;
+  r2_access_key_id_enc?: string | null;
+  r2_secret_access_key_enc?: string | null;
+  r2_bucket_name?: string | null;
+  r2_public_url?: string | null;
   tiktok_token_enc?: string | null;
   tiktok_open_id?: string | null;
   tiktok_enabled: boolean;
@@ -87,6 +92,14 @@ export interface CompanyIntegrationsPublic {
   meta_token_expires_at: string | null;
   ig_user_id: string;
   fb_page_id: string;
+  r2_account_id: string;
+  has_r2_access_key: boolean;
+  r2_access_key_mask: string;
+  has_r2_secret_key: boolean;
+  r2_secret_key_mask: string;
+  r2_bucket_name: string;
+  r2_public_url: string;
+  using_global_r2_fallback: boolean;
   has_tiktok_token: boolean;
   tiktok_open_id: string;
   tiktok_enabled: boolean;

@@ -144,7 +144,8 @@ async function runPostPipeline(params: {
     originalPhotoUrl = await uploadBufferToR2(
       Buffer.from(cleanB64, "base64"),
       `companies/${params.companyId}/originals/${Date.now()}.${ext}`,
-      mime
+      mime,
+      secrets.r2_config
     );
     log(`Foto original enviada ao R2: ${originalPhotoUrl}`);
   } else if (!originalPhotoUrl && topic) {
@@ -177,6 +178,7 @@ async function runPostPipeline(params: {
         gemini: secrets.gemini_api_key,
         openai: secrets.openai_api_key,
       },
+      r2Config: secrets.r2_config,
       logs,
     });
   }
@@ -247,7 +249,12 @@ async function runPostPipeline(params: {
   const stamp = Date.now();
   for (let i = 0; i < buffers.length; i++) {
     const key = `companies/${params.companyId}/posts/${stamp}-slide-${i + 1}.png`;
-    const url = await uploadBufferToR2(buffers[i], key, "image/png");
+    const url = await uploadBufferToR2(
+      buffers[i],
+      key,
+      "image/png",
+      secrets.r2_config
+    );
     imageUrls.push(url);
   }
   log(`Upload no R2 concluído (${imageUrls.length} imagem(ns)).`);

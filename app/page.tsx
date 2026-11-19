@@ -187,6 +187,11 @@ export default function SaasAppPage() {
   const [integMetaToken, setIntegMetaToken] = useState("");
   const [integIgUserId, setIntegIgUserId] = useState("");
   const [integFbPageId, setIntegFbPageId] = useState("");
+  const [integR2AccountId, setIntegR2AccountId] = useState("");
+  const [integR2Bucket, setIntegR2Bucket] = useState("");
+  const [integR2PublicUrl, setIntegR2PublicUrl] = useState("");
+  const [integR2AccessKey, setIntegR2AccessKey] = useState("");
+  const [integR2SecretKey, setIntegR2SecretKey] = useState("");
   const [integTiktokEnabled, setIntegTiktokEnabled] = useState(false);
   const [integTiktokOpenId, setIntegTiktokOpenId] = useState("");
   const [integTiktokToken, setIntegTiktokToken] = useState("");
@@ -261,6 +266,11 @@ export default function SaasAppPage() {
     setIntegImageAi(ws.integrations.preferred_image_ai);
     setIntegIgUserId(ws.integrations.ig_user_id || "");
     setIntegFbPageId(ws.integrations.fb_page_id || "");
+    setIntegR2AccountId(ws.integrations.r2_account_id || "");
+    setIntegR2Bucket(ws.integrations.r2_bucket_name || "");
+    setIntegR2PublicUrl(ws.integrations.r2_public_url || "");
+    setIntegR2AccessKey("");
+    setIntegR2SecretKey("");
     setIntegTiktokEnabled(ws.integrations.tiktok_enabled);
     setIntegTiktokOpenId(ws.integrations.tiktok_open_id || "");
     setIntegGeminiKey("");
@@ -551,6 +561,9 @@ export default function SaasAppPage() {
         preferred_image_ai: integImageAi,
         ig_user_id: integIgUserId,
         fb_page_id: integFbPageId,
+        r2_account_id: integR2AccountId,
+        r2_bucket_name: integR2Bucket,
+        r2_public_url: integR2PublicUrl,
         tiktok_enabled: integTiktokEnabled,
         tiktok_open_id: integTiktokOpenId,
       };
@@ -560,6 +573,10 @@ export default function SaasAppPage() {
         payload.anthropic_api_key = integAnthropicKey.trim();
       if (integMetaToken.trim())
         payload.meta_access_token = integMetaToken.trim();
+      if (integR2AccessKey.trim())
+        payload.r2_access_key_id = integR2AccessKey.trim();
+      if (integR2SecretKey.trim())
+        payload.r2_secret_access_key = integR2SecretKey.trim();
       if (integTiktokToken.trim())
         payload.tiktok_access_token = integTiktokToken.trim();
 
@@ -579,6 +596,8 @@ export default function SaasAppPage() {
       setIntegOpenAiKey("");
       setIntegAnthropicKey("");
       setIntegMetaToken("");
+      setIntegR2AccessKey("");
+      setIntegR2SecretKey("");
       setIntegTiktokToken("");
       setGlobalNotice({
         type: "success",
@@ -1980,7 +1999,14 @@ export default function SaasAppPage() {
                       )}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
-                      TikTok:{" "}
+                      R2:{" "}
+                      {workspace.integrations.has_r2_access_key &&
+                      workspace.integrations.r2_bucket_name
+                        ? "Próprio"
+                        : workspace.integrations.using_global_r2_fallback
+                        ? "Padrão"
+                        : "Pendente"}{" "}
+                      • TikTok:{" "}
                       {workspace.integrations.tiktok_enabled
                         ? "Ativado"
                         : "Pronto p/ conectar"}
@@ -3217,6 +3243,90 @@ export default function SaasAppPage() {
                     </div>
                   </div>
 
+                  {/* Cloudflare R2 Storage */}
+                  <div className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50/40 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-extrabold uppercase tracking-wider text-cyan-900">
+                        Cloudflare R2 Storage (Hospedagem de Mídias)
+                      </p>
+                      <span
+                        className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                          workspace.integrations.has_r2_access_key &&
+                          workspace.integrations.r2_bucket_name
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-slate-200 text-slate-700"
+                        }`}
+                      >
+                        {workspace.integrations.has_r2_access_key &&
+                        workspace.integrations.r2_bucket_name
+                          ? "R2 Próprio Conectado"
+                          : workspace.integrations.using_global_r2_fallback
+                          ? "Usando R2 Padrão do Servidor"
+                          : "Não Configurado"}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <input
+                        value={integR2AccountId}
+                        onChange={(e) => setIntegR2AccountId(e.target.value)}
+                        placeholder="R2_ACCOUNT_ID"
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                      />
+                      <input
+                        value={integR2Bucket}
+                        onChange={(e) => setIntegR2Bucket(e.target.value)}
+                        placeholder="R2_BUCKET_NAME (ex: minha-loja-media)"
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                      />
+                    </div>
+                    <input
+                      value={integR2PublicUrl}
+                      onChange={(e) => setIntegR2PublicUrl(e.target.value)}
+                      placeholder="R2_PUBLIC_URL (ex: https://pub-xxxx.r2.dev)"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                    />
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700">
+                          R2_ACCESS_KEY_ID{" "}
+                          {workspace.integrations.has_r2_access_key && (
+                            <span className="font-mono text-emerald-700">
+                              ({workspace.integrations.r2_access_key_mask})
+                            </span>
+                          )}
+                        </label>
+                        <input
+                          type="password"
+                          value={integR2AccessKey}
+                          onChange={(e) => setIntegR2AccessKey(e.target.value)}
+                          placeholder="Cole p/ salvar ou substituir..."
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700">
+                          R2_SECRET_ACCESS_KEY{" "}
+                          {workspace.integrations.has_r2_secret_key && (
+                            <span className="font-mono text-emerald-700">
+                              ({workspace.integrations.r2_secret_key_mask})
+                            </span>
+                          )}
+                        </label>
+                        <input
+                          type="password"
+                          value={integR2SecretKey}
+                          onChange={(e) => setIntegR2SecretKey(e.target.value)}
+                          placeholder="Cole p/ salvar ou substituir..."
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Se o cliente deixar em branco, o sistema usa automaticamente
+                      o bucket padrão da agência.
+                    </p>
+                  </div>
+
                   <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-extrabold uppercase tracking-wider text-slate-800">
@@ -3310,6 +3420,21 @@ export default function SaasAppPage() {
                           pages_manage_posts
                         </code>
                         .
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3.5">
+                      <p className="font-extrabold text-indigo-700">
+                        4. Cloudflare R2 Storage (10 GB Grátis)
+                      </p>
+                      <p className="mt-1">
+                        Acesse <code>dash.cloudflare.com</code> →{" "}
+                        <strong>R2 Object Storage</strong> → crie um bucket,
+                        ative o acesso público (<strong>Public r2.dev URL</strong>
+                        ) em Settings e clique em{" "}
+                        <strong>Manage R2 API Tokens</strong> →{" "}
+                        <em>Create API token</em> (Object Read &amp; Write) para
+                        copiar o <code>Access Key ID</code> e{" "}
+                        <code>Secret Access Key</code>.
                       </p>
                     </div>
                   </div>
