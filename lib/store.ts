@@ -392,6 +392,390 @@ export function getDatabaseMode(): "supabase" | "memory" {
   return isSupabaseConfigured() ? "supabase" : "memory";
 }
 
+function getSupabaseKeys() {
+  const baseUrl = process.env.SUPABASE_URL!.trim().replace(/\/+$/, "");
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!.trim();
+  const anonKey =
+    process.env.SUPABASE_ANON_KEY?.trim() || serviceKey;
+  return { baseUrl, serviceKey, anonKey };
+}
+
+async function sbAuthRequest<T>(
+  pathWithQuery: string,
+  options: {
+    method?: string;
+    body?: unknown;
+    bearerToken?: string;
+    useAnonKey?: boolean;
+  } = {}
+): Promise<{ ok: boolean; status: number; data: T }> {
+  const { baseUrl, serviceKey, anonKey } = getSupabaseKeys();
+  const apiKey = options.useAnonKey ? anonKey : serviceKey;
+  const bearer = options.bearerToken || apiKey;
+
+  const res = await fetch(`${baseUrl}/auth/v1/${pathWithQuery}`, {
+    method: options.method || "GET",
+    headers: {
+      apikey: apiKey,
+      Authorization: `Bearer ${bearer}`,
+      "Content-Type": "application/json",
+    },
+    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    cache: "no-store",
+  });
+
+  const text = await res.text().catch(() => "");
+  let data = {} as T;
+  if (text) {
+    try {
+      data = JSON.parse(text) as T;
+    } catch {
+      data = { message: text } as unknown as T;
+    }
+  }
+  return { ok: res.ok, status: res.status, data };
+}
+
+export async function findSupabaseAuthUserByEmail(email: string): Promise<{
+  id: string;
+  email?: string;
+  user_metadata?: Record<string, unknown>;
+} | null> {
+  if (!isSupabaseConfigured()) return null;
+  const cleanEmail = email.trim().toLowerCase();
+  const res = await sbAuthRequest<{
+    users?: Array<{
+      id: string;
+      email?: string;
+      user_metadata?: Record<string, unknown>;
+    }>;
+  }>(`admin/users?page=1&per_page=50&filter=${encodeURIComponent(cleanEmail)}`);
+
+  if (!res.ok || !Array.isArray(res.data?.users)) return null;
+  return (
+    res.data.users.find((u) => u.email?.toLowerCase() === cleanEmail) || null
+  );
+}
+
+export async function ensureSupabaseAuthUser(params: {
+  email: string;
+  password: string;
+  name: string;
+  role: string;
+  company_id: string | null;
+}) {
+  if (!isSupabaseConfigured()) return null;
+  const cleanEmail = params.email.trim().toLowerCase();
+  const existing = await findSupabaseAuthUserByEmail(cleanEmail);
+  if (existing) return existing;
+
+  const created = await sbAuthRequest<{
+    id: string;
+    email?: string;
+    msg?: string;
+    message?: string;
+  }>("admin/users", {
+    method: "POST",
+    body: {
+      email: cleanEmail,
+      password: params.password,
+      email_confirm: true,
+      user_metadata: {
+        name: params.name,
+        role: params.role,
+        company_id: params.company_id,
+      },
+    },
+  });
+
+  if (!created.ok) {
+    console.warn("[supabase-auth] Não foi possível criar usuário em auth.users:", created.data);
+    return null;
+  }
+  return created.data;
+}
+
+async function verifyPasswordWithSupabaseAuth(
+  email: string,
+  password: string
+): Promise<boolean> {
+  if (!isSupabaseConfigured()) return false;
+  const res = await sbAuthRequest<{ access_token?: string }>(
+    "token?grant_type=password",
+    {
+      method: "POST",
+      useAnonKey: true,
+      body: { email: email.trim().toLowerCase(), password },
+    }
+  );
+  return res.ok && Boolean(res.data?.access_token);
+}
+
+export async function sendSupabasePasswordRecoveryEmail(
+  email: string,
+  redirectTo?: string
+): Promise<{ sent: boolean; message: string }> {
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail) {
+    throw new Error("Informe o e-mail para enviar o link de recuperação.");
+  }
+  if (!isSupabaseConfigured()) {
+    throw new Error(
+      "Supabase não configurado neste ambiente. Use a redefinição rápida com CRON_SECRET."
+    );
+  }
+
+  const query = redirectTo
+    ? `?redirect_to=${encodeURIComponent(redirectTo)}`
+    : "";
+  const res = await sbAuthRequest<{ msg?: string; message?: string; error_description?: string }>(
+    `recover${query}`,
+    {
+      method: "POST",
+      useAnonKey: true,
+      body: { email: cleanEmail },
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(
+      res.data?.msg ||
+        res.data?.message ||
+        res.data?.error_description ||
+        `Erro ao solicitar recuperação no Supabase (HTTP ${res.status}).`
+    );
+  }
+
+  await appendAuditLog({
+    action: "PASSWORD_RECOVERY_REQUESTED",
+    details_json: { email: cleanEmail },
+  });
+
+  return {
+    sent: true,
+    message:
+      "Se o e-mail estiver cadastrado no Authentication do Supabase, enviamos um link de redefinição de senha para sua caixa de entrada (e spam).",
+  };
+}
+
+export async function resetPasswordWithRecoveryAccessToken(
+  accessToken: string,
+  newPassword: string
+): Promise<{ email: string }> {
+  if (!isSupabaseConfigured()) {
+    throw new Error("Supabase não está configurado.");
+  }
+  if (newPassword.trim().length < 6) {
+    throw new Error("A nova senha deve ter pelo menos 6 caracteres.");
+  }
+
+  const userRes = await sbAuthRequest<{ id?: string; email?: string; message?: string }>(
+    "user",
+    {
+      method: "GET",
+      useAnonKey: true,
+      bearerToken: accessToken.trim(),
+    }
+  );
+
+  if (!userRes.ok || !userRes.data?.email) {
+    throw new Error(
+      "Link de recuperação inválido ou expirado. Solicite um novo link."
+    );
+  }
+
+  const updateRes = await sbAuthRequest<{ email?: string; msg?: string; message?: string }>(
+    "user",
+    {
+      method: "PUT",
+      useAnonKey: true,
+      bearerToken: accessToken.trim(),
+      body: { password: newPassword.trim() },
+    }
+  );
+
+  if (!updateRes.ok) {
+    throw new Error(
+      updateRes.data?.msg ||
+        updateRes.data?.message ||
+        "Não foi possível atualizar a senha pelo token de recuperação."
+    );
+  }
+
+  const cleanEmail = userRes.data.email.toLowerCase();
+  const newHash = hashPassword(newPassword.trim());
+  await sbRequest(`users?email=eq.${encodeURIComponent(cleanEmail)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ password_hash: newHash }),
+  });
+
+  await appendAuditLog({
+    action: "PASSWORD_RESET_VIA_EMAIL_LINK",
+    details_json: { email: cleanEmail },
+  });
+
+  return { email: cleanEmail };
+}
+
+export async function resetUserPasswordByAdminOrSecret(params: {
+  email: string;
+  newPassword: string;
+}): Promise<{ email: string }> {
+  const cleanEmail = params.email.trim().toLowerCase();
+  const pwd = params.newPassword.trim();
+  if (!cleanEmail || pwd.length < 6) {
+    throw new Error(
+      "Informe um e-mail válido e uma nova senha com pelo menos 6 caracteres."
+    );
+  }
+
+  const users = await listUsersInternal();
+  const localUser = users.find((u) => u.email.toLowerCase() === cleanEmail);
+  if (!localUser) {
+    throw new Error(`Nenhuma conta encontrada com o e-mail "${cleanEmail}".`);
+  }
+
+  const newHash = hashPassword(pwd);
+
+  if (isSupabaseConfigured()) {
+    const authUser = await ensureSupabaseAuthUser({
+      email: cleanEmail,
+      password: pwd,
+      name: localUser.name,
+      role: localUser.role,
+      company_id: localUser.company_id,
+    });
+
+    if (authUser?.id) {
+      const upd = await sbAuthRequest<{ msg?: string; message?: string }>(
+        `admin/users/${authUser.id}`,
+        {
+          method: "PUT",
+          body: { password: pwd, email_confirm: true },
+        }
+      );
+      if (!upd.ok) {
+        throw new Error(
+          upd.data?.msg ||
+            upd.data?.message ||
+            "Erro ao atualizar senha no Supabase Authentication."
+        );
+      }
+    }
+
+    await sbRequest(`users?email=eq.${encodeURIComponent(cleanEmail)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ password_hash: newHash }),
+    });
+  } else {
+    localUser.password_hash = newHash;
+  }
+
+  await appendAuditLog({
+    company_id: localUser.company_id,
+    user_id: localUser.id,
+    action: "PASSWORD_RESET_BY_CRON_SECRET",
+    details_json: { email: cleanEmail },
+  });
+
+  return { email: cleanEmail };
+}
+
+export async function registerNewAccount(input: {
+  companyName?: string;
+  name: string;
+  whatsapp?: string;
+  email: string;
+  password: string;
+  adminSecret?: string;
+}): Promise<{ user: Omit<UserAccount, "password_hash">; mode: "supabase" | "memory" }> {
+  await ensureSeededInSupabase();
+  const cleanEmail = input.email.trim().toLowerCase();
+  const pwd = input.password.trim();
+  const fullName = input.name.trim();
+
+  if (!fullName || !cleanEmail || pwd.length < 6) {
+    throw new Error(
+      "Preencha nome, e-mail válido e senha com no mínimo 6 caracteres."
+    );
+  }
+
+  const users = await listUsersInternal();
+  if (users.some((u) => u.email.toLowerCase() === cleanEmail)) {
+    throw new Error(
+      "Este e-mail já está cadastrado. Faça login ou clique em Esqueci minha senha."
+    );
+  }
+
+  const envCron = process.env.CRON_SECRET?.trim();
+  const suppliedAdminSecret = input.adminSecret?.trim() || "";
+  if (suppliedAdminSecret && suppliedAdminSecret !== envCron) {
+    throw new Error(
+      "Código Super Admin inválido. Deixe o campo vazio para criar conta de Empresa Cliente."
+    );
+  }
+
+  const isSuperAdminSignup = Boolean(
+    suppliedAdminSecret && envCron && suppliedAdminSecret === envCron
+  );
+
+  let targetCompanyId = "comp-mgd";
+  if (!isSuperAdminSignup || input.companyName?.trim()) {
+    const trialExpires = new Date(
+      Date.now() + 14 * 24 * 60 * 60 * 1000
+    ).toISOString();
+    const company = await createOrUpdateCompanyByAdmin({
+      name: input.companyName?.trim() || `Empresa de ${fullName}`,
+      plan_id: isSuperAdminSignup ? "plan-agency" : "plan-pro",
+      status: isSuperAdminSignup ? "ACTIVE" : "TRIAL",
+      expires_at: trialExpires,
+      owner_name: fullName,
+      owner_whatsapp: input.whatsapp?.trim() || "",
+    });
+    targetCompanyId = company.id;
+  }
+
+  const role = isSuperAdminSignup ? "SUPER_ADMIN" : "COMPANY_ADMIN";
+  const newUser: UserAccount = {
+    id: generateId("usr"),
+    company_id: targetCompanyId,
+    name: fullName,
+    email: cleanEmail,
+    password_hash: hashPassword(pwd),
+    role,
+    last_login_at: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+  };
+
+  if (isSupabaseConfigured()) {
+    await ensureSupabaseAuthUser({
+      email: cleanEmail,
+      password: pwd,
+      name: fullName,
+      role,
+      company_id: targetCompanyId,
+    });
+    await sbRequest("users?on_conflict=email", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(newUser),
+    });
+  } else {
+    getMemDb().users.push(newUser);
+  }
+
+  await appendAuditLog({
+    company_id: targetCompanyId,
+    user_id: newUser.id,
+    action: "USER_REGISTERED",
+    details_json: { email: cleanEmail, role },
+  });
+
+  const { password_hash: _ignored, ...safeUser } = newUser;
+  void _ignored;
+  return { user: safeUser, mode: getDatabaseMode() };
+}
+
 async function sbRequest<T>(
   pathWithQuery: string,
   init: RequestInit = {}
@@ -467,6 +851,22 @@ async function ensureSeededInSupabase(): Promise<void> {
       method: "POST",
       headers: { Prefer: "resolution=ignore-duplicates" },
       body: JSON.stringify(mem.topics),
+    });
+
+    const adminPass = process.env.CRON_SECRET?.trim() || "mgd123456";
+    await ensureSupabaseAuthUser({
+      email: "admin@meugestordigital.com.br",
+      password: adminPass,
+      name: "Rander (Super Admin)",
+      role: "SUPER_ADMIN",
+      company_id: "comp-mgd",
+    });
+    await ensureSupabaseAuthUser({
+      email: "contato@lojafashion.exemplo",
+      password: "fashion123",
+      name: "Gestora Loja Fashion",
+      role: "COMPANY_ADMIN",
+      company_id: "comp-fashion-demo",
     });
 
     mem.seededSupabase = true;
@@ -570,8 +970,36 @@ export async function authenticateLogin(params: {
 
   const users = await listUsersInternal();
   const found = users.find((u) => u.email.toLowerCase() === email);
+
+  let authenticatedViaSupabaseAuth = false;
+  if (isSupabaseConfigured()) {
+    authenticatedViaSupabaseAuth = await verifyPasswordWithSupabaseAuth(
+      email,
+      password
+    );
+  }
+
   if (!found) return null;
-  if (!verifyPassword(password, found.password_hash)) return null;
+
+  const validLocalHash = verifyPassword(password, found.password_hash);
+  if (!authenticatedViaSupabaseAuth && !validLocalHash) return null;
+
+  if (authenticatedViaSupabaseAuth && !validLocalHash && isSupabaseConfigured()) {
+    // Sincroniza hash local quando a senha foi alterada diretamente no Supabase Auth
+    await sbRequest(`users?email=eq.${encodeURIComponent(email)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ password_hash: hashPassword(password) }),
+    }).catch(() => {});
+  } else if (!authenticatedViaSupabaseAuth && validLocalHash && isSupabaseConfigured()) {
+    // Garante que usuários antigos passem a existir no Authentication -> Users do Supabase
+    await ensureSupabaseAuthUser({
+      email: found.email,
+      password,
+      name: found.name,
+      role: found.role,
+      company_id: found.company_id,
+    });
+  }
 
   const { password_hash: _ignored, ...safeUser } = found;
   void _ignored;
@@ -1410,6 +1838,13 @@ export async function createOrUpdateCompanyByAdmin(input: {
       created_at: nowIso,
     };
     if (isSupabaseConfigured()) {
+      await ensureSupabaseAuthUser({
+        email: user.email,
+        password: input.admin_password.trim(),
+        name: user.name,
+        role: user.role,
+        company_id: user.company_id,
+      });
       await sbRequest("users?on_conflict=email", {
         method: "POST",
         headers: { Prefer: "resolution=merge-duplicates" },

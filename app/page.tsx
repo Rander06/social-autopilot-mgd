@@ -134,14 +134,38 @@ export default function SaasAppPage() {
     null
   );
 
-  // Login states
+  // Auth screen states (Entrar / Criar Conta / Recuperar Senha)
+  const [authScreen, setAuthScreen] = useState<"login" | "register" | "recovery">(
+    "login"
+  );
   const [loginMode, setLoginMode] = useState<"credentials" | "cron">(
     "credentials"
   );
   const [loginEmail, setLoginEmail] = useState("admin@meugestordigital.com.br");
   const [loginPassword, setLoginPassword] = useState("");
+  const [showAuthPassword, setShowAuthPassword] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [authFeedback, setAuthFeedback] = useState<string | null>(null);
   const [authSubmitting, setAuthSubmitting] = useState(false);
+
+  // Register states
+  const [regCompanyName, setRegCompanyName] = useState("");
+  const [regName, setRegName] = useState("");
+  const [regWhatsapp, setRegWhatsapp] = useState("");
+  const [regEmail, setRegEmail] = useState("");
+  const [regPassword, setRegPassword] = useState("");
+  const [regAdminSecret, setRegAdminSecret] = useState("");
+
+  // Recovery states
+  const [recoveryMethod, setRecoveryMethod] = useState<"email" | "reset">(
+    "email"
+  );
+  const [recoveryEmail, setRecoveryEmail] = useState(
+    "admin@meugestordigital.com.br"
+  );
+  const [recoveryAccessToken, setRecoveryAccessToken] = useState("");
+  const [recoveryCronSecret, setRecoveryCronSecret] = useState("");
+  const [recoveryNewPassword, setRecoveryNewPassword] = useState("");
 
   // Navigation
   const [viewScope, setViewScope] = useState<"client" | "admin">("client");
@@ -296,11 +320,28 @@ export default function SaasAppPage() {
 
   useEffect(() => {
     void loadState();
+    if (typeof window !== "undefined" && window.location.hash) {
+      const hashParams = new URLSearchParams(
+        window.location.hash.replace(/^#/, "")
+      );
+      const token = hashParams.get("access_token");
+      const type = hashParams.get("type");
+      if (token && type === "recovery") {
+        setRecoveryAccessToken(token);
+        setAuthScreen("recovery");
+        setRecoveryMethod("reset");
+        setAuthFeedback(
+          "Link de recuperação validado! Digite abaixo a sua nova senha."
+        );
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    }
   }, [loadState]);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoginError(null);
+    setAuthFeedback(null);
     setAuthSubmitting(true);
     try {
       const payload =
@@ -326,6 +367,111 @@ export default function SaasAppPage() {
       setLoginPassword("");
     } catch {
       setLoginError("Erro de conexão com o servidor.");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function handleRegister(e: React.FormEvent) {
+    e.preventDefault();
+    setLoginError(null);
+    setAuthFeedback(null);
+    setAuthSubmitting(true);
+    try {
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "register",
+          companyName: regCompanyName,
+          name: regName,
+          whatsapp: regWhatsapp,
+          email: regEmail,
+          password: regPassword,
+          adminSecret: regAdminSecret,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLoginError(data.error || "Não foi possível criar sua conta.");
+        return;
+      }
+      setDatabaseMode(data.database_mode || "memory");
+      setUser(data.user);
+      setWorkspace(data.workspace);
+      setAdminSnapshot(data.adminSnapshot || null);
+      syncWorkspaceForms(data.workspace);
+    } catch {
+      setLoginError("Erro de conexão ao cadastrar conta.");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function handleForgotPassword(e: React.FormEvent) {
+    e.preventDefault();
+    setLoginError(null);
+    setAuthFeedback(null);
+    setAuthSubmitting(true);
+    try {
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "forgot_password",
+          email: recoveryEmail,
+          redirectTo:
+            typeof window !== "undefined" ? window.location.origin : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLoginError(data.error || "Erro ao enviar e-mail de recuperação.");
+        return;
+      }
+      setAuthFeedback(
+        data.message || "Link de recuperação enviado para seu e-mail."
+      );
+    } catch {
+      setLoginError("Erro de conexão com o servidor.");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function handleResetPassword(e: React.FormEvent) {
+    e.preventDefault();
+    setLoginError(null);
+    setAuthFeedback(null);
+    setAuthSubmitting(true);
+    try {
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reset_password",
+          email: recoveryEmail,
+          recoveryAccessToken,
+          cronSecret: recoveryCronSecret,
+          newPassword: recoveryNewPassword,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLoginError(data.error || "Erro ao redefinir senha.");
+        return;
+      }
+      setAuthFeedback(
+        data.message || "Senha redefinida com sucesso! Já pode entrar."
+      );
+      if (data.email) setLoginEmail(data.email);
+      setRecoveryAccessToken("");
+      setRecoveryCronSecret("");
+      setRecoveryNewPassword("");
+      setAuthScreen("login");
+      setLoginMode("credentials");
+    } catch {
+      setLoginError("Erro de conexão ao redefinir senha.");
     } finally {
       setAuthSubmitting(false);
     }
@@ -851,7 +997,7 @@ export default function SaasAppPage() {
     );
   }
 
-  // ==================== TELA DE LOGIN LUMINOSA ====================
+  // ==================== TELA DE LOGIN / CADASTRO / RECUPERAÇÃO ====================
   if (!user || !workspace) {
     return (
       <main className="flex min-h-screen items-center justify-center px-4 py-12">
@@ -870,87 +1016,312 @@ export default function SaasAppPage() {
             </div>
           </div>
 
-          <p className="mt-3 text-sm text-slate-600">
-            Acesse com o login da sua empresa ou entre como Super Admin com o{" "}
-            <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-indigo-700">
-              CRON_SECRET
-            </code>
-            .
-          </p>
-
-          <div className="mt-5 grid grid-cols-2 gap-2 rounded-xl bg-slate-100 p-1">
-            <button
-              type="button"
-              onClick={() => setLoginMode("credentials")}
-              className={`rounded-lg py-2 text-xs font-bold transition ${
-                loginMode === "credentials"
-                  ? "bg-white text-indigo-700 shadow-sm"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              E-mail e Senha
-            </button>
-            <button
-              type="button"
-              onClick={() => setLoginMode("cron")}
-              className={`rounded-lg py-2 text-xs font-bold transition ${
-                loginMode === "cron"
-                  ? "bg-white text-indigo-700 shadow-sm"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              Acesso Rápido (CRON_SECRET)
-            </button>
+          {/* Navegação Principal da Tela de Acesso */}
+          <div className="mt-5 grid grid-cols-3 gap-1.5 rounded-xl bg-slate-100 p-1">
+            {(
+              [
+                ["login", "Entrar"],
+                ["register", "Criar Conta"],
+                ["recovery", "Recuperar Senha"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  setAuthScreen(key);
+                  setLoginError(null);
+                  setAuthFeedback(null);
+                }}
+                className={`rounded-lg py-2 text-xs font-bold transition ${
+                  authScreen === key
+                    ? "bg-white text-indigo-700 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
-          <form onSubmit={handleLogin} className="mt-5 space-y-4">
-            {loginMode === "credentials" && (
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
-                  E-mail
-                </label>
+          {authFeedback && (
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800">
+              {authFeedback}
+            </div>
+          )}
+
+          {loginError && (
+            <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">
+              {loginError}
+            </div>
+          )}
+
+          {/* TELA 1: ENTRAR */}
+          {authScreen === "login" && (
+            <>
+              <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-indigo-50/70 p-1">
+                <button
+                  type="button"
+                  onClick={() => setLoginMode("credentials")}
+                  className={`rounded-lg py-1.5 text-[11px] font-bold transition ${
+                    loginMode === "credentials"
+                      ? "bg-white text-indigo-700 shadow-xs"
+                      : "text-slate-600"
+                  }`}
+                >
+                  E-mail e Senha
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLoginMode("cron")}
+                  className={`rounded-lg py-1.5 text-[11px] font-bold transition ${
+                    loginMode === "cron"
+                      ? "bg-white text-indigo-700 shadow-xs"
+                      : "text-slate-600"
+                  }`}
+                >
+                  Token CRON_SECRET
+                </button>
+              </div>
+
+              <form onSubmit={handleLogin} className="mt-4 space-y-4">
+                {loginMode === "credentials" && (
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+                      E-mail
+                    </label>
+                    <input
+                      type="email"
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      required
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10"
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+                      {loginMode === "cron" ? "Token CRON_SECRET" : "Senha"}
+                    </label>
+                    {loginMode === "credentials" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthScreen("recovery");
+                          setRecoveryEmail(loginEmail);
+                          setLoginError(null);
+                        }}
+                        className="text-[11px] font-bold text-indigo-600 hover:underline"
+                      >
+                        Esqueci minha senha
+                      </button>
+                    )}
+                  </div>
+                  <div className="relative mt-1.5">
+                    <input
+                      type={showAuthPassword ? "text" : "password"}
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      required
+                      placeholder={
+                        loginMode === "cron"
+                          ? "Cole seu CRON_SECRET..."
+                          : "Digite sua senha..."
+                      }
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 pr-20 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAuthPassword((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500 hover:text-slate-800"
+                    >
+                      {showAuthPassword ? "Ocultar" : "Mostrar"}
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={authSubmitting}
+                  className="w-full rounded-xl bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-500 py-3.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/25 transition hover:opacity-95 disabled:opacity-60"
+                >
+                  {authSubmitting ? "Autenticando..." : "Entrar no Painel"}
+                </button>
+              </form>
+            </>
+          )}
+
+          {/* TELA 2: CRIAR CONTA (SINCRONIZADA COM SUPABASE AUTH) */}
+          {authScreen === "register" && (
+            <form onSubmit={handleRegister} className="mt-4 space-y-3">
+              <p className="text-xs text-slate-600">
+                Cadastre sua empresa no <strong>Supabase Authentication</strong>{" "}
+                com 14 dias de teste grátis no plano Pro IA.
+              </p>
+              <input
+                type="text"
+                value={regCompanyName}
+                onChange={(e) => setRegCompanyName(e.target.value)}
+                placeholder="Nome da Empresa (ex: Loja Vitrine)"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500 focus:bg-white"
+              />
+              <div className="grid grid-cols-2 gap-2">
                 <input
-                  type="email"
-                  value={loginEmail}
-                  onChange={(e) => setLoginEmail(e.target.value)}
+                  type="text"
                   required
-                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10"
+                  value={regName}
+                  onChange={(e) => setRegName(e.target.value)}
+                  placeholder="Seu Nome"
+                  className="rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500 focus:bg-white"
+                />
+                <input
+                  type="text"
+                  value={regWhatsapp}
+                  onChange={(e) => setRegWhatsapp(e.target.value)}
+                  placeholder="WhatsApp (DDD)"
+                  className="rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500 focus:bg-white"
                 />
               </div>
-            )}
-
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
-                {loginMode === "cron" ? "Token CRON_SECRET" : "Senha"}
-              </label>
+              <input
+                type="email"
+                required
+                value={regEmail}
+                onChange={(e) => setRegEmail(e.target.value)}
+                placeholder="Seu melhor e-mail"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500 focus:bg-white"
+              />
               <input
                 type="password"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
                 required
-                placeholder={
-                  loginMode === "cron"
-                    ? "Cole seu CRON_SECRET..."
-                    : "Digite sua senha..."
-                }
-                className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10"
+                minLength={6}
+                value={regPassword}
+                onChange={(e) => setRegPassword(e.target.value)}
+                placeholder="Crie uma senha (mín. 6 caracteres)"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500 focus:bg-white"
               />
-            </div>
+              <input
+                type="password"
+                value={regAdminSecret}
+                onChange={(e) => setRegAdminSecret(e.target.value)}
+                placeholder="Código Super Admin (opcional — só p/ agência)"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-xs outline-none focus:border-indigo-500 focus:bg-white"
+              />
+              <button
+                type="submit"
+                disabled={authSubmitting}
+                className="w-full rounded-xl bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-500 py-3.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/25 transition hover:opacity-95 disabled:opacity-60"
+              >
+                {authSubmitting ? "Criando conta..." : "Cadastrar e Entrar"}
+              </button>
+            </form>
+          )}
 
-            {loginError && (
-              <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">
-                {loginError}
+          {/* TELA 3: RECUPERAR SENHA (E-MAIL SUPABASE OU REDEFINIÇÃO IMEDIATA) */}
+          {authScreen === "recovery" && (
+            <div className="mt-4 space-y-4">
+              <div className="grid grid-cols-2 gap-2 rounded-xl bg-indigo-50/70 p-1">
+                <button
+                  type="button"
+                  onClick={() => setRecoveryMethod("email")}
+                  className={`rounded-lg py-1.5 text-[11px] font-bold transition ${
+                    recoveryMethod === "email"
+                      ? "bg-white text-indigo-700 shadow-xs"
+                      : "text-slate-600"
+                  }`}
+                >
+                  Enviar Link p/ E-mail
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRecoveryMethod("reset")}
+                  className={`rounded-lg py-1.5 text-[11px] font-bold transition ${
+                    recoveryMethod === "reset"
+                      ? "bg-white text-indigo-700 shadow-xs"
+                      : "text-slate-600"
+                  }`}
+                >
+                  Definir Nova Senha
+                </button>
               </div>
-            )}
 
-            <button
-              type="submit"
-              disabled={authSubmitting}
-              className="w-full rounded-xl bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-500 py-3.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/25 transition hover:opacity-95 disabled:opacity-60"
-            >
-              {authSubmitting ? "Autenticando..." : "Entrar no Painel"}
-            </button>
-          </form>
+              {recoveryMethod === "email" ? (
+                <form onSubmit={handleForgotPassword} className="space-y-3">
+                  <p className="text-xs text-slate-600">
+                    O <strong>Supabase Authentication</strong> enviará um link
+                    seguro para você redefinir sua senha.
+                  </p>
+                  <input
+                    type="email"
+                    required
+                    value={recoveryEmail}
+                    onChange={(e) => setRecoveryEmail(e.target.value)}
+                    placeholder="E-mail da conta"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:bg-white"
+                  />
+                  <button
+                    type="submit"
+                    disabled={authSubmitting}
+                    className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-500 py-3 text-sm font-bold text-white shadow-md"
+                  >
+                    {authSubmitting
+                      ? "Enviando..."
+                      : "Enviar E-mail de Recuperação"}
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleResetPassword} className="space-y-3">
+                  {!recoveryAccessToken ? (
+                    <>
+                      <p className="text-xs text-slate-600">
+                        Se você é o administrador e ainda não configurou SMTP no
+                        Supabase, redefina usando seu <code>CRON_SECRET</code>:
+                      </p>
+                      <input
+                        type="email"
+                        required
+                        value={recoveryEmail}
+                        onChange={(e) => setRecoveryEmail(e.target.value)}
+                        placeholder="E-mail da conta"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500 focus:bg-white"
+                      />
+                      <input
+                        type="password"
+                        required
+                        value={recoveryCronSecret}
+                        onChange={(e) => setRecoveryCronSecret(e.target.value)}
+                        placeholder="Cole o CRON_SECRET para autorizar"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500 focus:bg-white"
+                      />
+                    </>
+                  ) : (
+                    <p className="text-xs font-semibold text-emerald-700">
+                      Token de recuperação do e-mail ativo! Escolha sua nova
+                      senha abaixo:
+                    </p>
+                  )}
+
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={recoveryNewPassword}
+                    onChange={(e) => setRecoveryNewPassword(e.target.value)}
+                    placeholder="Nova senha (mín. 6 caracteres)"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500 focus:bg-white"
+                  />
+                  <button
+                    type="submit"
+                    disabled={authSubmitting}
+                    className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white shadow-md hover:bg-emerald-700"
+                  >
+                    {authSubmitting ? "Salvando..." : "Salvar Nova Senha"}
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
 
           <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4 text-[11px] text-slate-500">
             <span>Meu Gestor Digital</span>
@@ -958,7 +1329,7 @@ export default function SaasAppPage() {
               Banco:{" "}
               <strong className="text-slate-700">
                 {databaseMode === "supabase"
-                  ? "Supabase Conectado"
+                  ? "Supabase Auth + DB"
                   : "Modo Demonstração Local"}
               </strong>
             </span>

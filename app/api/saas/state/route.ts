@@ -25,15 +25,56 @@ import {
   getDatabaseMode,
   getSuperAdminSnapshot,
   listPostsHistory,
+  registerNewAccount,
+  resetPasswordWithRecoveryAccessToken,
+  resetUserPasswordByAdminOrSecret,
   saveBrandSettings,
   saveCompanyIntegrations,
+  sendSupabasePasswordRecoveryEmail,
   updatePlanByAdmin,
   updatePostRecord,
   upsertTopic,
 } from "@/lib/store";
+import { UserAccount } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+async function buildAuthenticatedResponse(
+  user: Omit<UserAccount, "password_hash">
+) {
+  const activeCompanyId = user.company_id || "comp-mgd";
+  const sessionPayload: SessionPayload = {
+    userId: user.id,
+    companyId: user.company_id,
+    role: user.role,
+    email: user.email,
+    name: user.name,
+    exp: Date.now() + 7 * 24 * 60 * 60 * 1000,
+  };
+
+  const workspace = await getCompanyWorkspace(activeCompanyId);
+  const adminSnapshot =
+    user.role === "SUPER_ADMIN" ? await getSuperAdminSnapshot() : null;
+
+  const res = NextResponse.json({
+    authenticated: true,
+    database_mode: getDatabaseMode(),
+    user,
+    workspace,
+    adminSnapshot,
+  });
+
+  res.cookies.set(SESSION_COOKIE, signSession(sessionPayload), {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 7 * 24 * 60 * 60,
+  });
+
+  return res;
+}
 
 export async function GET(request: NextRequest) {
   const session = getSessionFromRequest(request);
@@ -93,38 +134,109 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { user } = authResult;
-    const activeCompanyId = user.company_id || "comp-mgd";
-    const sessionPayload: SessionPayload = {
-      userId: user.id,
-      companyId: user.company_id,
-      role: user.role,
-      email: user.email,
-      name: user.name,
-      exp: Date.now() + 7 * 24 * 60 * 60 * 1000,
-    };
+    return buildAuthenticatedResponse(authResult.user);
+  }
 
-    const workspace = await getCompanyWorkspace(activeCompanyId);
-    const adminSnapshot =
-      user.role === "SUPER_ADMIN" ? await getSuperAdminSnapshot() : null;
+  if (action === "register") {
+    try {
+      const reg = await registerNewAccount({
+        companyName:
+          typeof body.companyName === "string" ? body.companyName : undefined,
+        name: String(body.name || ""),
+        whatsapp:
+          typeof body.whatsapp === "string" ? body.whatsapp : undefined,
+        email: String(body.email || ""),
+        password: String(body.password || ""),
+        adminSecret:
+          typeof body.adminSecret === "string" ? body.adminSecret : undefined,
+      });
+      return buildAuthenticatedResponse(reg.user);
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error:
+            err instanceof Error ? err.message : "Erro ao cadastrar conta.",
+        },
+        { status: 400 }
+      );
+    }
+  }
 
-    const res = NextResponse.json({
-      authenticated: true,
-      database_mode: getDatabaseMode(),
-      user,
-      workspace,
-      adminSnapshot,
-    });
+  if (action === "forgot_password") {
+    try {
+      const result = await sendSupabasePasswordRecoveryEmail(
+        String(body.email || ""),
+        typeof body.redirectTo === "string" ? body.redirectTo : undefined
+      );
+      return NextResponse.json(result);
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error:
+            err instanceof Error
+              ? err.message
+              : "Erro ao solicitar recuperação de senha.",
+        },
+        { status: 400 }
+      );
+    }
+  }
 
-    res.cookies.set(SESSION_COOKIE, signSession(sessionPayload), {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 7 * 24 * 60 * 60,
-    });
+  if (action === "reset_password") {
+    try {
+      const recoveryAccessToken =
+        typeof body.recoveryAccessToken === "string"
+          ? body.recoveryAccessToken.trim()
+          : "";
+      const newPassword = String(body.newPassword || "");
 
-    return res;
+      if (recoveryAccessToken) {
+        const res = await resetPasswordWithRecoveryAccessToken(
+          recoveryAccessToken,
+          newPassword
+        );
+        return NextResponse.json({
+          ok: true,
+          email: res.email,
+          message:
+            "Senha atualizada no Supabase Authentication! Já pode entrar.",
+        });
+      }
+
+      const cronSecretInput =
+        typeof body.cronSecret === "string" ? body.cronSecret.trim() : "";
+      const envCronSecret = process.env.CRON_SECRET?.trim();
+      if (!envCronSecret || cronSecretInput !== envCronSecret) {
+        return NextResponse.json(
+          {
+            error:
+              "Informe um link válido de recuperação do e-mail ou o CRON_SECRET correto.",
+          },
+          { status: 401 }
+        );
+      }
+
+      const res = await resetUserPasswordByAdminOrSecret({
+        email: String(body.email || ""),
+        newPassword,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        email: res.email,
+        message: `Senha de ${res.email} atualizada no Supabase Authentication e no banco!`,
+      });
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error:
+            err instanceof Error
+              ? err.message
+              : "Erro ao redefinir a senha.",
+        },
+        { status: 400 }
+      );
+    }
   }
 
   if (action === "logout") {
