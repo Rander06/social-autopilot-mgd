@@ -32,7 +32,11 @@ function appendLog(logs: string[], message: string) {
 }
 
 async function generatePostWithGemini(logs: string[]): Promise<GeneratedPost> {
-  appendLog(logs, "Passo A: Iniciando geração de copy com Gemini 2.5 Flash...");
+  const modelName = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
+  appendLog(
+    logs,
+    `Passo A: Iniciando geração de copy com Gemini (${modelName})...`
+  );
   const apiKey = getRequiredEnv("GEMINI_API_KEY");
   const ai = new GoogleGenAI({ apiKey });
 
@@ -59,7 +63,7 @@ REGRAS ESTRITAS:
 7. hashtags: Lista de hashtags relevantes separadas por espaço.`;
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: modelName,
     contents: prompt,
     config: {
       responseMimeType: "application/json",

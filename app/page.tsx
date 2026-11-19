@@ -155,7 +155,7 @@ export default function HomePage() {
                 Meu Gestor Digital — Automação Meta
               </h1>
               <p className="mt-1 text-sm text-[#2C1E16]/75">
-                Geração automática com Gemini 2.5 Flash, arte 1080×1080,
+                Geração automática com Gemini 3.8 Flash, arte 1080×1080,
                 hospedagem no Cloudflare R2 e publicação no Instagram Business e
                 Página do Facebook.
               </p>
