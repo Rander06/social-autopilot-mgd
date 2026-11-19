@@ -31,12 +31,30 @@ function appendLog(logs: string[], message: string) {
   logs.push(`[${timestamp}] ${message}`);
 }
 
-async function generatePostWithGemini(logs: string[]): Promise<GeneratedPost> {
-  const modelName = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
-  appendLog(
-    logs,
-    `Passo A: Iniciando geração de copy com Gemini (${modelName})...`
+function isRetryableGeminiError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : String(error ?? "");
+  return (
+    /\b(404|429|500|502|503|504)\b/.test(message) ||
+    /UNAVAILABLE|RESOURCE_EXHAUSTED|NOT_FOUND|high demand|fetch failed/i.test(
+      message
+    )
   );
+}
+
+async function generatePostWithGemini(logs: string[]): Promise<GeneratedPost> {
+  const envModel = process.env.GEMINI_MODEL?.trim();
+  const modelCandidates = Array.from(
+    new Set([
+      ...(envModel ? [envModel] : []),
+      "gemini-3-flash-preview",
+      "gemini-3.5-flash-lite",
+      "gemini-3.1-flash-lite",
+      "gemini-flash-lite-latest",
+      "gemini-3.8-flash",
+    ])
+  );
+
   const apiKey = getRequiredEnv("GEMINI_API_KEY");
   const ai = new GoogleGenAI({ apiKey });
 
@@ -62,72 +80,98 @@ REGRAS ESTRITAS:
 6. legenda: Copy persuasiva em português do Brasil, parágrafos curtos com emojis estratégicos, destacando os benefícios e finalizando com CTA claro convidando a comentar "EU QUERO".
 7. hashtags: Lista de hashtags relevantes separadas por espaço.`;
 
-  const response = await ai.models.generateContent({
-    model: modelName,
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          tema_visual: {
-            type: Type.STRING,
-            description:
-              "Tema visual/ângulo criativo curto do post (2 a 5 palavras).",
+  let lastError: unknown;
+
+  for (let i = 0; i < modelCandidates.length; i++) {
+    const modelName = modelCandidates[i];
+    appendLog(
+      logs,
+      `Passo A: Tentando geração de copy com Gemini (${modelName})...`
+    );
+
+    try {
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              tema_visual: {
+                type: Type.STRING,
+                description:
+                  "Tema visual/ângulo criativo curto do post (2 a 5 palavras).",
+              },
+              headline_arte: {
+                type: Type.STRING,
+                description:
+                  "Título impactante para a arte com no máximo 7 palavras.",
+              },
+              subtitulo_arte: {
+                type: Type.STRING,
+                description:
+                  "Subtítulo curto para a arte incluindo obrigatoriamente 12x de R$149,90.",
+              },
+              legenda: {
+                type: Type.STRING,
+                description:
+                  'Copy persuasiva com emojis e CTA para comentar "EU QUERO".',
+              },
+              hashtags: {
+                type: Type.STRING,
+                description: "Hashtags relevantes separadas por espaço.",
+              },
+            },
+            required: [
+              "tema_visual",
+              "headline_arte",
+              "subtitulo_arte",
+              "legenda",
+              "hashtags",
+            ],
           },
-          headline_arte: {
-            type: Type.STRING,
-            description:
-              "Título impactante para a arte com no máximo 7 palavras.",
-          },
-          subtitulo_arte: {
-            type: Type.STRING,
-            description:
-              "Subtítulo curto para a arte incluindo obrigatoriamente 12x de R$149,90.",
-          },
-          legenda: {
-            type: Type.STRING,
-            description:
-              'Copy persuasiva com emojis e CTA para comentar "EU QUERO".',
-          },
-          hashtags: {
-            type: Type.STRING,
-            description: "Hashtags relevantes separadas por espaço.",
-          },
+          temperature: 0.9,
         },
-        required: [
-          "tema_visual",
-          "headline_arte",
-          "subtitulo_arte",
-          "legenda",
-          "hashtags",
-        ],
-      },
-      temperature: 0.9,
-    },
-  });
+      });
 
-  const rawText = response.text;
-  if (!rawText) {
-    throw new Error("O Gemini retornou uma resposta vazia.");
+      const rawText = response.text;
+      if (!rawText) {
+        throw new Error(`O modelo ${modelName} retornou uma resposta vazia.`);
+      }
+
+      const parsed = JSON.parse(rawText) as GeneratedPost;
+      if (
+        !parsed.tema_visual ||
+        !parsed.headline_arte ||
+        !parsed.subtitulo_arte ||
+        !parsed.legenda ||
+        !parsed.hashtags
+      ) {
+        throw new Error(`Resposta JSON de ${modelName} incompleta.`);
+      }
+
+      appendLog(
+        logs,
+        `Passo A concluído (${modelName}): tema_visual="${parsed.tema_visual}", headline="${parsed.headline_arte}".`
+      );
+      return parsed;
+    } catch (error) {
+      lastError = error;
+      const errMsg = error instanceof Error ? error.message : String(error);
+      appendLog(logs, `Passo A (${modelName}) falhou: ${errMsg}`);
+
+      if (!isRetryableGeminiError(error) || i === modelCandidates.length - 1) {
+        throw error;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    }
   }
 
-  const parsed = JSON.parse(rawText) as GeneratedPost;
-  if (
-    !parsed.tema_visual ||
-    !parsed.headline_arte ||
-    !parsed.subtitulo_arte ||
-    !parsed.legenda ||
-    !parsed.hashtags
-  ) {
-    throw new Error("Resposta JSON do Gemini incompleta.");
-  }
-
-  appendLog(
-    logs,
-    `Passo A concluído: tema_visual="${parsed.tema_visual}", headline="${parsed.headline_arte}".`
-  );
-  return parsed;
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Falha ao gerar conteúdo no Gemini.");
 }
 
 async function renderPostImageBuffer(
