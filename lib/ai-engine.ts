@@ -7,10 +7,19 @@ import { GoogleGenAI, Type } from "@google/genai";
 import {
   AIProvider,
   AIPhotoMode,
+  AspectRatio,
   GeneratedContentPayload,
   ImageAIProvider,
   PostFormat,
 } from "./types";
+
+export function cleanCreativePrompt(raw?: string | null): string {
+  return (raw || "")
+    .replace(/\[cite:\s*[^\]]+\]/gi, "")
+    .replace(/^Prompt da imagem\s*,?\s*/i, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
 
 const META_GRAPH_BASE_URL = "https://graph.facebook.com/v21.0";
 
@@ -25,10 +34,10 @@ export interface R2StorageConfig {
 function getR2Client(r2Config?: R2StorageConfig) {
   const hasCompleteCustomR2 = Boolean(
     r2Config?.accountId?.trim() &&
-      r2Config?.accessKeyId?.trim() &&
-      r2Config?.secretAccessKey?.trim() &&
-      r2Config?.bucketName?.trim() &&
-      r2Config?.publicUrl?.trim()
+    r2Config?.accessKeyId?.trim() &&
+    r2Config?.secretAccessKey?.trim() &&
+    r2Config?.bucketName?.trim() &&
+    r2Config?.publicUrl?.trim()
   );
 
   const accountId = hasCompleteCustomR2
@@ -96,10 +105,10 @@ export async function testR2Connection(r2Config?: R2StorageConfig): Promise<{
 }> {
   const hasCompleteCustomR2 = Boolean(
     r2Config?.accountId?.trim() &&
-      r2Config?.accessKeyId?.trim() &&
-      r2Config?.secretAccessKey?.trim() &&
-      r2Config?.bucketName?.trim() &&
-      r2Config?.publicUrl?.trim()
+    r2Config?.accessKeyId?.trim() &&
+    r2Config?.secretAccessKey?.trim() &&
+    r2Config?.bucketName?.trim() &&
+    r2Config?.publicUrl?.trim()
   );
 
   try {
@@ -171,33 +180,33 @@ function buildCopywritingPrompt(params: {
   const antiRepeatBlock =
     params.previousHeadlines.length > 0
       ? `\nMEMÓRIA ANTI-REPETIÇÃO (NUNCA repita nem copie estes últimos títulos já publicados neste assunto):\n${params.previousHeadlines
-          .map((h, i) => `${i + 1}. "${h}"`)
-          .join("\n")}\n`
+        .map((h, i) => `${i + 1}. "${h}"`)
+        .join("\n")}\n`
       : "";
 
   const benefitsBlock =
     params.benefits.length > 0
       ? `DIFERENCIAIS / BENEFÍCIOS PRINCIPAIS:\n${params.benefits
-          .map((b) => `- ${b}`)
-          .join("\n")}`
+        .map((b) => `- ${b}`)
+        .join("\n")}`
       : "";
 
   return `Você é o estrategista de marketing e copywriter sênior escrevendo para a empresa "${params.companyName}".
 
 ASSUNTO DO POST: ${params.topicTitle}
 INSTRUÇÕES E BRIEFING DO CLIENTE:
-${params.promptInstructions}
+${cleanCreativePrompt(params.promptInstructions)}
 
 OFERTA / PREÇO EM DESTAQUE: ${params.offerPrice || "Consulte condições especiais"}
 CTA PADRÃO DESEJADO: ${params.ctaDefault}
 ${benefitsBlock}
-FORMATO SOLICITADO: ${
-    params.format === "CAROUSEL"
+FORMATO SOLICITADO: ${params.format === "CAROUSEL"
       ? `CARROSSEL com EXATAMENTE ${params.slidesCount} slides`
       : "IMAGEM ÚNICA (1 slide principal)"
-  }
+    }
 ${antiRepeatBlock}
 REGRAS ESTRITAS:
+0. Se as instruções acima citarem explicitamente um título entre aspas para o topo da arte (ex: "CONTROLE TUDO + ATENDIMENTO COM IA"), use EXATAMENTE esse título em "headline_arte".
 1. NUNCA use emojis nos textos das artes (tema_visual, headline_arte, subtitulo_arte, dor_vs_solucao, destaque_selo, beneficios, slides). Use emojis APENAS no campo "legenda".
 2. tema_visual: Frase curta (2 a 4 palavras) para badge no topo da arte.
 3. headline_arte: Máximo de 7 palavras, forte, publicitária e inédita.
@@ -205,9 +214,8 @@ REGRAS ESTRITAS:
 5. dor_vs_solucao: Frase curta (até 14 palavras) atacando a dor do cliente e mostrando a solução.
 6. destaque_selo: Selo curto em caixa alta (ex: "QUALIDADE GARANTIDA" ou "0% COMISSÃO • 100% SEU").
 7. beneficios: Array com exatamente 4 a 6 itens curtos (3 a 6 palavras cada).
-8. slides: Array com EXATAMENTE ${
-    params.format === "CAROUSEL" ? params.slidesCount : 1
-  } objetos, cada um contendo:
+8. slides: Array com EXATAMENTE ${params.format === "CAROUSEL" ? params.slidesCount : 1
+    } objetos, cada um contendo:
    - badge (ex: "PASSO 01", "DESTAQUE", "OFERTA")
    - title (título curto do slide, máx. 7 palavras)
    - body (explicação objetiva em 1 a 2 frases)
@@ -357,8 +365,7 @@ async function runGeminiText(
       lastError = err;
       appendLog(
         logs,
-        `Multi-IA [Gemini ${model}] falhou: ${
-          err instanceof Error ? err.message : String(err)
+        `Multi-IA [Gemini ${model}] falhou: ${err instanceof Error ? err.message : String(err)
         }`
       );
       if (i < candidates.length - 1) {
@@ -376,45 +383,69 @@ async function runOpenAIText(
   prompt: string,
   logs: string[]
 ): Promise<{ raw: Partial<GeneratedContentPayload>; model: string }> {
-  appendLog(logs, "Multi-IA [OpenAI]: Tentando gpt-4o-mini...");
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      response_format: { type: "json_object" },
-      temperature: 0.85,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Você responde apenas com JSON válido em português do Brasil.",
+  const models = ["gpt-4.1-mini", "gpt-5-mini", "gpt-4o-mini"];
+  let lastError: unknown;
+
+  for (const model of models) {
+    appendLog(logs, `Multi-IA [OpenAI]: Tentando ${model}...`);
+    try {
+      const payload: Record<string, unknown> = {
+        model,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "Você responde apenas com JSON válido em português do Brasil.",
+          },
+          { role: "user", content: prompt },
+        ],
+      };
+      if (!model.startsWith("gpt-5")) {
+        payload.temperature = 0.85;
+      }
+
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
         },
-        { role: "user", content: prompt },
-      ],
-    }),
-  });
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(20_000),
+      });
 
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-    error?: { message?: string };
-  };
+      const data = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+        error?: { message?: string };
+      };
 
-  if (!res.ok || !data.choices?.[0]?.message?.content) {
-    throw new Error(
-      `OpenAI falhou (HTTP ${res.status}): ${
-        data.error?.message || res.statusText
-      }`
-    );
+      if (!res.ok || !data.choices?.[0]?.message?.content) {
+        throw new Error(
+          `OpenAI (${model}) falhou (HTTP ${res.status}): ${
+            data.error?.message || res.statusText
+          }`
+        );
+      }
+
+      return {
+        raw: JSON.parse(extractJsonString(data.choices[0].message.content)),
+        model: `OPENAI (${model})`,
+      };
+    } catch (err) {
+      lastError = err;
+      appendLog(
+        logs,
+        `Multi-IA [OpenAI ${model}] falhou: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
   }
 
-  return {
-    raw: JSON.parse(extractJsonString(data.choices[0].message.content)),
-    model: "OPENAI (gpt-4o-mini)",
-  };
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Todos os modelos de texto OpenAI falharam.");
 }
 
 async function runClaudeText(
@@ -463,8 +494,7 @@ async function runClaudeText(
       lastErr = err;
       appendLog(
         logs,
-        `Multi-IA [Claude ${model}] falhou: ${
-          err instanceof Error ? err.message : String(err)
+        `Multi-IA [Claude ${model}] falhou: ${err instanceof Error ? err.message : String(err)
         }`
       );
     }
@@ -591,110 +621,351 @@ export async function enhanceProductPhotoWithAI(params: {
     const editInstruction = `${params.aiPhotoPrompt.trim()}. Preserve fielmente o produto original, suas cores, formato e detalhes, gerando fotografia publicitária nítida e iluminada em alta qualidade.`;
 
     if (params.preferredImageAI === "OPENAI" && params.keys.openai) {
-      appendLog(
-        params.logs,
-        "Ambientação IA: gerando cenário do produto via OpenAI (gpt-image-1)..."
-      );
-      const form = new FormData();
-      form.append("model", "gpt-image-1");
-      form.append("prompt", editInstruction);
-      form.append("size", "1024x1024");
-      form.append(
-        "image",
-        new Blob([originalBuffer], { type: mimeType }),
-        "product.png"
-      );
+      const openAiModels = [
+        "chatgpt-image-latest",
+        "gpt-image-1.5",
+        "gpt-image-2",
+        "gpt-image-1-mini",
+      ];
+      for (const openAiModel of openAiModels) {
+        try {
+          appendLog(
+            params.logs,
+            `Ambientação IA: gerando cenário do produto via OpenAI (${openAiModel})...`
+          );
+          const form = new FormData();
+          form.append("model", openAiModel);
+          form.append("prompt", editInstruction);
+          form.append("size", "1024x1024");
+          form.append(
+            "image",
+            new Blob([originalBuffer], { type: mimeType }),
+            "product.png"
+          );
 
-      const res = await fetch("https://api.openai.com/v1/images/edits", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${params.keys.openai}` },
-        body: form,
-        signal: AbortSignal.timeout(25_000),
-      });
+          const res = await fetch("https://api.openai.com/v1/images/edits", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${params.keys.openai}` },
+            body: form,
+            signal: AbortSignal.timeout(45_000),
+          });
 
-      const data = (await res.json()) as {
-        data?: Array<{ b64_json?: string; url?: string }>;
-        error?: { message?: string };
-      };
+          const data = (await res.json()) as {
+            data?: Array<{ b64_json?: string; url?: string }>;
+            error?: { message?: string };
+          };
 
-      if (res.ok && data.data?.[0]?.b64_json) {
-        const outBuf = Buffer.from(data.data[0].b64_json, "base64");
-        const uploaded = await uploadBufferToR2(
-          outBuf,
-          `companies/${params.companyId}/enhanced/${Date.now()}.png`,
-          "image/png",
-          params.r2Config
-        );
-        appendLog(
-          params.logs,
-          `Ambientação IA (OpenAI) concluída: ${uploaded}`
-        );
-        return uploaded;
+          const item = data.data?.[0];
+          let outBuf: Buffer | null = null;
+          if (res.ok && item?.b64_json) {
+            outBuf = Buffer.from(item.b64_json, "base64");
+          } else if (res.ok && item?.url) {
+            const fetched = await fetch(item.url, {
+              signal: AbortSignal.timeout(15_000),
+            });
+            if (fetched.ok) outBuf = Buffer.from(await fetched.arrayBuffer());
+          }
+
+          if (outBuf) {
+            const uploaded = await uploadBufferToR2(
+              outBuf,
+              `companies/${params.companyId}/enhanced/${Date.now()}.png`,
+              "image/png",
+              params.r2Config
+            );
+            appendLog(
+              params.logs,
+              `Ambientação IA (OpenAI ${openAiModel}) concluída: ${uploaded}`
+            );
+            return uploaded;
+          }
+
+          appendLog(
+            params.logs,
+            `Ambientação IA (OpenAI ${openAiModel}) ignorada (${
+              data.error?.message || res.statusText
+            }).`
+          );
+        } catch (err) {
+          appendLog(
+            params.logs,
+            `Ambientação IA (OpenAI ${openAiModel}) erro: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
       }
-
-      appendLog(
-        params.logs,
-        `Ambientação IA (OpenAI) ignorada (${
-          data.error?.message || res.statusText
-        }); usando foto original.`
-      );
-      return null;
     }
 
     if (params.keys.gemini) {
-      appendLog(
-        params.logs,
-        "Ambientação IA: tentando edição da foto via Gemini Image..."
-      );
-      const ai = new GoogleGenAI({ apiKey: params.keys.gemini });
-      const res = await withTimeout(
-        ai.models.generateContent({
-          model: "gemini-2.5-flash-image",
-          contents: [
-            {
-              role: "user",
-              parts: [
+      const geminiEditModels = [
+        "gemini-3.1-flash-image-preview",
+        "gemini-2.5-flash-image",
+      ];
+      for (const editModel of geminiEditModels) {
+        try {
+          appendLog(
+            params.logs,
+            `Ambientação IA: tentando edição da foto via ${editModel}...`
+          );
+          const ai = new GoogleGenAI({ apiKey: params.keys.gemini });
+          const res = await withTimeout(
+            ai.models.generateContent({
+              model: editModel,
+              contents: [
                 {
-                  inlineData: {
-                    mimeType,
-                    data: originalBuffer.toString("base64"),
-                  },
+                  role: "user",
+                  parts: [
+                    {
+                      inlineData: {
+                        mimeType,
+                        data: originalBuffer.toString("base64"),
+                      },
+                    },
+                    { text: editInstruction },
+                  ],
                 },
-                { text: editInstruction },
               ],
-            },
-          ],
-          config: { responseModalities: ["IMAGE", "TEXT"] },
-        }),
-        18_000,
-        "Gemini Image"
-      );
+              config: { responseModalities: ["IMAGE", "TEXT"] },
+            }),
+            18_000,
+            `Gemini Image (${editModel})`
+          );
 
-      const parts = res.candidates?.[0]?.content?.parts || [];
-      const imgPart = parts.find((p) => p.inlineData?.data);
-      if (imgPart?.inlineData?.data) {
-        const outBuf = Buffer.from(imgPart.inlineData.data, "base64");
-        const outMime = imgPart.inlineData.mimeType || "image/png";
-        const uploaded = await uploadBufferToR2(
-          outBuf,
-          `companies/${params.companyId}/enhanced/${Date.now()}.png`,
-          outMime,
-          params.r2Config
-        );
-        appendLog(
-          params.logs,
-          `Ambientação IA (Gemini) concluída: ${uploaded}`
-        );
-        return uploaded;
+          const parts = res.candidates?.[0]?.content?.parts || [];
+          const imgPart = parts.find((p) => p.inlineData?.data);
+          if (imgPart?.inlineData?.data) {
+            const outBuf = Buffer.from(imgPart.inlineData.data, "base64");
+            const outMime = imgPart.inlineData.mimeType || "image/png";
+            const uploaded = await uploadBufferToR2(
+              outBuf,
+              `companies/${params.companyId}/enhanced/${Date.now()}.png`,
+              outMime,
+              params.r2Config
+            );
+            appendLog(
+              params.logs,
+              `Ambientação IA (${editModel}) concluída: ${uploaded}`
+            );
+            return uploaded;
+          }
+        } catch (err) {
+          appendLog(
+            params.logs,
+            `Ambientação IA (${editModel}) sem cota ou indisponível: ${err instanceof Error ? err.message.slice(0, 140) : String(err)
+            }`
+          );
+        }
       }
     }
   } catch (err) {
     appendLog(
       params.logs,
-      `Ambientação IA fallback para foto original: ${
-        err instanceof Error ? err.message : String(err)
+      `Ambientação IA fallback para foto original: ${err instanceof Error ? err.message : String(err)
       }`
     );
+  }
+
+  return null;
+}
+
+export async function generateFullCreativeWithAI(params: {
+  companyId: string;
+  promptText: string;
+  aspectRatio: AspectRatio;
+  preferredImageAI: ImageAIProvider;
+  referencePhotoUrl?: string | null;
+  keys: { gemini?: string | null; openai?: string | null };
+  r2Config?: R2StorageConfig;
+  logs: string[];
+}): Promise<string | null> {
+  const cleanedPrompt = cleanCreativePrompt(params.promptText);
+  if (!cleanedPrompt) return null;
+
+  let refBuf: Buffer | null = null;
+  let refMime = "image/png";
+  if (params.referencePhotoUrl) {
+    try {
+      const refRes = await fetch(params.referencePhotoUrl, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (refRes.ok) {
+        refMime = refRes.headers.get("content-type") || "image/png";
+        refBuf = Buffer.from(await refRes.arrayBuffer());
+      }
+    } catch {
+      refBuf = null;
+    }
+  }
+
+  const order: ImageAIProvider[] = Array.from(
+    new Set([params.preferredImageAI, "GEMINI", "OPENAI"] as ImageAIProvider[])
+  );
+
+  for (const provider of order) {
+    if (provider === "OPENAI" && params.keys.openai?.trim()) {
+      const openAiKey = params.keys.openai.trim();
+      const gptSize = params.aspectRatio === "1:1" ? "1024x1024" : "1024x1536";
+      const openAiModels = [
+        "chatgpt-image-latest",
+        "gpt-image-1.5",
+        "gpt-image-2",
+        "gpt-image-1-mini",
+      ];
+
+      const extractOpenAiBuffer = async (data: {
+        data?: Array<{ b64_json?: string; url?: string }>;
+      }): Promise<Buffer | null> => {
+        const first = data.data?.[0];
+        if (first?.b64_json) return Buffer.from(first.b64_json, "base64");
+        if (first?.url) {
+          const r = await fetch(first.url, { signal: AbortSignal.timeout(15_000) });
+          if (r.ok) return Buffer.from(await r.arrayBuffer());
+        }
+        return null;
+      };
+
+      for (const openAiModel of openAiModels) {
+        try {
+          let res: Response;
+          if (refBuf) {
+            appendLog(
+              params.logs,
+              `Criativo IA: gerando arte completa via OpenAI (${openAiModel} edit)...`
+            );
+            const form = new FormData();
+            form.append("model", openAiModel);
+            form.append("prompt", cleanedPrompt);
+            form.append("size", gptSize);
+            form.append(
+              "image",
+              new Blob([new Uint8Array(refBuf)], { type: refMime }),
+              "ref.png"
+            );
+            res = await fetch("https://api.openai.com/v1/images/edits", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${openAiKey}` },
+              body: form,
+              signal: AbortSignal.timeout(45_000),
+            });
+          } else {
+            appendLog(
+              params.logs,
+              `Criativo IA: gerando arte completa via OpenAI (${openAiModel})...`
+            );
+            res = await fetch("https://api.openai.com/v1/images/generations", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${openAiKey}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                model: openAiModel,
+                prompt: cleanedPrompt,
+                size: gptSize,
+              }),
+              signal: AbortSignal.timeout(45_000),
+            });
+          }
+
+          const data = (await res.json()) as {
+            data?: Array<{ b64_json?: string; url?: string }>;
+            error?: { message?: string };
+          };
+          const outBuf = res.ok ? await extractOpenAiBuffer(data) : null;
+          if (outBuf) {
+            const url = await uploadBufferToR2(
+              outBuf,
+              `companies/${params.companyId}/ai-creatives/${Date.now()}-${Math.random()
+                .toString(36)
+                .slice(2, 6)}.png`,
+              "image/png",
+              params.r2Config
+            );
+            appendLog(
+              params.logs,
+              `Criativo 100% IA (OpenAI ${openAiModel}) concluído: ${url}`
+            );
+            return url;
+          }
+          appendLog(
+            params.logs,
+            `Criativo IA (OpenAI ${openAiModel}) indisponível: ${
+              data.error?.message || res.statusText
+            }`
+          );
+        } catch (err) {
+          appendLog(
+            params.logs,
+            `Criativo IA (OpenAI ${openAiModel}) erro: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+      }
+    }
+
+    if (provider === "GEMINI" && params.keys.gemini?.trim()) {
+      const ai = new GoogleGenAI({ apiKey: params.keys.gemini.trim() });
+      const geminiModels = [
+        "gemini-3.1-flash-image-preview",
+        "gemini-3-pro-image-preview",
+        "gemini-nano-banana-2.1",
+        "gemini-2.5-flash-image",
+      ];
+      for (const model of geminiModels) {
+        try {
+          appendLog(
+            params.logs,
+            `Criativo IA: tentando gerar arte completa via ${model}...`
+          );
+          const parts: Array<
+            { inlineData: { mimeType: string; data: string } } | { text: string }
+          > = [];
+          if (refBuf) {
+            parts.push({
+              inlineData: { mimeType: refMime, data: refBuf.toString("base64") },
+            });
+          }
+          parts.push({
+            text: `${cleanedPrompt}\nProporção: ${params.aspectRatio}. Renderize textos nítidos em português do Brasil exatamente como solicitado no prompt.`,
+          });
+
+          const res = await withTimeout(
+            ai.models.generateContent({
+              model,
+              contents: [{ role: "user", parts }],
+              config: { responseModalities: ["IMAGE", "TEXT"] },
+            }),
+            20_000,
+            `Criativo ${model}`
+          );
+          const resParts = res.candidates?.[0]?.content?.parts || [];
+          const imgPart = resParts.find((p) => p.inlineData?.data);
+          if (imgPart?.inlineData?.data) {
+            const outBuf = Buffer.from(imgPart.inlineData.data, "base64");
+            const outMime = imgPart.inlineData.mimeType || "image/png";
+            const url = await uploadBufferToR2(
+              outBuf,
+              `companies/${params.companyId}/ai-creatives/${Date.now()}.png`,
+              outMime,
+              params.r2Config
+            );
+            appendLog(
+              params.logs,
+              `Criativo 100% IA (${model}) concluído: ${url}`
+            );
+            return url;
+          }
+        } catch (err) {
+          appendLog(
+            params.logs,
+            `Criativo IA (${model}) indisponível: ${err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+      }
+    }
   }
 
   return null;
@@ -826,8 +1097,7 @@ export async function publishToMetaChannels(params: {
       };
       if (!mediaRes.ok || !mediaData.id) {
         throw new Error(
-          `Meta IG /media falhou: ${
-            mediaData.error?.message || mediaRes.statusText
+          `Meta IG /media falhou: ${mediaData.error?.message || mediaRes.statusText
           }`
         );
       }
@@ -855,8 +1125,7 @@ export async function publishToMetaChannels(params: {
       };
       if (!pubRes.ok || !pubData.id) {
         throw new Error(
-          `Meta IG /media_publish falhou: ${
-            pubData.error?.message || pubRes.statusText
+          `Meta IG /media_publish falhou: ${pubData.error?.message || pubRes.statusText
           }`
         );
       }
@@ -887,8 +1156,7 @@ export async function publishToMetaChannels(params: {
         };
         if (!childRes.ok || !childData.id) {
           throw new Error(
-            `Meta IG carrossel slide ${idx + 1} falhou: ${
-              childData.error?.message || childRes.statusText
+            `Meta IG carrossel slide ${idx + 1} falhou: ${childData.error?.message || childRes.statusText
             }`
           );
         }
@@ -911,8 +1179,7 @@ export async function publishToMetaChannels(params: {
       };
       if (!carRes.ok || !carData.id) {
         throw new Error(
-          `Meta IG container CAROUSEL falhou: ${
-            carData.error?.message || carRes.statusText
+          `Meta IG container CAROUSEL falhou: ${carData.error?.message || carRes.statusText
           }`
         );
       }
@@ -940,8 +1207,7 @@ export async function publishToMetaChannels(params: {
       };
       if (!pubRes.ok || !pubData.id) {
         throw new Error(
-          `Meta IG /media_publish carrossel falhou: ${
-            pubData.error?.message || pubRes.statusText
+          `Meta IG /media_publish carrossel falhou: ${pubData.error?.message || pubRes.statusText
           }`
         );
       }
@@ -972,8 +1238,7 @@ export async function publishToMetaChannels(params: {
 
     if (!pageTokenRes.ok || !pageTokenData.access_token) {
       throw new Error(
-        `Meta FB Page Token falhou: ${
-          pageTokenData.error?.message || pageTokenRes.statusText
+        `Meta FB Page Token falhou: ${pageTokenData.error?.message || pageTokenRes.statusText
         }`
       );
     }
@@ -1002,8 +1267,7 @@ export async function publishToMetaChannels(params: {
       facebookPostId = fbPostId;
       appendLog(
         params.logs,
-        `Meta FB: Foto única publicada na Página "${
-          pageTokenData.name || fbId
+        `Meta FB: Foto única publicada na Página "${pageTokenData.name || fbId
         }" (ID ${facebookPostId}).`
       );
     } else {
@@ -1029,8 +1293,7 @@ export async function publishToMetaChannels(params: {
         };
         if (!photoRes.ok || !photoData.id) {
           throw new Error(
-            `Meta FB slide ${i + 1} (/photos published=false) falhou: ${
-              photoData.error?.message || photoRes.statusText
+            `Meta FB slide ${i + 1} (/photos published=false) falhou: ${photoData.error?.message || photoRes.statusText
             }`
           );
         }
@@ -1055,15 +1318,13 @@ export async function publishToMetaChannels(params: {
         facebookPostId = feedData.id;
         appendLog(
           params.logs,
-          `Meta FB Multi-Fotos: Post com ${attachedMedia.length} imagens publicado na Página "${
-            pageTokenData.name || fbId
+          `Meta FB Multi-Fotos: Post com ${attachedMedia.length} imagens publicado na Página "${pageTokenData.name || fbId
           }" (ID ${facebookPostId}).`
         );
       } else {
         appendLog(
           params.logs,
-          `Meta FB /feed aviso (${
-            feedData.error?.message || feedRes.statusText
+          `Meta FB /feed aviso (${feedData.error?.message || feedRes.statusText
           }). Executando fallback para foto de capa em /photos...`
         );
         const fallbackRes = await fetch(
@@ -1086,8 +1347,7 @@ export async function publishToMetaChannels(params: {
         const fbPostId = fallbackData.post_id || fallbackData.id;
         if (!fallbackRes.ok || !fbPostId) {
           throw new Error(
-            `Meta FB fallback /photos falhou: ${
-              fallbackData.error?.message || fallbackRes.statusText
+            `Meta FB fallback /photos falhou: ${fallbackData.error?.message || fallbackRes.statusText
             }`
           );
         }

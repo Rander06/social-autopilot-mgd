@@ -97,7 +97,7 @@ create table if not exists public.topics (
   slides_count integer not null default 3 check (slides_count between 1 and 8),
   aspect_ratio text not null default '1:1' check (aspect_ratio in ('1:1', '4:5', '9:16')),
   approval_mode text not null default 'AUTO' check (approval_mode in ('AUTO', 'DRAFT')),
-  ai_photo_mode text not null default 'NONE' check (ai_photo_mode in ('NONE', 'ENHANCE', 'ORIGINAL_FRAME')),
+  ai_photo_mode text not null default 'NONE' check (ai_photo_mode in ('NONE', 'ENHANCE', 'ORIGINAL_FRAME', 'EDITORIAL_MOCKUP', 'AI_FULL_CREATIVE', 'RAW_ART')),
   ai_photo_prompt text,
   schedule_days integer[] not null default '{1,3,5}',
   schedule_time text not null default '10:00',

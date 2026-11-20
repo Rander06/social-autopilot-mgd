@@ -3,7 +3,13 @@ export type ImageAIProvider = "GEMINI" | "OPENAI";
 export type AspectRatio = "1:1" | "4:5" | "9:16";
 export type PostFormat = "SINGLE" | "CAROUSEL";
 export type ApprovalMode = "AUTO" | "DRAFT";
-export type AIPhotoMode = "NONE" | "ENHANCE" | "ORIGINAL_FRAME";
+export type AIPhotoMode =
+  | "NONE"
+  | "ENHANCE"
+  | "ORIGINAL_FRAME"
+  | "EDITORIAL_MOCKUP"
+  | "AI_FULL_CREATIVE"
+  | "RAW_ART";
 export type CompanyStatus = "ACTIVE" | "TRIAL" | "PAST_DUE" | "BLOCKED";
 export type UserRole = "SUPER_ADMIN" | "COMPANY_ADMIN";
 export type PostStatus = "PENDING_APPROVAL" | "PUBLISHED" | "ERROR";

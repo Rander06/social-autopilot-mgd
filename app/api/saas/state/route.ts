@@ -40,6 +40,7 @@ import {
   upsertTopic,
 } from "@/lib/store";
 import {
+  AIPhotoMode,
   AspectRatio,
   GeneratedContentPayload,
   PostFormat,
@@ -461,10 +462,7 @@ export async function POST(request: NextRequest) {
           approval_mode:
             topicPayload.approval_mode === "DRAFT" ? "DRAFT" : "AUTO",
           ai_photo_mode:
-            (topicPayload.ai_photo_mode as
-              | "NONE"
-              | "ENHANCE"
-              | "ORIGINAL_FRAME") || "NONE",
+            (topicPayload.ai_photo_mode as AIPhotoMode) || "NONE",
           ai_photo_prompt:
             typeof topicPayload.ai_photo_prompt === "string"
               ? topicPayload.ai_photo_prompt

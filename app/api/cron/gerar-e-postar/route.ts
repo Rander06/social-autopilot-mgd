@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  cleanCreativePrompt,
   enhanceProductPhotoWithAI,
   generateContentWithMultiAI,
+  generateFullCreativeWithAI,
   publishToMetaChannels,
   publishToTikTok,
   uploadBufferToR2,
@@ -235,32 +237,132 @@ async function runPostPipeline(params: {
     providerUsed = aiRes.providerUsed;
   }
 
+  const cleanedPhotoPrompt = cleanCreativePrompt(aiPhotoPrompt);
+  const cleanedMainPrompt = cleanCreativePrompt(promptInstructions);
+  const hasVisualDirectives = (text: string) =>
+    /#[0-9a-f]{6}|fundo\s+|t[íi]tulo\s*:|terracota|creme|mockup|notebook|financeiro|whatsapp|etiqueta|p[íi]lula/i.test(
+      text
+    );
+  const cleanedVisualPrompt = hasVisualDirectives(cleanedMainPrompt) && !hasVisualDirectives(cleanedPhotoPrompt)
+    ? cleanedMainPrompt
+    : cleanedPhotoPrompt || cleanedMainPrompt;
+
+  if (!params.editedContent) {
+    const explicitTitleMatch = cleanedVisualPrompt.match(
+      /(?:t[íi]tulo|headline)[^:"\n]{0,60}:\s*["“]([^"”]+)["”]/i
+    );
+    if (explicitTitleMatch?.[1]?.trim()) {
+      content.headline_arte = explicitTitleMatch[1].trim();
+    }
+  }
+
   content.original_photo_url = originalPhotoUrl;
   content.enhanced_photo_url = enhancedPhotoUrl;
 
-  // 4. Renderizar Artes PNG via @vercel/og e Subir no Cloudflare R2
-  log(`Renderizando ${slidesCount} arte(s) PNG em ${aspectRatio}...`);
-  const buffers = await renderArtSlidesBuffers({
-    brand,
-    content,
-    format,
-    slidesCount,
-    aspectRatio,
-    offerPrice,
-    productPhotoUrl: photoToRender,
-  });
-
+  // 4. Renderizar Artes PNG via @vercel/og (ou Criativo IA / Arte Pronta) e Subir no Cloudflare R2
   const imageUrls: string[] = [];
-  const stamp = Date.now();
-  for (let i = 0; i < buffers.length; i++) {
-    const key = `companies/${params.companyId}/posts/${stamp}-slide-${i + 1}.png`;
-    const url = await uploadBufferToR2(
-      buffers[i],
-      key,
-      "image/png",
-      secrets.r2_config
+
+  if (aiPhotoMode === "RAW_ART" && photoToRender) {
+    log("Modo Arte Pronta: usando imagem enviada diretamente sem sobrepor textos.");
+    for (let i = 0; i < slidesCount; i++) {
+      imageUrls.push(photoToRender);
+    }
+  } else if (aiPhotoMode === "AI_FULL_CREATIVE") {
+    const basePrompt =
+      cleanedVisualPrompt || `${content.headline_arte} - ${promptInstructions}`;
+    const perSlidePrompts = Array.from({ length: slidesCount }, (_, idx) => {
+      if (idx === 0) return basePrompt;
+      const sl = content.slides[idx] || {
+        badge: `SLIDE ${idx + 1}`,
+        title: content.headline_arte,
+        body: content.subtitulo_arte,
+        highlight: offerPrice || content.destaque_selo,
+      };
+      return `Slide ${idx + 1} de ${slidesCount} de um carrossel publicitário elegante mantendo exatamente o mesmo estilo visual, paleta creme quente (#F5EFE6), detalhes geométricos terracota (#B84A27), faixa inferior terracota com pílula verde-escura (#1E7E53) "${offerPrice || content.destaque_selo}" e assinatura "${brand.footer_name}". Tema deste slide (${sl.badge}): título grande "${sl.title}", texto explicativo nítido "${sl.body}", com mockup 3D realista de celular/painel ou fotografia realista ilustrativa do assunto "${topicTitle}". Design gráfico limpo, sem bordas externas.`;
+    });
+
+    const aiResults = await Promise.all(
+      perSlidePrompts.map((pText) =>
+        generateFullCreativeWithAI({
+          companyId: params.companyId,
+          promptText: pText,
+          aspectRatio,
+          preferredImageAI: secrets.preferred_image_ai,
+          referencePhotoUrl: photoToRender,
+          keys: {
+            gemini: secrets.gemini_api_key,
+            openai: secrets.openai_api_key,
+          },
+          r2Config: secrets.r2_config,
+          logs,
+        })
+      )
     );
-    imageUrls.push(url);
+
+    const anyFailed = aiResults.some((u) => !u);
+    if (!anyFailed) {
+      for (const u of aiResults) {
+        if (u) imageUrls.push(u);
+      }
+    } else {
+      log(
+        "Parte das imagens 100% IA ficou indisponível; aplicando Fallback Estilo Agência nos slides restantes."
+      );
+      const fallbackBuffers = await renderArtSlidesBuffers({
+        brand,
+        content,
+        format,
+        slidesCount,
+        aspectRatio,
+        offerPrice,
+        productPhotoUrl: photoToRender,
+        aiPhotoMode: "EDITORIAL_MOCKUP",
+        customPrompt: cleanedVisualPrompt || promptInstructions,
+      });
+      const stamp = Date.now();
+      for (let i = 0; i < slidesCount; i++) {
+        const aiUrl = aiResults[i];
+        if (aiUrl) {
+          imageUrls.push(aiUrl);
+        } else {
+          const key = `companies/${params.companyId}/posts/${stamp}-slide-${i + 1}.png`;
+          const url = await uploadBufferToR2(
+            fallbackBuffers[i],
+            key,
+            "image/png",
+            secrets.r2_config
+          );
+          imageUrls.push(url);
+        }
+      }
+    }
+  } else {
+    log(
+      `Renderizando ${slidesCount} arte(s) PNG (${aiPhotoMode}) em ${aspectRatio}...`
+    );
+    const buffers = await renderArtSlidesBuffers({
+      brand,
+      content,
+      format,
+      slidesCount,
+      aspectRatio,
+      offerPrice,
+      productPhotoUrl: photoToRender,
+      aiPhotoMode,
+      customPrompt: cleanedVisualPrompt || promptInstructions,
+    });
+
+    const stamp = Date.now();
+    for (let i = 0; i < buffers.length; i++) {
+      const key = `companies/${params.companyId}/posts/${stamp}-slide-${i + 1}.png`;
+      const url = await uploadBufferToR2(
+        buffers[i],
+        key,
+        "image/png",
+        secrets.r2_config
+      );
+      imageUrls.push(url);
+    }
   }
   log(`Upload no R2 concluído (${imageUrls.length} imagem(ns)).`);
 
@@ -589,6 +691,9 @@ export async function POST(request: NextRequest) {
       aiPhotoMode:
         body.aiPhotoMode === "ENHANCE" ||
         body.aiPhotoMode === "ORIGINAL_FRAME" ||
+        body.aiPhotoMode === "EDITORIAL_MOCKUP" ||
+        body.aiPhotoMode === "AI_FULL_CREATIVE" ||
+        body.aiPhotoMode === "RAW_ART" ||
         body.aiPhotoMode === "NONE"
           ? body.aiPhotoMode
           : undefined,

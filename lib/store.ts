@@ -1208,9 +1208,18 @@ export async function getCompanySecrets(companyId: string) {
   return {
     preferred_text_ai: integ.preferred_text_ai,
     preferred_image_ai: integ.preferred_image_ai,
-    gemini_api_key: decryptSecret(integ.gemini_key_enc),
-    openai_api_key: decryptSecret(integ.openai_key_enc),
-    anthropic_api_key: decryptSecret(integ.anthropic_key_enc),
+    gemini_api_key:
+      decryptSecret(integ.gemini_key_enc) ||
+      process.env.GEMINI_API_KEY?.trim() ||
+      null,
+    openai_api_key:
+      decryptSecret(integ.openai_key_enc) ||
+      process.env.OPENAI_API_KEY?.trim() ||
+      null,
+    anthropic_api_key:
+      decryptSecret(integ.anthropic_key_enc) ||
+      process.env.ANTHROPIC_API_KEY?.trim() ||
+      null,
     meta_access_token: decryptSecret(integ.meta_token_enc),
     meta_token_expires_at: integ.meta_token_expires_at || null,
     ig_user_id: integ.ig_user_id?.trim() || null,
@@ -1228,18 +1237,34 @@ export async function getCompanySecrets(companyId: string) {
   };
 }
 
+function unpackTopicRow(t: Topic): Topic {
+  const marker = "__mode:";
+  const idx = (t.niche_template || "").indexOf(marker);
+  if (idx >= 0) {
+    const cleanNiche = t.niche_template.slice(0, idx) || "custom";
+    const mode = t.niche_template.slice(idx + marker.length) as Topic["ai_photo_mode"];
+    return {
+      ...t,
+      niche_template: cleanNiche,
+      ai_photo_mode: mode || t.ai_photo_mode,
+    };
+  }
+  return t;
+}
+
 export async function listTopicsByCompany(companyId: string): Promise<Topic[]> {
   await ensureSeededInSupabase();
   if (isSupabaseConfigured()) {
     try {
-      return await sbRequest<Topic[]>(
+      const rows = await sbRequest<Topic[]>(
         `topics?company_id=eq.${encodeURIComponent(companyId)}&order=created_at.asc`
       );
+      return rows.map(unpackTopicRow);
     } catch {
       // Fallback
     }
   }
-  return getMemDb().topics.filter((t) => t.company_id === companyId);
+  return getMemDb().topics.filter((t) => t.company_id === companyId).map(unpackTopicRow);
 }
 
 export async function listPhotosByCompany(
@@ -1631,11 +1656,30 @@ export async function upsertTopic(
   };
 
   if (isSupabaseConfigured()) {
-    await sbRequest("topics?on_conflict=id", {
-      method: "POST",
-      headers: { Prefer: "resolution=merge-duplicates" },
-      body: JSON.stringify(topic),
-    });
+    try {
+      await sbRequest("topics?on_conflict=id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify(topic),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("23514") || msg.includes("ai_photo_mode")) {
+        // Fallback compatível quando o banco Supabase ainda tem CHECK constraint antigo em ai_photo_mode
+        const legacyTopic = {
+          ...topic,
+          niche_template: `${topic.niche_template || "custom"}__mode:${topic.ai_photo_mode}`,
+          ai_photo_mode: "ORIGINAL_FRAME" as const,
+        };
+        await sbRequest("topics?on_conflict=id", {
+          method: "POST",
+          headers: { Prefer: "resolution=merge-duplicates" },
+          body: JSON.stringify(legacyTopic),
+        });
+      } else {
+        throw err;
+      }
+    }
   } else {
     const mem = getMemDb();
     const idx = mem.topics.findIndex((t) => t.id === topic.id);

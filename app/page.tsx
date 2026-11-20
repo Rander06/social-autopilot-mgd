@@ -278,9 +278,7 @@ export default function SaasAppPage() {
   const [studioSlides, setStudioSlides] = useState(3);
   const [studioRatio, setStudioRatio] = useState<AspectRatio>("1:1");
   const [studioPhotoMode, setStudioPhotoMode] = useState<AIPhotoMode>("NONE");
-  const [studioPhotoPrompt, setStudioPhotoPrompt] = useState(
-    AI_PHOTO_PROMPT_EXAMPLES[0].prompt
-  );
+  const [studioPhotoPrompt, setStudioPhotoPrompt] = useState("");
   const [studioPhotoBase64, setStudioPhotoBase64] = useState<string | null>(
     null
   );
@@ -345,9 +343,7 @@ export default function SaasAppPage() {
       setStudioSlides(first.slides_count);
       setStudioRatio(first.aspect_ratio);
       setStudioPhotoMode(first.ai_photo_mode);
-      setStudioPhotoPrompt(
-        first.ai_photo_prompt || AI_PHOTO_PROMPT_EXAMPLES[0].prompt
-      );
+      setStudioPhotoPrompt(first.ai_photo_prompt || "");
     }
   }, []);
 
@@ -874,9 +870,7 @@ export default function SaasAppPage() {
     setStudioSlides(found.slides_count);
     setStudioRatio(found.aspect_ratio);
     setStudioPhotoMode(found.ai_photo_mode);
-    setStudioPhotoPrompt(
-      found.ai_photo_prompt || AI_PHOTO_PROMPT_EXAMPLES[0].prompt
-    );
+    setStudioPhotoPrompt(found.ai_photo_prompt || "");
   }
 
   async function handleRunStudio(options: {
@@ -2793,11 +2787,11 @@ export default function SaasAppPage() {
                     </div>
                   </div>
 
-                  {/* Ambientação da Foto do Produto com IA + Chips Clicáveis */}
+                  {/* Estilo Visual da Arte / Prompt & Fotos */}
                   <div className="rounded-xl border border-cyan-200 bg-cyan-50/50 p-4 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <label className="text-xs font-extrabold uppercase tracking-wider text-cyan-900">
-                        Foto Original do Produto &amp; Melhoria com IA
+                        Estilo Visual da Arte &amp; Prompt / Foto
                       </label>
                       <select
                         value={topicPhotoMode}
@@ -2806,17 +2800,28 @@ export default function SaasAppPage() {
                         }
                         className="rounded-lg border border-cyan-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-800"
                       >
-                        <option value="NONE">Sem foto de produto</option>
+                        <option value="EDITORIAL_MOCKUP">
+                          Estilo Agência &amp; Mockups (Imagens 2, 3, 4 e 5 — via Prompt)
+                        </option>
+                        <option value="AI_FULL_CREATIVE">
+                          Gerar Imagem 100% por IA via Prompt (Com Fallback Agência)
+                        </option>
+                        <option value="NONE">
+                          Padrão Original do App (Cards Luminosos — Sem Foto)
+                        </option>
                         <option value="ORIGINAL_FRAME">
-                          Foto original com layout da marca
+                          Padrão Original do App (Com Foto Lateral + Moldura)
                         </option>
                         <option value="ENHANCE">
-                          IA melhora/ambienta a foto original
+                          Padrão Original do App (IA Melhora Foto + Moldura)
+                        </option>
+                        <option value="RAW_ART">
+                          Arte Pronta Enviada (Publicar imagem limpa sem textos)
                         </option>
                       </select>
                     </div>
 
-                    {topicPhotoMode !== "NONE" && (
+                    {topicPhotoMode !== "NONE" && topicPhotoMode !== "RAW_ART" && (
                       <>
                         <div className="flex flex-wrap gap-1.5">
                           {AI_PHOTO_PROMPT_EXAMPLES.map((ex) => (
@@ -2831,10 +2836,10 @@ export default function SaasAppPage() {
                           ))}
                         </div>
                         <textarea
-                          rows={2}
+                          rows={3}
                           value={topicPhotoPrompt}
                           onChange={(e) => setTopicPhotoPrompt(e.target.value)}
-                          placeholder='Ex: "Colocar o produto na mão de uma pessoa em ambiente moderno e iluminado"'
+                          placeholder='Cole aqui o prompt visual (ex: "Arte promocional quadrada 1:1 em fundo creme #F5EFE6 com terracota #B84A27...")'
                           className="w-full rounded-xl border border-cyan-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-500"
                         />
                       </>
@@ -2950,32 +2955,43 @@ export default function SaasAppPage() {
                     )}
                   </div>
 
-                  {/* Foto do produto na hora */}
+                  {/* Estilo Visual + Foto do produto na hora */}
                   <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3.5">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-bold text-slate-700">
-                        Foto Original do Produto (Opcional)
+                        Estilo Visual &amp; Foto do Produto (Opcional)
                       </span>
-                      <label className="cursor-pointer rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700">
-                        Selecionar Imagem
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={async (e) => {
-                            const f = e.target.files?.[0];
-                            if (!f) return;
-                            const { base64, contentType } = await fileToBase64(
-                              f
-                            );
-                            setStudioPhotoBase64(base64);
-                            setStudioPhotoType(contentType);
-                            if (studioPhotoMode === "NONE") {
-                              setStudioPhotoMode("ENHANCE");
-                            }
-                          }}
-                        />
-                      </label>
+                      <div className="flex items-center gap-1.5">
+                        {studioPhotoBase64 && (
+                          <button
+                            type="button"
+                            onClick={() => setStudioPhotoBase64(null)}
+                            className="rounded-lg bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-100"
+                          >
+                            Remover Foto
+                          </button>
+                        )}
+                        <label className="cursor-pointer rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700">
+                          Selecionar Imagem
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const f = e.target.files?.[0];
+                              if (!f) return;
+                              const { base64, contentType } = await fileToBase64(
+                                f
+                              );
+                              setStudioPhotoBase64(base64);
+                              setStudioPhotoType(contentType);
+                              if (studioPhotoMode === "NONE") {
+                                setStudioPhotoMode("ORIGINAL_FRAME");
+                              }
+                            }}
+                          />
+                        </label>
+                      </div>
                     </div>
                     {studioPhotoBase64 && (
                       <p className="text-[11px] font-semibold text-emerald-700">
@@ -2990,39 +3006,52 @@ export default function SaasAppPage() {
                       }
                       className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold"
                     >
+                      <option value="EDITORIAL_MOCKUP">
+                        Estilo Agência &amp; Mockups (Imagens 2, 3, 4 e 5 — via Prompt)
+                      </option>
+                      <option value="AI_FULL_CREATIVE">
+                        Gerar Imagem 100% por IA via Prompt (Com Fallback Agência)
+                      </option>
                       <option value="NONE">
-                        Usar fila automática / Sem foto manual
+                        Padrão Original do App (Cards Luminosos — Sem Foto)
                       </option>
                       <option value="ORIGINAL_FRAME">
-                        Usar foto original com moldura da marca
+                        Padrão Original do App (Com Foto Lateral + Moldura)
                       </option>
                       <option value="ENHANCE">
-                        IA melhora e ambienta a foto do produto
+                        Padrão Original do App (IA Melhora Foto + Moldura)
+                      </option>
+                      <option value="RAW_ART">
+                        Arte Pronta Enviada (Publicar imagem limpa sem textos)
                       </option>
                     </select>
 
-                    {studioPhotoMode === "ENHANCE" && (
-                      <>
-                        <div className="flex flex-wrap gap-1">
-                          {AI_PHOTO_PROMPT_EXAMPLES.map((ex) => (
-                            <button
-                              key={ex.label}
-                              type="button"
-                              onClick={() => setStudioPhotoPrompt(ex.prompt)}
-                              className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-700 hover:bg-indigo-50"
-                            >
-                              {ex.label}
-                            </button>
-                          ))}
-                        </div>
-                        <textarea
-                          rows={2}
-                          value={studioPhotoPrompt}
-                          onChange={(e) => setStudioPhotoPrompt(e.target.value)}
-                          className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
-                        />
-                      </>
-                    )}
+                    {studioPhotoMode !== "NONE" &&
+                      studioPhotoMode !== "RAW_ART" && (
+                        <>
+                          <div className="flex flex-wrap gap-1">
+                            {AI_PHOTO_PROMPT_EXAMPLES.map((ex) => (
+                              <button
+                                key={ex.label}
+                                type="button"
+                                onClick={() => setStudioPhotoPrompt(ex.prompt)}
+                                className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-700 hover:bg-indigo-50"
+                              >
+                                {ex.label}
+                              </button>
+                            ))}
+                          </div>
+                          <textarea
+                            rows={3}
+                            value={studioPhotoPrompt}
+                            onChange={(e) =>
+                              setStudioPhotoPrompt(e.target.value)
+                            }
+                            placeholder='Cole aqui o prompt da arte (ex: "Arte promocional quadrada 1:1 em fundo creme quente #F5EFE6...")'
+                            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+                          />
+                        </>
+                      )}
                   </div>
 
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">

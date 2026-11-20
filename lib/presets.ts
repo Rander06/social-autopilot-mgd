@@ -77,6 +77,21 @@ export const AI_PHOTO_PROMPT_EXAMPLES: Array<{
   prompt: string;
 }> = [
   {
+    label: "Estilo Agência (Creme + Terracota + Mockups)",
+    prompt:
+      'Arte promocional em fundo creme quente (#F5EFE6) com detalhes em terracota (#B84A27) nos cantos. No topo, título em negrito (#222222): "CONTROLE TUDO + ATENDIMENTO COM IA". À esquerda: foto em quadro vertical arredondado. À direita: painel financeiro com gráfico e smartphone exibindo conversa WhatsApp AI Assistant. Faixa inferior terracota (#B84A27) com pílula verde (#1E7E53) e nome da marca.',
+  },
+  {
+    label: "Estilo Notebook + Celular 3D (Oferta)",
+    prompt:
+      'Arte promocional em fundo creme quente (#F5EFE6) com detalhes terracota (#B84A27), título forte no topo, etiqueta "12x de R$149,90", mockup de smartphone à esquerda e notebook à direita exibindo sistema moderno de reservas.',
+  },
+  {
+    label: "Estilo Oferta Gigante + Preço",
+    prompt:
+      'Card promocional em fundo terracota (#B84A27) com card central creme (#F5EFE6), preço gigante em destaque "12x de R$149,90", miniaturas laterais e botão "GARANTIR ESSA OFERTA".',
+  },
+  {
     label: "Na mão de uma pessoa",
     prompt:
       "Colocar o produto na mão de uma pessoa em ambiente moderno e iluminado",
@@ -84,11 +99,6 @@ export const AI_PHOTO_PROMPT_EXAMPLES: Array<{
   {
     label: "Modelo em estúdio",
     prompt: "Modelo usando o produto em cenário elegante de estúdio",
-  },
-  {
-    label: "Bancada profissional",
-    prompt:
-      "Produto sobre bancada premium com iluminação fotográfica profissional",
   },
   {
     label: "Foto original + moldura",
