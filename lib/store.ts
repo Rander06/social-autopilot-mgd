@@ -1861,6 +1861,31 @@ export async function updatePostRecord(
   return found;
 }
 
+export async function deletePostRecord(
+  companyId: string,
+  postId: string,
+  userId?: string
+): Promise<void> {
+  if (isSupabaseConfigured()) {
+    await sbRequest(
+      `posts_history?id=eq.${encodeURIComponent(postId)}&company_id=eq.${encodeURIComponent(companyId)}`,
+      { method: "DELETE" }
+    );
+  } else {
+    const mem = getMemDb();
+    mem.posts = mem.posts.filter(
+      (p) => !(p.id === postId && p.company_id === companyId)
+    );
+  }
+
+  await appendAuditLog({
+    company_id: companyId,
+    user_id: userId,
+    action: "POST_DELETED",
+    details_json: { post_id: postId },
+  });
+}
+
 export async function incrementCompanyPostUsage(
   companyId: string,
   topicId?: string | null

@@ -81,6 +81,7 @@ interface AdminSnapshot {
 
 interface StudioPreviewState {
   companyId: string;
+  draftPostId?: string | null;
   topicId: string | null;
   topicTitle: string;
   providerUsed: string;
@@ -244,6 +245,8 @@ export default function SaasAppPage() {
     useState<StudioPreviewState | null>(null);
   const [studioPublishLogs, setStudioPublishLogs] = useState<string[]>([]);
   const [approvingPostId, setApprovingPostId] = useState<string | null>(null);
+  const [savingDraftText, setSavingDraftText] = useState(false);
+  const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
 
   // Admin: New / Edit Company
   const [admCompId, setAdmCompId] = useState<string | undefined>(undefined);
@@ -851,6 +854,9 @@ export default function SaasAppPage() {
 
       if (options.useEditedContent && studioPreview) {
         payload.editedContent = studioPreview.post;
+        if (studioPreview.draftPostId) {
+          payload.draftPostId = studioPreview.draftPostId;
+        }
       }
 
       const res = await fetch("/api/cron/gerar-e-postar", {
@@ -865,9 +871,15 @@ export default function SaasAppPage() {
 
       if (options.previewOnly) {
         setStudioPreview(data as StudioPreviewState);
+        if (data.draftPostId) {
+          await loadState(workspace.company.id);
+        }
         setGlobalNotice({
           type: "success",
-          text: "Prévia gerada! Revise ou edite qualquer texto abaixo antes de publicar.",
+          text:
+            options.useEditedContent && data.draftPostId
+              ? "Arte do rascunho atualizada e salva com seus textos!"
+              : "Prévia gerada! Revise ou edite qualquer texto abaixo antes de publicar.",
         });
       } else {
         setStudioPreview(data as StudioPreviewState);
@@ -887,7 +899,134 @@ export default function SaasAppPage() {
     }
   }
 
-  async function handleApproveDraft(postId: string) {
+  function handleOpenDraftInStudio(post: PostHistoryItem) {
+    const matchedTopic = post.topic_id
+      ? workspace?.topics.find((t) => t.id === post.topic_id)
+      : undefined;
+
+    setStudioTopicId(matchedTopic ? matchedTopic.id : "__free__");
+    setStudioTitle(matchedTopic?.title || post.headline || "");
+    setStudioPrompt(matchedTopic?.prompt_instructions || "");
+    setStudioPrice(matchedTopic?.offer_price || "");
+    setStudioFormat(post.format);
+    setStudioSlides(post.slides_count || post.image_urls_json.length || 3);
+    setStudioRatio(post.aspect_ratio || "1:1");
+    setStudioPhotoMode(matchedTopic?.ai_photo_mode || "NONE");
+    setStudioPhotoPrompt(
+      matchedTopic?.ai_photo_prompt || AI_PHOTO_PROMPT_EXAMPLES[0].prompt
+    );
+    setStudioPhotoBase64(null);
+
+    const isPendingDraft = post.status === "PENDING_APPROVAL";
+    setStudioPreview({
+      companyId: post.company_id,
+      draftPostId: isPendingDraft ? post.id : null,
+      topicId: post.topic_id || null,
+      topicTitle: matchedTopic?.title || post.topic_title || post.headline,
+      providerUsed: post.ai_provider_used || "IA",
+      format: post.format,
+      aspectRatio: post.aspect_ratio,
+      slidesCount: post.slides_count || post.image_urls_json.length || 1,
+      imageUrl: post.image_urls_json[0] || "",
+      imageUrls: post.image_urls_json || [],
+      post: {
+        ...post.content_json,
+        beneficios: post.content_json?.beneficios || [],
+        slides: post.content_json?.slides || [],
+        hashtags: post.content_json?.hashtags || "",
+      },
+      logs: post.logs_json || [],
+    });
+    setStudioPublishLogs(post.logs_json || []);
+    setClientTab("studio");
+    setGlobalNotice({
+      type: "success",
+      text: isPendingDraft
+        ? "Rascunho aberto no Estúdio! Edite os textos/legenda, regenere a arte se quiser e clique em Aprovar e Publicar Agora."
+        : "Post carregado no Estúdio para visualização ou reaproveitamento como novo post.",
+    });
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  async function handleSaveDraftTextOnly() {
+    if (!workspace || !studioPreview?.draftPostId) return;
+    setSavingDraftText(true);
+    setGlobalNotice(null);
+    try {
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_draft_post",
+          companyId: workspace.company.id,
+          postId: studioPreview.draftPostId,
+          editedContent: studioPreview.post,
+          imageUrls: studioPreview.imageUrls,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      await loadState(workspace.company.id);
+      setGlobalNotice({
+        type: "success",
+        text: "Textos e legenda salvos no rascunho com sucesso!",
+      });
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro ao salvar rascunho.",
+      });
+    } finally {
+      setSavingDraftText(false);
+    }
+  }
+
+  async function handleDeleteDraft(postId: string) {
+    if (!workspace) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm("Deseja realmente excluir este rascunho?")
+    ) {
+      return;
+    }
+    setDeletingPostId(postId);
+    setGlobalNotice(null);
+    try {
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "delete_draft_post",
+          companyId: workspace.company.id,
+          postId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      if (studioPreview?.draftPostId === postId) {
+        setStudioPreview(null);
+      }
+      await loadState(workspace.company.id);
+      setGlobalNotice({
+        type: "success",
+        text: "Rascunho excluído com sucesso.",
+      });
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro ao excluir rascunho.",
+      });
+    } finally {
+      setDeletingPostId(null);
+    }
+  }
+
+  async function handleApproveDraft(
+    postId: string,
+    customPreview?: StudioPreviewState
+  ) {
     if (!workspace) return;
     setApprovingPostId(postId);
     setGlobalNotice(null);
@@ -899,14 +1038,22 @@ export default function SaasAppPage() {
           action: "approve_draft_post",
           companyId: workspace.company.id,
           postId,
+          editedContent: customPreview?.post,
+          imageUrls: customPreview?.imageUrls,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      if (Array.isArray(data.post?.logs_json)) {
+        setStudioPublishLogs(data.post.logs_json);
+      }
+      if (studioPreview?.draftPostId === postId) {
+        setStudioPreview(null);
+      }
       await loadState(workspace.company.id);
       setGlobalNotice({
         type: "success",
-        text: "Rascunho aprovado e publicado nas redes sociais!",
+        text: "Rascunho aprovado e publicado no Instagram e Facebook!",
       });
     } catch (err) {
       setGlobalNotice({
@@ -2033,39 +2180,94 @@ export default function SaasAppPage() {
                 {/* Rascunhos Aguardando Aprovação */}
                 {pendingDrafts.length > 0 && (
                   <div className="rounded-2xl border border-indigo-200 bg-indigo-50/70 p-6">
-                    <h2 className="text-base font-extrabold text-indigo-950">
-                      Rascunhos Aguardando Sua Aprovação ({pendingDrafts.length})
-                    </h2>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h2 className="text-base font-extrabold text-indigo-950">
+                        Rascunhos Aguardando Sua Aprovação ({pendingDrafts.length})
+                      </h2>
+                      <span className="text-xs font-semibold text-indigo-700">
+                        Clique na imagem ou em &quot;Visualizar &amp; Editar&quot; para abrir, ampliar e ajustar textos antes de publicar
+                      </span>
+                    </div>
                     <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                       {pendingDrafts.map((d) => (
                         <div
                           key={d.id}
-                          className="flex gap-4 rounded-2xl border border-white bg-white p-4 shadow-sm"
+                          className="flex flex-col gap-3 rounded-2xl border border-white bg-white p-4 shadow-sm transition hover:border-indigo-300"
                         >
-                          {d.image_urls_json[0] && (
-                            /* eslint-disable-next-line @next/next/no-img-element */
-                            <img
-                              src={d.image_urls_json[0]}
-                              alt={d.headline}
-                              className="h-24 w-24 rounded-xl object-cover"
-                            />
-                          )}
-                          <div className="flex-1 space-y-2">
-                            <p className="text-sm font-extrabold text-slate-900">
-                              {d.headline}
-                            </p>
-                            <p className="line-clamp-2 text-xs text-slate-600">
-                              {d.content_json.legenda}
-                            </p>
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => handleOpenDraftInStudio(d)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                handleOpenDraftInStudio(d);
+                              }
+                            }}
+                            className="flex cursor-pointer gap-4 text-left group"
+                            title="Clique para visualizar todas as artes e editar textos no Estúdio"
+                          >
+                            {d.image_urls_json[0] && (
+                              <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-slate-200">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={d.image_urls_json[0]}
+                                  alt={d.headline}
+                                  className="h-full w-full object-cover transition group-hover:scale-105"
+                                />
+                                <span className="absolute bottom-1 right-1 rounded bg-slate-900/80 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                                  {d.image_urls_json.length > 1
+                                    ? `${d.image_urls_json.length} slides`
+                                    : "Ampliar"}
+                                </span>
+                              </div>
+                            )}
+                            <div className="flex-1 space-y-1">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                                  {d.format === "CAROUSEL"
+                                    ? `Carrossel (${d.slides_count}x)`
+                                    : "Imagem Única"}{" "}
+                                  • {d.aspect_ratio}
+                                </span>
+                                <span className="text-[10px] font-semibold text-slate-400">
+                                  {new Date(d.created_at).toLocaleString("pt-BR")}
+                                </span>
+                              </div>
+                              <p className="text-sm font-extrabold text-slate-900 group-hover:text-indigo-700">
+                                {d.headline}
+                              </p>
+                              <p className="line-clamp-2 text-xs text-slate-600">
+                                {d.content_json.legenda}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDraftInStudio(d)}
+                              className="rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100"
+                            >
+                              Visualizar &amp; Editar
+                            </button>
                             <button
                               type="button"
                               disabled={approvingPostId === d.id}
                               onClick={() => handleApproveDraft(d.id)}
-                              className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700"
+                              className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
                             >
                               {approvingPostId === d.id
                                 ? "Publicando..."
                                 : "Aprovar e Publicar Agora"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={deletingPostId === d.id}
+                              onClick={() => handleDeleteDraft(d.id)}
+                              className="ml-auto rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                            >
+                              {deletingPostId === d.id ? "..." : "Excluir"}
                             </button>
                           </div>
                         </div>
@@ -2716,21 +2918,28 @@ export default function SaasAppPage() {
                     >
                       {studioLoading
                         ? "Gerando..."
-                        : "1. Gerar Prévia (Editável)"}
+                        : "1. Gerar Nova Prévia (IA)"}
                     </button>
                     <button
                       type="button"
-                      disabled={studioLoading}
+                      disabled={studioLoading || Boolean(approvingPostId)}
                       onClick={() =>
-                        handleRunStudio({
-                          previewOnly: false,
-                          useEditedContent: Boolean(studioPreview),
-                        })
+                        studioPreview?.draftPostId
+                          ? handleApproveDraft(
+                              studioPreview.draftPostId,
+                              studioPreview
+                            )
+                          : handleRunStudio({
+                              previewOnly: false,
+                              useEditedContent: Boolean(studioPreview),
+                            })
                       }
                       className="rounded-xl bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-500 py-3 text-xs font-extrabold text-white shadow-md disabled:opacity-60"
                     >
-                      {studioLoading
+                      {studioLoading || approvingPostId
                         ? "Publicando..."
+                        : studioPreview?.draftPostId
+                        ? "2. Aprovar Rascunho e Publicar"
                         : "2. Publicar Agora"}
                     </button>
                   </div>
@@ -2738,27 +2947,44 @@ export default function SaasAppPage() {
 
                 {/* Preview Editável + Logs */}
                 <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-7">
-                  <h2 className="text-base font-extrabold text-slate-900">
-                    Pré-visualização &amp; Edição Antes de Postar
-                  </h2>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="text-base font-extrabold text-slate-900">
+                      Pré-visualização &amp; Edição Antes de Postar
+                    </h2>
+                    {studioPreview?.draftPostId && (
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-extrabold text-amber-800">
+                          Editando Rascunho Pendente
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setStudioPreview(null)}
+                          className="text-xs font-bold text-slate-500 underline hover:text-slate-800"
+                        >
+                          Sair do Rascunho
+                        </button>
+                      </div>
+                    )}
+                  </div>
 
                   {!studioPreview ? (
                     <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 p-10 text-center text-xs text-slate-500">
-                      Clique em <strong>&quot;1. Gerar Prévia (Editável)&quot;</strong>{" "}
-                      para visualizar as artes geradas no Cloudflare R2,
-                      comparar a foto melhorada pela IA e editar qualquer texto
-                      antes de publicar no Instagram e Facebook.
+                      Clique em <strong>&quot;1. Gerar Nova Prévia (IA)&quot;</strong>{" "}
+                      para visualizar as artes geradas no Cloudflare R2, ou abra
+                      um <strong>Rascunho Pendente</strong> no Dashboard para
+                      visualizar, editar e aprovar.
                     </div>
                   ) : (
                     <div className="space-y-4">
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         {studioPreview.imageUrls.map((url, idx) => (
                           <a
-                            key={url}
+                            key={`${url}-${idx}`}
                             href={url}
                             target="_blank"
                             rel="noreferrer"
-                            className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50"
+                            className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-50"
+                            title="Clique para abrir imagem em tamanho original"
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
@@ -2766,6 +2992,9 @@ export default function SaasAppPage() {
                               alt={`Arte ${idx + 1}`}
                               className="w-full object-cover"
                             />
+                            <span className="absolute bottom-2 right-2 rounded-lg bg-slate-900/80 px-2 py-1 text-[10px] font-bold text-white opacity-90 group-hover:opacity-100">
+                              Slide {idx + 1} • Abrir em HD ↗
+                            </span>
                           </a>
                         ))}
                       </div>
@@ -2802,47 +3031,246 @@ export default function SaasAppPage() {
                         <p className="text-xs font-extrabold text-indigo-700">
                           Editar Textos Gerados ({studioPreview.providerUsed})
                         </p>
-                        <input
-                          value={studioPreview.post.headline_arte}
-                          onChange={(e) =>
-                            setStudioPreview({
-                              ...studioPreview,
-                              post: {
-                                ...studioPreview.post,
-                                headline_arte: e.target.value,
-                              },
-                            })
-                          }
-                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold"
-                        />
-                        <input
-                          value={studioPreview.post.subtitulo_arte}
-                          onChange={(e) =>
-                            setStudioPreview({
-                              ...studioPreview,
-                              post: {
-                                ...studioPreview.post,
-                                subtitulo_arte: e.target.value,
-                              },
-                            })
-                          }
-                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
-                        />
-                        <textarea
-                          rows={4}
-                          value={studioPreview.post.legenda}
-                          onChange={(e) =>
-                            setStudioPreview({
-                              ...studioPreview,
-                              post: {
-                                ...studioPreview.post,
-                                legenda: e.target.value,
-                              },
-                            })
-                          }
-                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
-                        />
-                        <div className="flex flex-wrap gap-2">
+
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-600">
+                              Badge Superior (Tema Visual)
+                            </label>
+                            <input
+                              value={studioPreview.post.tema_visual}
+                              onChange={(e) =>
+                                setStudioPreview({
+                                  ...studioPreview,
+                                  post: {
+                                    ...studioPreview.post,
+                                    tema_visual: e.target.value,
+                                  },
+                                })
+                              }
+                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-600">
+                              Selo de Destaque
+                            </label>
+                            <input
+                              value={studioPreview.post.destaque_selo}
+                              onChange={(e) =>
+                                setStudioPreview({
+                                  ...studioPreview,
+                                  post: {
+                                    ...studioPreview.post,
+                                    destaque_selo: e.target.value,
+                                  },
+                                })
+                              }
+                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-600">
+                            Headline Principal da Arte
+                          </label>
+                          <input
+                            value={studioPreview.post.headline_arte}
+                            onChange={(e) =>
+                              setStudioPreview({
+                                ...studioPreview,
+                                post: {
+                                  ...studioPreview.post,
+                                  headline_arte: e.target.value,
+                                },
+                              })
+                            }
+                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-600">
+                            Subtítulo da Arte
+                          </label>
+                          <input
+                            value={studioPreview.post.subtitulo_arte}
+                            onChange={(e) =>
+                              setStudioPreview({
+                                ...studioPreview,
+                                post: {
+                                  ...studioPreview.post,
+                                  subtitulo_arte: e.target.value,
+                                },
+                              })
+                            }
+                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-600">
+                            Dor vs Solução
+                          </label>
+                          <input
+                            value={studioPreview.post.dor_vs_solucao}
+                            onChange={(e) =>
+                              setStudioPreview({
+                                ...studioPreview,
+                                post: {
+                                  ...studioPreview.post,
+                                  dor_vs_solucao: e.target.value,
+                                },
+                              })
+                            }
+                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-600">
+                            Tópicos / Benefícios na Arte (1 por linha)
+                          </label>
+                          <textarea
+                            rows={3}
+                            value={(studioPreview.post.beneficios || []).join("\n")}
+                            onChange={(e) =>
+                              setStudioPreview({
+                                ...studioPreview,
+                                post: {
+                                  ...studioPreview.post,
+                                  beneficios: e.target.value.split("\n"),
+                                },
+                              })
+                            }
+                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                          />
+                        </div>
+
+                        {studioPreview.format === "CAROUSEL" &&
+                          Array.isArray(studioPreview.post.slides) &&
+                          studioPreview.post.slides.length > 0 && (
+                            <div className="space-y-2 rounded-xl border border-indigo-100 bg-white p-3">
+                              <p className="text-[11px] font-extrabold text-indigo-800">
+                                Textos dos Slides do Carrossel
+                              </p>
+                              {studioPreview.post.slides.map((sl, sIdx) => (
+                                <div
+                                  key={sIdx}
+                                  className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5"
+                                >
+                                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                    <input
+                                      value={sl.badge}
+                                      placeholder={`Badge Slide ${sIdx + 1}`}
+                                      onChange={(e) => {
+                                        const nextSlides = [
+                                          ...studioPreview.post.slides,
+                                        ];
+                                        nextSlides[sIdx] = {
+                                          ...sl,
+                                          badge: e.target.value,
+                                        };
+                                        setStudioPreview({
+                                          ...studioPreview,
+                                          post: {
+                                            ...studioPreview.post,
+                                            slides: nextSlides,
+                                          },
+                                        });
+                                      }}
+                                      className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold"
+                                    />
+                                    <input
+                                      value={sl.title}
+                                      placeholder={`Título Slide ${sIdx + 1}`}
+                                      onChange={(e) => {
+                                        const nextSlides = [
+                                          ...studioPreview.post.slides,
+                                        ];
+                                        nextSlides[sIdx] = {
+                                          ...sl,
+                                          title: e.target.value,
+                                        };
+                                        setStudioPreview({
+                                          ...studioPreview,
+                                          post: {
+                                            ...studioPreview.post,
+                                            slides: nextSlides,
+                                          },
+                                        });
+                                      }}
+                                      className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold"
+                                    />
+                                  </div>
+                                  <textarea
+                                    rows={2}
+                                    value={sl.body}
+                                    placeholder={`Texto Slide ${sIdx + 1}`}
+                                    onChange={(e) => {
+                                      const nextSlides = [
+                                        ...studioPreview.post.slides,
+                                      ];
+                                      nextSlides[sIdx] = {
+                                        ...sl,
+                                        body: e.target.value,
+                                      };
+                                      setStudioPreview({
+                                        ...studioPreview,
+                                        post: {
+                                          ...studioPreview.post,
+                                          slides: nextSlides,
+                                        },
+                                      });
+                                    }}
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px]"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-600">
+                            Legenda do Post (Instagram &amp; Facebook)
+                          </label>
+                          <textarea
+                            rows={4}
+                            value={studioPreview.post.legenda}
+                            onChange={(e) =>
+                              setStudioPreview({
+                                ...studioPreview,
+                                post: {
+                                  ...studioPreview.post,
+                                  legenda: e.target.value,
+                                },
+                              })
+                            }
+                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-600">
+                            Hashtags
+                          </label>
+                          <input
+                            value={studioPreview.post.hashtags || ""}
+                            onChange={(e) =>
+                              setStudioPreview({
+                                ...studioPreview,
+                                post: {
+                                  ...studioPreview.post,
+                                  hashtags: e.target.value,
+                                },
+                              })
+                            }
+                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                          />
+                        </div>
+
+                        <div className="flex flex-wrap gap-2 pt-1">
                           <button
                             type="button"
                             disabled={studioLoading}
@@ -2852,23 +3280,59 @@ export default function SaasAppPage() {
                                 useEditedContent: true,
                               })
                             }
-                            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-800"
+                            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-800 hover:bg-slate-100 disabled:opacity-60"
                           >
-                            Atualizar Arte com Meus Textos
+                            {studioLoading
+                              ? "Atualizando..."
+                              : "Atualizar Arte com Meus Textos"}
                           </button>
+
+                          {studioPreview.draftPostId && (
+                            <button
+                              type="button"
+                              disabled={savingDraftText}
+                              onClick={handleSaveDraftTextOnly}
+                              className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
+                            >
+                              {savingDraftText
+                                ? "Salvando..."
+                                : "Salvar Alterações no Rascunho"}
+                            </button>
+                          )}
+
                           <button
                             type="button"
-                            disabled={studioLoading}
+                            disabled={studioLoading || Boolean(approvingPostId)}
                             onClick={() =>
-                              handleRunStudio({
-                                previewOnly: false,
-                                useEditedContent: true,
-                              })
+                              studioPreview.draftPostId
+                                ? handleApproveDraft(
+                                    studioPreview.draftPostId,
+                                    studioPreview
+                                  )
+                                : handleRunStudio({
+                                    previewOnly: false,
+                                    useEditedContent: true,
+                                  })
                             }
-                            className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white hover:bg-emerald-700"
+                            className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
                           >
-                            Aprovar e Publicar Agora
+                            {approvingPostId || studioLoading
+                              ? "Publicando..."
+                              : "Aprovar e Publicar Agora"}
                           </button>
+
+                          {studioPreview.draftPostId && (
+                            <button
+                              type="button"
+                              disabled={deletingPostId === studioPreview.draftPostId}
+                              onClick={() =>
+                                handleDeleteDraft(studioPreview.draftPostId!)
+                              }
+                              className="ml-auto rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100"
+                            >
+                              Excluir Rascunho
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -3457,36 +3921,94 @@ export default function SaasAppPage() {
                     {workspace.posts.map((p) => (
                       <div
                         key={p.id}
-                        className="flex gap-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4"
+                        className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/60 p-4"
                       >
-                        {p.image_urls_json[0] && (
-                          /* eslint-disable-next-line @next/next/no-img-element */
-                          <img
-                            src={p.image_urls_json[0]}
-                            alt={p.headline}
-                            className="h-28 w-28 rounded-xl object-cover"
-                          />
-                        )}
-                        <div className="flex-1 space-y-1 text-xs">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-                              {p.status}
-                            </span>
-                            <span className="text-[11px] text-slate-400">
-                              {new Date(p.created_at).toLocaleString("pt-BR")}
-                            </span>
+                        <div className="flex gap-4">
+                          {p.image_urls_json[0] && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDraftInStudio(p)}
+                              className="relative h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-slate-200"
+                              title="Clique para visualizar e editar no Estúdio"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={p.image_urls_json[0]}
+                                alt={p.headline}
+                                className="h-full w-full object-cover transition hover:scale-105"
+                              />
+                              {p.image_urls_json.length > 1 && (
+                                <span className="absolute bottom-1 right-1 rounded bg-slate-900/80 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                                  {p.image_urls_json.length} slides
+                                </span>
+                              )}
+                            </button>
+                          )}
+                          <div className="flex-1 space-y-1 text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                  p.status === "PENDING_APPROVAL"
+                                    ? "bg-amber-100 text-amber-800"
+                                    : p.status === "ERROR"
+                                    ? "bg-rose-100 text-rose-700"
+                                    : "bg-emerald-100 text-emerald-700"
+                                }`}
+                              >
+                                {p.status === "PENDING_APPROVAL"
+                                  ? "RASCUNHO PENDENTE"
+                                  : p.status}
+                              </span>
+                              <span className="text-[11px] text-slate-400">
+                                {new Date(p.created_at).toLocaleString("pt-BR")}
+                              </span>
+                            </div>
+                            <p className="text-sm font-extrabold text-slate-900">
+                              {p.headline}
+                            </p>
+                            <p className="text-[11px] text-slate-600">
+                              IA: {p.ai_provider_used} • {p.format} ({p.slides_count}x{" "}
+                              {p.aspect_ratio})
+                            </p>
+                            <p className="font-mono text-[10px] text-indigo-700">
+                              IG: {p.ig_post_id || "—"} | FB:{" "}
+                              {p.fb_post_id || "—"}
+                            </p>
                           </div>
-                          <p className="text-sm font-extrabold text-slate-900">
-                            {p.headline}
-                          </p>
-                          <p className="text-[11px] text-slate-600">
-                            IA: {p.ai_provider_used} • {p.format} ({p.slides_count}x{" "}
-                            {p.aspect_ratio})
-                          </p>
-                          <p className="font-mono text-[10px] text-indigo-700">
-                            IG: {p.ig_post_id || "—"} | FB:{" "}
-                            {p.fb_post_id || "—"}
-                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 border-t border-slate-200/70 pt-2.5">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenDraftInStudio(p)}
+                            className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-50"
+                          >
+                            {p.status === "PENDING_APPROVAL"
+                              ? "Visualizar & Editar Rascunho"
+                              : "Visualizar / Reabrir no Estúdio"}
+                          </button>
+                          {p.status === "PENDING_APPROVAL" && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={approvingPostId === p.id}
+                                onClick={() => handleApproveDraft(p.id)}
+                                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
+                              >
+                                {approvingPostId === p.id
+                                  ? "Publicando..."
+                                  : "Aprovar e Publicar"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={deletingPostId === p.id}
+                                onClick={() => handleDeleteDraft(p.id)}
+                                className="ml-auto rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-bold text-rose-700 hover:bg-rose-100"
+                              >
+                                Excluir
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                     ))}

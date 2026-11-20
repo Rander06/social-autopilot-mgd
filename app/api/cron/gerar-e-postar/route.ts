@@ -20,6 +20,7 @@ import {
   pickNextTopicForCompany,
   pickNextTopicPhoto,
   recordGeneratedPost,
+  updatePostRecord,
 } from "@/lib/store";
 import {
   AIPhotoMode,
@@ -76,6 +77,7 @@ async function runPostPipeline(params: {
   editedContent?: GeneratedContentPayload | null;
   previewOnly?: boolean;
   forcePublish?: boolean;
+  draftPostId?: string | null;
   userId?: string | null;
 }) {
   const logs: string[] = [];
@@ -148,6 +150,8 @@ async function runPostPipeline(params: {
       secrets.r2_config
     );
     log(`Foto original enviada ao R2: ${originalPhotoUrl}`);
+  } else if (!originalPhotoUrl && params.editedContent?.original_photo_url) {
+    originalPhotoUrl = params.editedContent.original_photo_url.trim();
   } else if (!originalPhotoUrl && topic) {
     queuedPhoto = await pickNextTopicPhoto(params.companyId, topic.id);
     if (queuedPhoto) {
@@ -260,8 +264,22 @@ async function runPostPipeline(params: {
   log(`Upload no R2 concluído (${imageUrls.length} imagem(ns)).`);
 
   if (params.previewOnly) {
+    if (params.draftPostId) {
+      await updatePostRecord(params.draftPostId, {
+        headline: content.headline_arte,
+        content_json: content,
+        image_urls_json: imageUrls,
+        format,
+        aspect_ratio: aspectRatio,
+        slides_count: imageUrls.length,
+        logs_json: logs,
+      });
+      log(`Rascunho ${params.draftPostId} atualizado com novas artes e textos.`);
+    }
+
     return {
       previewOnly: true,
+      draftPostId: params.draftPostId || null,
       companyId: params.companyId,
       topicId: topic?.id || null,
       topicTitle,
@@ -567,6 +585,10 @@ export async function POST(request: NextRequest) {
           : null,
       previewOnly: Boolean(body.previewOnly),
       forcePublish: true,
+      draftPostId:
+        typeof body.draftPostId === "string" && body.draftPostId.trim()
+          ? body.draftPostId.trim()
+          : null,
       userId: session?.userId,
     });
 

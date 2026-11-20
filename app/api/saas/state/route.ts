@@ -25,6 +25,7 @@ import {
   getCompanyWorkspace,
   getDatabaseMode,
   getSuperAdminSnapshot,
+  incrementCompanyPostUsage,
   listPostsHistory,
   registerNewAccount,
   resetPasswordWithRecoveryAccessToken,
@@ -32,11 +33,12 @@ import {
   saveBrandSettings,
   saveCompanyIntegrations,
   sendSupabasePasswordRecoveryEmail,
+  deletePostRecord,
   updatePlanByAdmin,
   updatePostRecord,
   upsertTopic,
 } from "@/lib/store";
-import { UserAccount } from "@/lib/types";
+import { GeneratedContentPayload, UserAccount } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -544,21 +546,40 @@ export async function POST(request: NextRequest) {
           { status: 404 }
         );
       }
+      if (draft.status === "PUBLISHED") {
+        return NextResponse.json(
+          { error: "Este rascunho já foi publicado anteriormente." },
+          { status: 400 }
+        );
+      }
 
       const quota = await checkCompanyQuotaAndStatus(targetCompanyId);
       if (!quota.allowed) {
         return NextResponse.json({ error: quota.reason }, { status: 403 });
       }
 
+      const finalContent: GeneratedContentPayload =
+        body.editedContent && typeof body.editedContent === "object"
+          ? (body.editedContent as GeneratedContentPayload)
+          : draft.content_json;
+
+      const bodyImageUrls = Array.isArray(body.imageUrls)
+        ? body.imageUrls.filter(
+            (u): u is string => typeof u === "string" && u.trim().length > 0
+          )
+        : [];
+      const finalImageUrls =
+        bodyImageUrls.length > 0 ? bodyImageUrls : draft.image_urls_json;
+
       const secrets = await getCompanySecrets(targetCompanyId);
       const logs = [...(draft.logs_json || [])];
-      const fullCaption = `${draft.content_json.legenda}\n\n${draft.content_json.hashtags}`;
+      const fullCaption = `${finalContent.legenda.trim()}\n\n${(finalContent.hashtags || "").trim()}`.trim();
 
       const { instagramPostId, facebookPostId } = await publishToMetaChannels({
         igUserId: secrets.ig_user_id,
         fbPageId: secrets.fb_page_id,
         metaAccessToken: secrets.meta_access_token,
-        imageUrls: draft.image_urls_json,
+        imageUrls: finalImageUrls,
         caption: fullCaption,
         logs,
       });
@@ -566,18 +587,23 @@ export async function POST(request: NextRequest) {
       const tiktokPostId = await publishToTikTok({
         tiktokAccessToken: secrets.tiktok_access_token,
         enabled: secrets.tiktok_enabled,
-        imageUrls: draft.image_urls_json,
+        imageUrls: finalImageUrls,
         caption: fullCaption,
         logs,
       });
 
       const updated = await updatePostRecord(draft.id, {
         status: "PUBLISHED",
+        headline: finalContent.headline_arte || draft.headline,
+        content_json: finalContent,
+        image_urls_json: finalImageUrls,
         ig_post_id: instagramPostId,
         fb_post_id: facebookPostId,
         tiktok_post_id: tiktokPostId,
         logs_json: logs,
       });
+
+      await incrementCompanyPostUsage(targetCompanyId, draft.topic_id);
 
       await appendAuditLog({
         company_id: targetCompanyId,
@@ -587,6 +613,58 @@ export async function POST(request: NextRequest) {
       });
 
       return NextResponse.json({ post: updated });
+    }
+
+    if (action === "update_draft_post") {
+      const postId = String(body.postId || "");
+      const posts = await listPostsHistory(targetCompanyId, 50);
+      const draft = posts.find((p) => p.id === postId);
+      if (!draft) {
+        return NextResponse.json(
+          { error: "Rascunho não encontrado." },
+          { status: 404 }
+        );
+      }
+
+      const editedContent =
+        body.editedContent && typeof body.editedContent === "object"
+          ? (body.editedContent as GeneratedContentPayload)
+          : draft.content_json;
+
+      const bodyImageUrls = Array.isArray(body.imageUrls)
+        ? body.imageUrls.filter(
+            (u): u is string => typeof u === "string" && u.trim().length > 0
+          )
+        : [];
+      const finalImageUrls =
+        bodyImageUrls.length > 0 ? bodyImageUrls : draft.image_urls_json;
+
+      const updated = await updatePostRecord(draft.id, {
+        headline: editedContent.headline_arte || draft.headline,
+        content_json: editedContent,
+        image_urls_json: finalImageUrls,
+      });
+
+      await appendAuditLog({
+        company_id: targetCompanyId,
+        user_id: session.userId,
+        action: "DRAFT_UPDATED",
+        details_json: { post_id: draft.id, headline: editedContent.headline_arte },
+      });
+
+      return NextResponse.json({ post: updated });
+    }
+
+    if (action === "delete_draft_post") {
+      const postId = String(body.postId || "");
+      if (!postId) {
+        return NextResponse.json(
+          { error: "ID do rascunho não informado." },
+          { status: 400 }
+        );
+      }
+      await deletePostRecord(targetCompanyId, postId, session.userId);
+      return NextResponse.json({ ok: true });
     }
 
     if (action === "admin_save_company") {
