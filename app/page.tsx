@@ -107,11 +107,56 @@ type AdminTab = "overview" | "companies" | "plans" | "audit";
 function fileToBase64(file: File): Promise<{ base64: string; contentType: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () =>
-      resolve({
-        base64: String(reader.result || ""),
-        contentType: file.type || "image/jpeg",
-      });
+    reader.onload = () => {
+      const rawDataUrl = String(reader.result || "");
+      if (typeof document === "undefined" || !file.type.startsWith("image/")) {
+        resolve({
+          base64: rawDataUrl,
+          contentType: file.type || "image/jpeg",
+        });
+        return;
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        const maxSide = 1280;
+        const largest = Math.max(img.width || 1, img.height || 1);
+        const scale = Math.min(1, maxSide / largest);
+
+        if (scale >= 1 && file.size <= 700_000) {
+          resolve({
+            base64: rawDataUrl,
+            contentType: file.type || "image/jpeg",
+          });
+          return;
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve({
+            base64: rawDataUrl,
+            contentType: file.type || "image/jpeg",
+          });
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const outputMime =
+          file.type === "image/png" && scale >= 1 ? "image/png" : "image/jpeg";
+        resolve({
+          base64: canvas.toDataURL(outputMime, 0.85),
+          contentType: outputMime,
+        });
+      };
+      img.onerror = () =>
+        resolve({
+          base64: rawDataUrl,
+          contentType: file.type || "image/jpeg",
+        });
+      img.src = rawDataUrl;
+    };
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
@@ -879,11 +924,19 @@ export default function SaasAppPage() {
         }
       }
 
-      const res = await fetch("/api/cron/gerar-e-postar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 65_000);
+      let res: Response;
+      try {
+        res = await fetch("/api/cron/gerar-e-postar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       const data = await res.json();
       if (Array.isArray(data.logs)) setStudioPublishLogs(data.logs);
@@ -910,9 +963,14 @@ export default function SaasAppPage() {
         });
       }
     } catch (err) {
+      const isAbort = err instanceof Error && err.name === "AbortError";
       setGlobalNotice({
         type: "error",
-        text: err instanceof Error ? err.message : "Erro no Estúdio.",
+        text: isAbort
+          ? "A geração excedeu o limite de 65s no servidor. Tente novamente (se houver foto pesada, ela já foi comprimida)."
+          : err instanceof Error
+          ? err.message
+          : "Erro no Estúdio.",
       });
     } finally {
       setStudioAction("idle");

@@ -131,6 +131,32 @@ function appendLog(logs: string[], msg: string) {
   logs.push(`[${new Date().toISOString()}] ${msg}`);
 }
 
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `${label} atingiu tempo limite (${Math.round(ms / 1000)}s).`
+              )
+            ),
+          ms
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function buildCopywritingPrompt(params: {
   companyName: string;
   topicTitle: string;
@@ -273,51 +299,55 @@ async function runGeminiText(
     const model = candidates[i];
     appendLog(logs, `Multi-IA [Gemini]: Tentando modelo ${model}...`);
     try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              tema_visual: { type: Type.STRING },
-              headline_arte: { type: Type.STRING },
-              subtitulo_arte: { type: Type.STRING },
-              dor_vs_solucao: { type: Type.STRING },
-              destaque_selo: { type: Type.STRING },
-              beneficios: { type: Type.ARRAY, items: { type: Type.STRING } },
-              slides: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    badge: { type: Type.STRING },
-                    title: { type: Type.STRING },
-                    body: { type: Type.STRING },
-                    highlight: { type: Type.STRING },
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                tema_visual: { type: Type.STRING },
+                headline_arte: { type: Type.STRING },
+                subtitulo_arte: { type: Type.STRING },
+                dor_vs_solucao: { type: Type.STRING },
+                destaque_selo: { type: Type.STRING },
+                beneficios: { type: Type.ARRAY, items: { type: Type.STRING } },
+                slides: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      badge: { type: Type.STRING },
+                      title: { type: Type.STRING },
+                      body: { type: Type.STRING },
+                      highlight: { type: Type.STRING },
+                    },
+                    required: ["badge", "title", "body"],
                   },
-                  required: ["badge", "title", "body"],
                 },
+                legenda: { type: Type.STRING },
+                hashtags: { type: Type.STRING },
               },
-              legenda: { type: Type.STRING },
-              hashtags: { type: Type.STRING },
+              required: [
+                "tema_visual",
+                "headline_arte",
+                "subtitulo_arte",
+                "dor_vs_solucao",
+                "destaque_selo",
+                "beneficios",
+                "slides",
+                "legenda",
+                "hashtags",
+              ],
             },
-            required: [
-              "tema_visual",
-              "headline_arte",
-              "subtitulo_arte",
-              "dor_vs_solucao",
-              "destaque_selo",
-              "beneficios",
-              "slides",
-              "legenda",
-              "hashtags",
-            ],
+            temperature: 0.9,
           },
-          temperature: 0.9,
-        },
-      });
+        }),
+        18_000,
+        `Gemini (${model})`
+      );
       if (!response.text) throw new Error("Resposta vazia do Gemini.");
       return {
         raw: JSON.parse(extractJsonString(response.text)),
@@ -579,6 +609,7 @@ export async function enhanceProductPhotoWithAI(params: {
         method: "POST",
         headers: { Authorization: `Bearer ${params.keys.openai}` },
         body: form,
+        signal: AbortSignal.timeout(25_000),
       });
 
       const data = (await res.json()) as {
@@ -616,24 +647,28 @@ export async function enhanceProductPhotoWithAI(params: {
         "Ambientação IA: tentando edição da foto via Gemini Image..."
       );
       const ai = new GoogleGenAI({ apiKey: params.keys.gemini });
-      const res = await ai.models.generateContent({
-        model: "gemini-2.5-flash-image",
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                inlineData: {
-                  mimeType,
-                  data: originalBuffer.toString("base64"),
+      const res = await withTimeout(
+        ai.models.generateContent({
+          model: "gemini-2.5-flash-image",
+          contents: [
+            {
+              role: "user",
+              parts: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: originalBuffer.toString("base64"),
+                  },
                 },
-              },
-              { text: editInstruction },
-            ],
-          },
-        ],
-        config: { responseModalities: ["IMAGE", "TEXT"] },
-      });
+                { text: editInstruction },
+              ],
+            },
+          ],
+          config: { responseModalities: ["IMAGE", "TEXT"] },
+        }),
+        18_000,
+        "Gemini Image"
+      );
 
       const parts = res.candidates?.[0]?.content?.parts || [];
       const imgPart = parts.find((p) => p.inlineData?.data);

@@ -374,7 +374,8 @@ function renderHeroGradient(
   brand: BrandSettings,
   width: number,
   height: number,
-  photoDataUrl: string | null
+  photoDataUrl: string | null,
+  fullBleedPhoto = false
 ) {
   const h = React.createElement;
   return h(
@@ -413,7 +414,9 @@ function renderHeroGradient(
         height: `${height}px`,
         display: "flex",
         backgroundImage: photoDataUrl
-          ? `linear-gradient(145deg, rgba(15, 23, 42, 0.88) 0%, ${brand.primary_color}CC 65%, ${brand.secondary_color}AA 100%)`
+          ? fullBleedPhoto
+            ? "linear-gradient(180deg, rgba(15, 23, 42, 0.56) 0%, rgba(15, 23, 42, 0.14) 26%, rgba(15, 23, 42, 0.12) 48%, rgba(15, 23, 42, 0.84) 74%, rgba(15, 23, 42, 0.94) 100%)"
+            : `linear-gradient(145deg, rgba(15, 23, 42, 0.88) 0%, ${brand.primary_color}CC 65%, ${brand.secondary_color}AA 100%)`
           : `linear-gradient(135deg, ${brand.primary_color} 0%, ${brand.secondary_color} 100%)`,
       },
     })
@@ -435,6 +438,186 @@ function buildSingleArt(params: {
   const isTall = height > 1100;
   const heroHeight = isTall ? Math.round(height * 0.42) : 400;
 
+  if (photoDataUrl) {
+    const visibleBenefits = content.beneficios.slice(0, isTall ? 6 : 4);
+    return h(
+      "div",
+      {
+        style: {
+          width: `${width}px`,
+          height: `${height}px`,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "space-between",
+          backgroundColor: "#0F172A",
+          fontFamily: "Plus Jakarta Sans, sans-serif",
+          color: brand.text_color,
+          position: "relative",
+          overflow: "hidden",
+        },
+      },
+      renderHeroGradient(brand, width, height, photoDataUrl, true),
+      h(
+        "div",
+        {
+          style: {
+            position: "relative",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            width: `${width}px`,
+            height: `${height}px`,
+            padding: isTall ? "50px 44px" : "36px 40px",
+          },
+        },
+        renderHeader({ brand, content, offerPrice }),
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              gap: isTall ? "18px" : "14px",
+              marginTop: "auto",
+              marginBottom: isTall ? "18px" : "12px",
+            },
+          },
+          h(
+            "div",
+            {
+              style: {
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px",
+              },
+            },
+            h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  fontSize: isTall ? "52px" : "44px",
+                  fontWeight: 800,
+                  lineHeight: 1.07,
+                  color: "#FFFFFF",
+                  letterSpacing: "-0.02em",
+                  textShadow: "0 4px 18px rgba(15, 23, 42, 0.72)",
+                },
+              },
+              content.headline_arte
+            ),
+            h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  fontSize: isTall ? "24px" : "20px",
+                  fontWeight: 700,
+                  color: "rgba(255, 255, 255, 0.94)",
+                  lineHeight: 1.3,
+                  textShadow: "0 2px 12px rgba(15, 23, 42, 0.72)",
+                },
+              },
+              content.subtitulo_arte
+            )
+          ),
+          h(
+            "div",
+            {
+              style: {
+                display: "flex",
+                flexDirection: "column",
+                backgroundColor: "rgba(255, 255, 255, 0.95)",
+                borderRadius: "24px",
+                border: "2px solid rgba(255, 255, 255, 0.9)",
+                padding: isTall ? "24px" : "18px 20px",
+                gap: isTall ? "14px" : "10px",
+                boxShadow: "0 20px 48px rgba(15, 23, 42, 0.25)",
+              },
+            },
+            h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: "10px",
+                  backgroundColor: brand.bg_color,
+                  borderLeft: `6px solid ${brand.primary_color}`,
+                  borderRadius: "12px",
+                  padding: "11px 14px",
+                },
+              },
+              svgBolt(brand.primary_color, 20),
+              h(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    fontSize: isTall ? "19px" : "17px",
+                    fontWeight: 700,
+                    color: brand.text_color,
+                    lineHeight: 1.25,
+                  },
+                },
+                content.dor_vs_solucao
+              )
+            ),
+            visibleBenefits.length > 0
+              ? h(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      flexDirection: "row",
+                      flexWrap: "wrap",
+                      gap: "9px",
+                      width: "100%",
+                    },
+                  },
+                  ...visibleBenefits.map((benefit, idx) =>
+                    h(
+                      "div",
+                      {
+                        key: `${idx}-${benefit}`,
+                        style: {
+                          display: "flex",
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: "8px",
+                          width: "468px",
+                          backgroundColor: brand.bg_color,
+                          border: `1px solid ${brand.primary_color}26`,
+                          borderRadius: "12px",
+                          padding: isTall ? "12px 14px" : "9px 12px",
+                        },
+                      },
+                      svgCheck(brand.accent_color, 18),
+                      h(
+                        "div",
+                        {
+                          style: {
+                            display: "flex",
+                            fontSize: isTall ? "17px" : "15px",
+                            fontWeight: 700,
+                            color: brand.text_color,
+                            lineHeight: 1.2,
+                          },
+                        },
+                        benefit
+                      )
+                    )
+                  )
+                )
+              : null
+          )
+        ),
+        renderFooter(brand, logoDataUrl)
+      )
+    );
+  }
+
   return h(
     "div",
     {
@@ -451,7 +634,7 @@ function buildSingleArt(params: {
         overflow: "hidden",
       },
     },
-    renderHeroGradient(brand, width, heroHeight, photoDataUrl),
+    renderHeroGradient(brand, width, heroHeight, null),
     h(
       "div",
       {
@@ -466,16 +649,13 @@ function buildSingleArt(params: {
         },
       },
       renderHeader({ brand, content, offerPrice }),
-      // Headline + foto produto lateral quando houver
       h(
         "div",
         {
           style: {
             display: "flex",
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "24px",
+            flexDirection: "column",
+            gap: "12px",
           },
         },
         h(
@@ -483,65 +663,28 @@ function buildSingleArt(params: {
           {
             style: {
               display: "flex",
-              flexDirection: "column",
-              gap: "12px",
-              flex: 1,
+              fontSize: isTall ? "60px" : "52px",
+              fontWeight: 800,
+              lineHeight: 1.07,
+              color: "#FFFFFF",
+              letterSpacing: "-0.02em",
             },
           },
-          h(
-            "div",
-            {
-              style: {
-                display: "flex",
-                fontSize: isTall ? "60px" : "52px",
-                fontWeight: 800,
-                lineHeight: 1.07,
-                color: "#FFFFFF",
-                letterSpacing: "-0.02em",
-              },
-            },
-            content.headline_arte
-          ),
-          h(
-            "div",
-            {
-              style: {
-                display: "flex",
-                fontSize: isTall ? "26px" : "23px",
-                fontWeight: 700,
-                color: "rgba(255, 255, 255, 0.92)",
-                lineHeight: 1.3,
-              },
-            },
-            content.subtitulo_arte
-          )
+          content.headline_arte
         ),
-        photoDataUrl
-          ? h(
-              "div",
-              {
-                style: {
-                  display: "flex",
-                  width: isTall ? "250px" : "210px",
-                  height: isTall ? "250px" : "210px",
-                  borderRadius: "24px",
-                  border: "4px solid #FFFFFF",
-                  overflow: "hidden",
-                  boxShadow: "0 18px 36px rgba(15, 23, 42, 0.35)",
-                  flexShrink: 0,
-                },
-              },
-              h("img", {
-                src: photoDataUrl,
-                alt: "Produto em destaque",
-                style: {
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                },
-              })
-            )
-          : null
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              fontSize: isTall ? "26px" : "23px",
+              fontWeight: 700,
+              color: "rgba(255, 255, 255, 0.92)",
+              lineHeight: 1.3,
+            },
+          },
+          content.subtitulo_arte
+        )
       ),
       // Card luminoso de benefícios + dor vs solução
       h(
@@ -686,7 +829,7 @@ function buildCarouselSlideArt(params: {
           backgroundColor: brand.primary_color,
         },
       },
-      renderHeroGradient(brand, width, height, photoDataUrl),
+      renderHeroGradient(brand, width, height, photoDataUrl, Boolean(photoDataUrl)),
       h(
         "div",
         {
