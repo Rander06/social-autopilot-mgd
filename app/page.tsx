@@ -249,6 +249,9 @@ export default function SaasAppPage() {
   >("idle");
   const [studioPreview, setStudioPreview] =
     useState<StudioPreviewState | null>(null);
+  const [studioReturnTab, setStudioReturnTab] = useState<ClientTab | null>(
+    null
+  );
   const [studioPublishLogs, setStudioPublishLogs] = useState<string[]>([]);
   const [approvingPostId, setApprovingPostId] = useState<string | null>(null);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
@@ -935,6 +938,7 @@ export default function SaasAppPage() {
     setStudioPhotoBase64(null);
 
     const isPendingDraft = post.status === "PENDING_APPROVAL";
+    setStudioReturnTab(clientTab === "studio" ? "dashboard" : clientTab);
     setStudioPreview({
       companyId: post.company_id,
       draftPostId: isPendingDraft ? post.id : null,
@@ -965,6 +969,14 @@ export default function SaasAppPage() {
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
+  }
+
+  function handleCancelStudioEdit() {
+    setStudioPreview(null);
+    setStudioPublishLogs([]);
+    setGlobalNotice(null);
+    setClientTab(studioReturnTab || "dashboard");
+    setStudioReturnTab(null);
   }
 
   async function handleSaveDraftTextOnly() {
@@ -2997,17 +3009,20 @@ export default function SaasAppPage() {
                     <h2 className="text-base font-extrabold text-slate-900">
                       Pré-visualização &amp; Edição Antes de Postar
                     </h2>
-                    {studioPreview?.draftPostId && (
-                      <div className="flex items-center gap-2">
-                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-extrabold text-amber-800">
-                          Editando Rascunho Pendente
-                        </span>
+                    {studioPreview && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {studioPreview.draftPostId && (
+                          <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-extrabold text-amber-800">
+                            Editando Rascunho Pendente
+                          </span>
+                        )}
                         <button
                           type="button"
-                          onClick={() => setStudioPreview(null)}
-                          className="text-xs font-bold text-slate-500 underline hover:text-slate-800"
+                          disabled={studioAction !== "idle" || Boolean(approvingPostId)}
+                          onClick={handleCancelStudioEdit}
+                          className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
                         >
-                          Sair do Rascunho
+                          ← Cancelar e Voltar
                         </button>
                       </div>
                     )}
@@ -3397,6 +3412,15 @@ export default function SaasAppPage() {
                             {studioAction === "publishing" || Boolean(approvingPostId)
                               ? "Publicando..."
                               : "3. Aprovar e Publicar Agora"}
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={studioAction !== "idle" || Boolean(approvingPostId)}
+                            onClick={handleCancelStudioEdit}
+                            className="rounded-xl border border-slate-200 bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200 disabled:opacity-60"
+                          >
+                            Cancelar e Voltar
                           </button>
 
                           {studioPreview.draftPostId && (
