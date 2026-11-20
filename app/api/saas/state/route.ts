@@ -27,6 +27,7 @@ import {
   getSuperAdminSnapshot,
   incrementCompanyPostUsage,
   listPostsHistory,
+  recordGeneratedPost,
   registerNewAccount,
   resetPasswordWithRecoveryAccessToken,
   resetUserPasswordByAdminOrSecret,
@@ -38,7 +39,12 @@ import {
   updatePostRecord,
   upsertTopic,
 } from "@/lib/store";
-import { GeneratedContentPayload, UserAccount } from "@/lib/types";
+import {
+  AspectRatio,
+  GeneratedContentPayload,
+  PostFormat,
+  UserAccount,
+} from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -616,43 +622,99 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "update_draft_post") {
-      const postId = String(body.postId || "");
+      const postId = String(body.postId || "").trim();
       const posts = await listPostsHistory(targetCompanyId, 50);
-      const draft = posts.find((p) => p.id === postId);
-      if (!draft) {
-        return NextResponse.json(
-          { error: "Rascunho não encontrado." },
-          { status: 404 }
-        );
-      }
-
-      const editedContent =
-        body.editedContent && typeof body.editedContent === "object"
-          ? (body.editedContent as GeneratedContentPayload)
-          : draft.content_json;
+      const existingDraft = postId
+        ? posts.find((p) => p.id === postId && p.status === "PENDING_APPROVAL")
+        : undefined;
 
       const bodyImageUrls = Array.isArray(body.imageUrls)
         ? body.imageUrls.filter(
             (u): u is string => typeof u === "string" && u.trim().length > 0
           )
         : [];
-      const finalImageUrls =
-        bodyImageUrls.length > 0 ? bodyImageUrls : draft.image_urls_json;
 
-      const updated = await updatePostRecord(draft.id, {
-        headline: editedContent.headline_arte || draft.headline,
+      if (existingDraft) {
+        const editedContent =
+          body.editedContent && typeof body.editedContent === "object"
+            ? (body.editedContent as GeneratedContentPayload)
+            : existingDraft.content_json;
+
+        const finalImageUrls =
+          bodyImageUrls.length > 0 ? bodyImageUrls : existingDraft.image_urls_json;
+
+        const updated = await updatePostRecord(existingDraft.id, {
+          headline: editedContent.headline_arte || existingDraft.headline,
+          content_json: editedContent,
+          image_urls_json: finalImageUrls,
+        });
+
+        await appendAuditLog({
+          company_id: targetCompanyId,
+          user_id: session.userId,
+          action: "DRAFT_UPDATED",
+          details_json: {
+            post_id: existingDraft.id,
+            headline: editedContent.headline_arte,
+          },
+        });
+
+        return NextResponse.json({ post: updated || existingDraft });
+      }
+
+      if (!body.editedContent || typeof body.editedContent !== "object") {
+        return NextResponse.json(
+          { error: "Conteúdo do rascunho não informado." },
+          { status: 400 }
+        );
+      }
+
+      const editedContent = body.editedContent as GeneratedContentPayload;
+      const format: PostFormat =
+        body.format === "CAROUSEL" ? "CAROUSEL" : "SINGLE";
+      const aspectRatio: AspectRatio =
+        body.aspectRatio === "4:5" || body.aspectRatio === "9:16"
+          ? body.aspectRatio
+          : "1:1";
+      const slidesCount =
+        typeof body.slidesCount === "number"
+          ? body.slidesCount
+          : Math.max(1, bodyImageUrls.length);
+
+      const savedDraft = await recordGeneratedPost({
+        company_id: targetCompanyId,
+        topic_id:
+          typeof body.topicId === "string" && body.topicId.trim()
+            ? body.topicId.trim()
+            : null,
+        topic_title:
+          typeof body.topicTitle === "string" ? body.topicTitle : undefined,
+        ai_provider_used:
+          typeof body.providerUsed === "string" ? body.providerUsed : "MANUAL_EDIT",
+        format,
+        aspect_ratio: aspectRatio,
+        slides_count: slidesCount,
+        headline: editedContent.headline_arte || "Rascunho Editado",
         content_json: editedContent,
-        image_urls_json: finalImageUrls,
+        image_urls_json: bodyImageUrls,
+        ig_post_id: null,
+        fb_post_id: null,
+        tiktok_post_id: null,
+        status: "PENDING_APPROVAL",
+        logs_json: [],
       });
 
       await appendAuditLog({
         company_id: targetCompanyId,
         user_id: session.userId,
-        action: "DRAFT_UPDATED",
-        details_json: { post_id: draft.id, headline: editedContent.headline_arte },
+        action: "POST_DRAFT_CREATED",
+        details_json: {
+          post_id: savedDraft.id,
+          headline: savedDraft.headline,
+        },
       });
 
-      return NextResponse.json({ post: updated });
+      return NextResponse.json({ post: savedDraft });
     }
 
     if (action === "delete_draft_post") {

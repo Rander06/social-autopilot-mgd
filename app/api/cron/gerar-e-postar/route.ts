@@ -76,6 +76,7 @@ async function runPostPipeline(params: {
   manualPhotoContentType?: string | null;
   editedContent?: GeneratedContentPayload | null;
   previewOnly?: boolean;
+  saveAsDraft?: boolean;
   forcePublish?: boolean;
   draftPostId?: string | null;
   userId?: string | null;
@@ -264,8 +265,10 @@ async function runPostPipeline(params: {
   log(`Upload no R2 concluído (${imageUrls.length} imagem(ns)).`);
 
   if (params.previewOnly) {
-    if (params.draftPostId) {
-      await updatePostRecord(params.draftPostId, {
+    let activeDraftId = params.draftPostId || null;
+
+    if (activeDraftId) {
+      const updated = await updatePostRecord(activeDraftId, {
         headline: content.headline_arte,
         content_json: content,
         image_urls_json: imageUrls,
@@ -274,12 +277,38 @@ async function runPostPipeline(params: {
         slides_count: imageUrls.length,
         logs_json: logs,
       });
-      log(`Rascunho ${params.draftPostId} atualizado com novas artes e textos.`);
+      if (!updated) {
+        activeDraftId = null;
+      } else {
+        log(`Rascunho ${activeDraftId} atualizado com novas artes e textos.`);
+      }
+    }
+
+    if (!activeDraftId && params.saveAsDraft) {
+      const savedDraft = await recordGeneratedPost({
+        company_id: params.companyId,
+        topic_id: topic?.id || null,
+        topic_title: topicTitle,
+        ai_provider_used: providerUsed,
+        format,
+        aspect_ratio: aspectRatio,
+        slides_count: imageUrls.length,
+        headline: content.headline_arte,
+        content_json: content,
+        image_urls_json: imageUrls,
+        ig_post_id: null,
+        fb_post_id: null,
+        tiktok_post_id: null,
+        status: "PENDING_APPROVAL",
+        logs_json: logs,
+      });
+      activeDraftId = savedDraft.id;
+      log(`Rascunho ${activeDraftId} salvo com artes e textos editados.`);
     }
 
     return {
       previewOnly: true,
-      draftPostId: params.draftPostId || null,
+      draftPostId: activeDraftId,
       companyId: params.companyId,
       topicId: topic?.id || null,
       topicTitle,
@@ -584,6 +613,7 @@ export async function POST(request: NextRequest) {
           ? (body.editedContent as GeneratedContentPayload)
           : null,
       previewOnly: Boolean(body.previewOnly),
+      saveAsDraft: Boolean(body.saveAsDraft),
       forcePublish: true,
       draftPostId:
         typeof body.draftPostId === "string" && body.draftPostId.trim()
