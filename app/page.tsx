@@ -2060,7 +2060,7 @@ export default function SaasAppPage() {
                           </div>
                           <p className="mt-1 text-xs text-slate-600">
                             Plano: <strong>{c.plan_name}</strong> • Uso:{" "}
-                            {c.posts_used_month}/{c.plan_limit} posts • Vence em{" "}
+                            {c.posts_used_month}/{c.plan_limit} posts/mês • Vence em{" "}
                             {new Date(c.expires_at).toLocaleDateString("pt-BR")}{" "}
                             • Assuntos: {c.topics_count}
                           </p>
@@ -2246,7 +2246,7 @@ export default function SaasAppPage() {
                     </p>
                     <p className="mt-2 text-2xl font-extrabold text-indigo-600">
                       {workspace.company.posts_used_month} /{" "}
-                      {workspace.plan.max_posts_month} posts
+                      {workspace.plan.max_posts_month} posts/mês
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
                       Vence em{" "}
