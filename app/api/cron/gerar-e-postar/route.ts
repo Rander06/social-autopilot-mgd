@@ -77,6 +77,7 @@ async function runPostPipeline(params: {
   manualPhotoBase64?: string | null;
   manualPhotoContentType?: string | null;
   editedContent?: GeneratedContentPayload | null;
+  existingImageUrls?: string[] | null;
   previewOnly?: boolean;
   saveAsDraft?: boolean;
   forcePublish?: boolean;
@@ -262,7 +263,16 @@ async function runPostPipeline(params: {
   // 4. Renderizar Artes PNG via @vercel/og (ou Criativo IA / Arte Pronta) e Subir no Cloudflare R2
   const imageUrls: string[] = [];
 
-  if (aiPhotoMode === "RAW_ART" && photoToRender) {
+  if (
+    !params.previewOnly &&
+    params.existingImageUrls &&
+    params.existingImageUrls.length > 0
+  ) {
+    log(
+      `Reutilizando ${params.existingImageUrls.length} arte(s) já gerada(s) na prévia (sem gerar nova imagem).`
+    );
+    imageUrls.push(...params.existingImageUrls);
+  } else if (aiPhotoMode === "RAW_ART" && photoToRender) {
     log("Modo Arte Pronta: usando imagem enviada diretamente sem sobrepor textos.");
     for (let i = 0; i < slidesCount; i++) {
       imageUrls.push(photoToRender);
@@ -270,34 +280,77 @@ async function runPostPipeline(params: {
   } else if (aiPhotoMode === "AI_FULL_CREATIVE") {
     const basePrompt =
       cleanedVisualPrompt || `${content.headline_arte} - ${promptInstructions}`;
-    const perSlidePrompts = Array.from({ length: slidesCount }, (_, idx) => {
-      if (idx === 0) return basePrompt;
-      const sl = content.slides[idx] || {
-        badge: `SLIDE ${idx + 1}`,
-        title: content.headline_arte,
-        body: content.subtitulo_arte,
-        highlight: offerPrice || content.destaque_selo,
-      };
-      return `Slide ${idx + 1} de ${slidesCount} de um carrossel publicitário elegante mantendo exatamente o mesmo estilo visual, paleta creme quente (#F5EFE6), detalhes geométricos terracota (#B84A27), faixa inferior terracota com pílula verde-escura (#1E7E53) "${offerPrice || content.destaque_selo}" e assinatura "${brand.footer_name}". Tema deste slide (${sl.badge}): título grande "${sl.title}", texto explicativo nítido "${sl.body}", com mockup 3D realista de celular/painel ou fotografia realista ilustrativa do assunto "${topicTitle}". Design gráfico limpo, sem bordas externas.`;
-    });
 
-    const aiResults = await Promise.all(
-      perSlidePrompts.map((pText) =>
-        generateFullCreativeWithAI({
-          companyId: params.companyId,
-          promptText: pText,
-          aspectRatio,
-          preferredImageAI: secrets.preferred_image_ai,
-          referencePhotoUrl: photoToRender,
-          keys: {
-            gemini: secrets.gemini_api_key,
-            openai: secrets.openai_api_key,
-          },
-          r2Config: secrets.r2_config,
-          logs,
-        })
-      )
-    );
+    let aiResults: Array<string | null> = [];
+    if (slidesCount === 1) {
+      const singleUrl = await generateFullCreativeWithAI({
+        companyId: params.companyId,
+        promptText: basePrompt,
+        aspectRatio,
+        preferredImageAI: secrets.preferred_image_ai,
+        referencePhotoUrl: photoToRender,
+        keys: {
+          gemini: secrets.gemini_api_key,
+          openai: secrets.openai_api_key,
+        },
+        r2Config: secrets.r2_config,
+        logs,
+      });
+      aiResults = [singleUrl];
+    } else {
+      const firstSlide = content.slides[0];
+      const slide1Prompt = `${basePrompt}\n\nDIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE 1/${slidesCount} — CAPA): Crie a capa usando o gancho "${firstSlide?.title || content.headline_arte}"${firstSlide?.body ? ` e subtítulo curto "${firstSlide.body}"` : ""}. Adicione no canto inferior direito um indicador visual nítido "Arraste →" (${`1/${slidesCount}`}) e um leve elemento gráfico na borda direita sugerindo continuação para o próximo slide. Design full-bleed sem bordas brancas externas.`;
+
+      const slide1Url = await generateFullCreativeWithAI({
+        companyId: params.companyId,
+        promptText: slide1Prompt,
+        aspectRatio,
+        preferredImageAI: secrets.preferred_image_ai,
+        referencePhotoUrl: photoToRender,
+        keys: {
+          gemini: secrets.gemini_api_key,
+          openai: secrets.openai_api_key,
+        },
+        r2Config: secrets.r2_config,
+        logs,
+      });
+
+      if (!slide1Url) {
+        aiResults = [null];
+      } else {
+        const remainingResults = await Promise.all(
+          Array.from({ length: slidesCount - 1 }, (_, i) => {
+            const idx = i + 1;
+            const isLastSlide = idx === slidesCount - 1;
+            const sl = content.slides[idx] || {
+              badge: isLastSlide ? "OFERTA" : `PASSO ${idx + 1}`,
+              title: content.headline_arte,
+              body: content.subtitulo_arte,
+              highlight: offerPrice || content.destaque_selo,
+            };
+            const offerHighlight = offerPrice || sl.highlight || content.destaque_selo;
+            const slidePrompt = isLastSlide
+              ? `Slide ${idx + 1} de ${slidesCount} (FECHAMENTO DO CARROSSEL). Use a imagem de referência (Slide 1) como guia visual OBRIGATÓRIO: mantenha EXATAMENTE a mesma paleta de cores, fundo, tipografia, iluminação e estilo gráfico do Slide 1 (sem mudar de tema e sem bordas brancas externas). Conteúdo deste slide final (${sl.badge}): título grande "${sl.title}", texto nítido "${sl.body}", destaque em pílula/selo "${offerHighlight}", CTA "${brand.cta_default}" e assinatura "${brand.footer_name}". No canto inferior direito mostre apenas "${idx + 1}/${slidesCount}" (sem seta de continuar).`
+              : `Slide ${idx + 1} de ${slidesCount} (CONTINUAÇÃO DO CARROSSEL). Use a imagem de referência (Slide 1) como guia visual OBRIGATÓRIO: mantenha EXATAMENTE a mesma paleta de cores, fundo, tipografia, iluminação e estilo gráfico do Slide 1 (sem mudar de tema e sem bordas brancas externas), dando continuidade visual da esquerda para a direita. Conteúdo deste slide (${sl.badge}): título grande "${sl.title}", texto explicativo nítido "${sl.body}". No canto inferior direito adicione o indicador "Arraste →" (${idx + 1}/${slidesCount}) convidando a rolar para o próximo slide.`;
+
+            return generateFullCreativeWithAI({
+              companyId: params.companyId,
+              promptText: slidePrompt,
+              aspectRatio,
+              preferredImageAI: secrets.preferred_image_ai,
+              referencePhotoUrl: slide1Url,
+              keys: {
+                gemini: secrets.gemini_api_key,
+                openai: secrets.openai_api_key,
+              },
+              r2Config: secrets.r2_config,
+              logs,
+            });
+          })
+        );
+        aiResults = [slide1Url, ...remainingResults];
+      }
+    }
 
     const anyFailed = aiResults.some((u) => !u);
     if (!anyFailed) {
@@ -717,6 +770,11 @@ export async function POST(request: NextRequest) {
         body.editedContent && typeof body.editedContent === "object"
           ? (body.editedContent as GeneratedContentPayload)
           : null,
+      existingImageUrls: Array.isArray(body.existingImageUrls)
+        ? body.existingImageUrls.filter(
+            (u): u is string => typeof u === "string" && u.trim().length > 0
+          )
+        : null,
       previewOnly: Boolean(body.previewOnly),
       saveAsDraft: Boolean(body.saveAsDraft),
       forcePublish: true,

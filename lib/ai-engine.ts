@@ -219,7 +219,15 @@ REGRAS ESTRITAS:
    - badge (ex: "PASSO 01", "DESTAQUE", "OFERTA")
    - title (título curto do slide, máx. 7 palavras)
    - body (explicação objetiva em 1 a 2 frases)
-   - highlight (opcional, dado ou preço curto)
+   - highlight (opcional, dado ou preço curto)${
+     params.format === "CAROUSEL"
+       ? `
+   IMPORTANTE PARA CARROSSEL CONTÍNUO: Escreva os ${params.slidesCount} slides como uma HISTÓRIA EM SEQUÊNCIA para a pessoa ir arrastando e lendo:
+   * Slide 1: Gancho forte de abertura (dor ou curiosidade) que convida a arrastar para o lado. NÃO despeje todos os benefícios nem o preço completo aqui.
+   * Slides intermediários: Continuação lógica passo a passo (cada slide desenvolve 1 ideia conectada ao slide anterior).
+   * Último slide (Slide ${params.slidesCount}): Conclusão + oferta/preço (${params.offerPrice || "condição especial"}) + CTA final ("${params.ctaDefault}").`
+       : ""
+   }
 9. legenda: Copy persuasiva em português do Brasil com parágrafos curtos, emojis estratégicos e CTA final alinhado a "${params.ctaDefault}".
 10. hashtags: Lista de hashtags relevantes separadas por espaço.
 

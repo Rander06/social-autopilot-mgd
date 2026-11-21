@@ -169,6 +169,18 @@ function daysUntil(isoDate?: string | null): number | null {
   );
 }
 
+function normalizeVisualMode(mode?: AIPhotoMode): AIPhotoMode {
+  if (mode === "RAW_ART") return "RAW_ART";
+  if (
+    mode === "AI_FULL_CREATIVE" ||
+    mode === "EDITORIAL_MOCKUP" ||
+    mode === "ENHANCE"
+  ) {
+    return "AI_FULL_CREATIVE";
+  }
+  return "NONE";
+}
+
 export default function SaasAppPage() {
   const [bootLoading, setBootLoading] = useState(true);
   const [databaseMode, setDatabaseMode] = useState<"supabase" | "memory">(
@@ -333,8 +345,9 @@ export default function SaasAppPage() {
     setIntegMetaToken("");
     setIntegTiktokToken("");
 
-    if (ws.topics.length > 0) {
-      const first = ws.topics[0];
+    const activeTopics = ws.topics.filter((t) => t.is_active);
+    if (activeTopics.length > 0) {
+      const first = activeTopics[0];
       setStudioTopicId(first.id);
       setStudioTitle(first.title);
       setStudioPrompt(first.prompt_instructions);
@@ -342,8 +355,18 @@ export default function SaasAppPage() {
       setStudioFormat(first.post_format);
       setStudioSlides(first.slides_count);
       setStudioRatio(first.aspect_ratio);
-      setStudioPhotoMode(first.ai_photo_mode);
-      setStudioPhotoPrompt(first.ai_photo_prompt || "");
+      setStudioPhotoMode(normalizeVisualMode(first.ai_photo_mode));
+      setStudioPhotoPrompt("");
+    } else {
+      setStudioTopicId("__free__");
+      setStudioTitle("");
+      setStudioPrompt("");
+      setStudioPrice("");
+      setStudioFormat("SINGLE");
+      setStudioSlides(3);
+      setStudioRatio("1:1");
+      setStudioPhotoMode("NONE");
+      setStudioPhotoPrompt("");
     }
   }, []);
 
@@ -714,10 +737,8 @@ export default function SaasAppPage() {
     setTopicSlides(t.slides_count || 3);
     setTopicRatio(t.aspect_ratio || "1:1");
     setTopicApproval(t.approval_mode || "AUTO");
-    setTopicPhotoMode(t.ai_photo_mode || "NONE");
-    setTopicPhotoPrompt(
-      t.ai_photo_prompt || AI_PHOTO_PROMPT_EXAMPLES[0].prompt
-    );
+    setTopicPhotoMode(normalizeVisualMode(t.ai_photo_mode));
+    setTopicPhotoPrompt(t.ai_photo_prompt || "");
     setTopicDays(t.schedule_days || [1, 3, 5]);
     setTopicTime(t.schedule_time || "10:00");
     setTopicActive(t.is_active);
@@ -856,7 +877,7 @@ export default function SaasAppPage() {
     setStudioTopicId(topicId);
     setStudioPreview(null);
     if (topicId === "__free__") {
-      setStudioTitle("");
+      setStudioTitle("Campanha Especial");
       setStudioPrompt("");
       setStudioPrice("");
       return;
@@ -869,8 +890,8 @@ export default function SaasAppPage() {
     setStudioFormat(found.post_format);
     setStudioSlides(found.slides_count);
     setStudioRatio(found.aspect_ratio);
-    setStudioPhotoMode(found.ai_photo_mode);
-    setStudioPhotoPrompt(found.ai_photo_prompt || "");
+    setStudioPhotoMode(normalizeVisualMode(found.ai_photo_mode));
+    setStudioPhotoPrompt("");
   }
 
   async function handleRunStudio(options: {
@@ -889,17 +910,25 @@ export default function SaasAppPage() {
     setStudioPublishLogs([]);
 
     try {
+      const derivedFreeTitle =
+        studioPrompt
+          .trim()
+          .split(/[\n.!?]/)[0]
+          ?.slice(0, 60)
+          .trim() || "Campanha Especial";
       const payload: Record<string, unknown> = {
         companyId: workspace.company.id,
         topicId: studioTopicId !== "__free__" ? studioTopicId : undefined,
-        customTitle: studioTitle || "Post Especial",
+        customTitle:
+          studioTopicId === "__free__"
+            ? derivedFreeTitle
+            : studioTitle || "Post Especial",
         customPrompt: studioPrompt,
         offerPrice: studioPrice,
         format: studioFormat,
         slidesCount: studioFormat === "CAROUSEL" ? studioSlides : 1,
         aspectRatio: studioRatio,
         aiPhotoMode: studioPhotoMode,
-        aiPhotoPrompt: studioPhotoPrompt,
         manualPhotoBase64: studioPhotoBase64,
         manualPhotoContentType: studioPhotoType,
         previewOnly: options.previewOnly,
@@ -913,6 +942,13 @@ export default function SaasAppPage() {
             .map((b) => b.trim())
             .filter(Boolean),
         };
+        if (
+          !options.previewOnly &&
+          Array.isArray(studioPreview.imageUrls) &&
+          studioPreview.imageUrls.length > 0
+        ) {
+          payload.existingImageUrls = studioPreview.imageUrls;
+        }
         if (studioPreview.draftPostId) {
           payload.draftPostId = studioPreview.draftPostId;
         }
@@ -1071,7 +1107,7 @@ export default function SaasAppPage() {
       await loadState(workspace.company.id);
       setGlobalNotice({
         type: "success",
-        text: "Textos e legenda salvos no rascunho com sucesso (sem publicar ainda)!",
+        text: "Rascunho salvo com sucesso (arte e textos salvos, sem publicar ainda)!",
       });
     } catch (err) {
       setGlobalNotice({
@@ -2787,63 +2823,33 @@ export default function SaasAppPage() {
                     </div>
                   </div>
 
-                  {/* Estilo Visual da Arte / Prompt & Fotos */}
-                  <div className="rounded-xl border border-cyan-200 bg-cyan-50/50 p-4 space-y-3">
+                  {/* Estilo Visual da Arte */}
+                  <div className="rounded-xl border border-cyan-200 bg-cyan-50/50 p-4 space-y-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <label className="text-xs font-extrabold uppercase tracking-wider text-cyan-900">
-                        Estilo Visual da Arte &amp; Prompt / Foto
+                        Estilo Visual Padrão Deste Assunto
                       </label>
                       <select
                         value={topicPhotoMode}
                         onChange={(e) =>
                           setTopicPhotoMode(e.target.value as AIPhotoMode)
                         }
-                        className="rounded-lg border border-cyan-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-800"
+                        className="rounded-lg border border-cyan-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-800"
                       >
-                        <option value="EDITORIAL_MOCKUP">
-                          Estilo Agência &amp; Mockups (Imagens 2, 3, 4 e 5 — via Prompt)
+                        <option value="RAW_ART">
+                          1 - Arte Pronta Enviada (Publicar imagem limpa sem textos)
                         </option>
                         <option value="AI_FULL_CREATIVE">
-                          Gerar Imagem 100% por IA via Prompt (Com Fallback Agência)
+                          2 - Gerar Imagem 100% por IA via Prompt (Com Fallback Agência)
                         </option>
                         <option value="NONE">
-                          Padrão Original do App (Cards Luminosos — Sem Foto)
-                        </option>
-                        <option value="ORIGINAL_FRAME">
-                          Padrão Original do App (Com Foto Lateral + Moldura)
-                        </option>
-                        <option value="ENHANCE">
-                          Padrão Original do App (IA Melhora Foto + Moldura)
-                        </option>
-                        <option value="RAW_ART">
-                          Arte Pronta Enviada (Publicar imagem limpa sem textos)
+                          3 - Padrão Original do App (Cards Luminosos — Sem Foto)
                         </option>
                       </select>
                     </div>
-
-                    {topicPhotoMode !== "NONE" && topicPhotoMode !== "RAW_ART" && (
-                      <>
-                        <div className="flex flex-wrap gap-1.5">
-                          {AI_PHOTO_PROMPT_EXAMPLES.map((ex) => (
-                            <button
-                              key={ex.label}
-                              type="button"
-                              onClick={() => setTopicPhotoPrompt(ex.prompt)}
-                              className="rounded-full border border-cyan-300 bg-white px-3 py-1 text-[11px] font-bold text-cyan-800 hover:bg-cyan-100"
-                            >
-                              {ex.label}
-                            </button>
-                          ))}
-                        </div>
-                        <textarea
-                          rows={3}
-                          value={topicPhotoPrompt}
-                          onChange={(e) => setTopicPhotoPrompt(e.target.value)}
-                          placeholder='Cole aqui o prompt visual (ex: "Arte promocional quadrada 1:1 em fundo creme #F5EFE6 com terracota #B84A27...")'
-                          className="w-full rounded-xl border border-cyan-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-500"
-                        />
-                      </>
-                    )}
+                    <p className="text-[11px] text-cyan-900/80">
+                      O campo <strong>Prompt / Briefing para a IA</strong> acima é usado diretamente para gerar a arte e a legenda. Se houver fotos na fila deste assunto, elas serão usadas como arte pronta (modo 1) ou referência visual para a IA (modo 2).
+                    </p>
                   </div>
 
                   <div className="flex items-center justify-between">
@@ -2887,28 +2893,28 @@ export default function SaasAppPage() {
                       <option value="__free__">
                         Prompt Livre Avulso (Escrever agora)
                       </option>
-                      {workspace.topics.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.title}
-                        </option>
-                      ))}
+                      {workspace.topics
+                        .filter((t) => t.is_active)
+                        .map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.title}
+                          </option>
+                        ))}
                     </select>
                   </div>
 
-                  <input
-                    value={studioTitle}
-                    onChange={(e) => setStudioTitle(e.target.value)}
-                    placeholder="Título do assunto (ex: Calçados Lançamento)"
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
-                  />
-
-                  <textarea
-                    rows={3}
-                    value={studioPrompt}
-                    onChange={(e) => setStudioPrompt(e.target.value)}
-                    placeholder="Cole seu prompt para a IA gerar a arte e legenda..."
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
-                  />
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600">
+                      Prompt para a IA (Arte e Legenda)
+                    </label>
+                    <textarea
+                      rows={5}
+                      value={studioPrompt}
+                      onChange={(e) => setStudioPrompt(e.target.value)}
+                      placeholder="Descreva ou cole o prompt completo para a IA gerar a imagem e a legenda exatamente como você deseja..."
+                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
+                    />
+                  </div>
 
                   <div className="grid grid-cols-2 gap-2">
                     <input
@@ -2955,11 +2961,11 @@ export default function SaasAppPage() {
                     )}
                   </div>
 
-                  {/* Estilo Visual + Foto do produto na hora */}
-                  <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                  {/* Modo de Geração + Imagem Opcional (R2) */}
+                  <div className="space-y-2.5 rounded-xl border border-slate-200 bg-slate-50 p-3.5">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-bold text-slate-700">
-                        Estilo Visual &amp; Foto do Produto (Opcional)
+                        Modo de Criação da Imagem
                       </span>
                       <div className="flex items-center gap-1.5">
                         {studioPhotoBase64 && (
@@ -2968,7 +2974,7 @@ export default function SaasAppPage() {
                             onClick={() => setStudioPhotoBase64(null)}
                             className="rounded-lg bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-100"
                           >
-                            Remover Foto
+                            Remover Imagem
                           </button>
                         )}
                         <label className="cursor-pointer rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700">
@@ -2986,7 +2992,7 @@ export default function SaasAppPage() {
                               setStudioPhotoBase64(base64);
                               setStudioPhotoType(contentType);
                               if (studioPhotoMode === "NONE") {
-                                setStudioPhotoMode("ORIGINAL_FRAME");
+                                setStudioPhotoMode("RAW_ART");
                               }
                             }}
                           />
@@ -2995,7 +3001,7 @@ export default function SaasAppPage() {
                     </div>
                     {studioPhotoBase64 && (
                       <p className="text-[11px] font-semibold text-emerald-700">
-                        Foto carregada pronta para envio!
+                        Imagem carregada pronta para envio ao R2!
                       </p>
                     )}
 
@@ -3004,54 +3010,18 @@ export default function SaasAppPage() {
                       onChange={(e) =>
                         setStudioPhotoMode(e.target.value as AIPhotoMode)
                       }
-                      className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold"
                     >
-                      <option value="EDITORIAL_MOCKUP">
-                        Estilo Agência &amp; Mockups (Imagens 2, 3, 4 e 5 — via Prompt)
+                      <option value="RAW_ART">
+                        1 - Arte Pronta Enviada (Publicar imagem limpa sem textos)
                       </option>
                       <option value="AI_FULL_CREATIVE">
-                        Gerar Imagem 100% por IA via Prompt (Com Fallback Agência)
+                        2 - Gerar Imagem 100% por IA via Prompt (Com Fallback Agência)
                       </option>
                       <option value="NONE">
-                        Padrão Original do App (Cards Luminosos — Sem Foto)
-                      </option>
-                      <option value="ORIGINAL_FRAME">
-                        Padrão Original do App (Com Foto Lateral + Moldura)
-                      </option>
-                      <option value="ENHANCE">
-                        Padrão Original do App (IA Melhora Foto + Moldura)
-                      </option>
-                      <option value="RAW_ART">
-                        Arte Pronta Enviada (Publicar imagem limpa sem textos)
+                        3 - Padrão Original do App (Cards Luminosos — Sem Foto)
                       </option>
                     </select>
-
-                    {studioPhotoMode !== "NONE" &&
-                      studioPhotoMode !== "RAW_ART" && (
-                        <>
-                          <div className="flex flex-wrap gap-1">
-                            {AI_PHOTO_PROMPT_EXAMPLES.map((ex) => (
-                              <button
-                                key={ex.label}
-                                type="button"
-                                onClick={() => setStudioPhotoPrompt(ex.prompt)}
-                                className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-700 hover:bg-indigo-50"
-                              >
-                                {ex.label}
-                              </button>
-                            ))}
-                          </div>
-                          <textarea
-                            rows={3}
-                            value={studioPhotoPrompt}
-                            onChange={(e) =>
-                              setStudioPhotoPrompt(e.target.value)
-                            }
-                            placeholder='Cole aqui o prompt da arte (ex: "Arte promocional quadrada 1:1 em fundo creme quente #F5EFE6...")'
-                            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
-                          />
-                        </>
-                      )}
                   </div>
 
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -3063,7 +3033,7 @@ export default function SaasAppPage() {
                     >
                       {studioAction === "generating_preview"
                         ? "Gerando Prévia..."
-                        : "1. Gerar Nova Prévia (IA)"}
+                        : "Gerar Nova Prévia (IA)"}
                     </button>
                     <button
                       type="button"
@@ -3083,9 +3053,7 @@ export default function SaasAppPage() {
                     >
                       {studioAction === "publishing" || Boolean(approvingPostId)
                         ? "Publicando..."
-                        : studioPreview?.draftPostId
-                        ? "2. Aprovar Rascunho e Publicar"
-                        : "2. Publicar Agora"}
+                        : "Aprovar e Publicar Agora"}
                     </button>
                   </div>
                 </div>
@@ -3096,28 +3064,16 @@ export default function SaasAppPage() {
                     <h2 className="text-base font-extrabold text-slate-900">
                       Pré-visualização &amp; Edição Antes de Postar
                     </h2>
-                    {studioPreview && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        {studioPreview.draftPostId && (
-                          <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-extrabold text-amber-800">
-                            Editando Rascunho Pendente
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          disabled={studioAction !== "idle" || Boolean(approvingPostId)}
-                          onClick={handleCancelStudioEdit}
-                          className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
-                        >
-                          ← Cancelar e Voltar
-                        </button>
-                      </div>
+                    {studioPreview?.draftPostId && (
+                      <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-extrabold text-amber-800">
+                        Editando Rascunho Pendente
+                      </span>
                     )}
                   </div>
 
                   {!studioPreview ? (
                     <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 p-10 text-center text-xs text-slate-500">
-                      Clique em <strong>&quot;1. Gerar Nova Prévia (IA)&quot;</strong>{" "}
+                      Clique em <strong>&quot;Gerar Nova Prévia (IA)&quot;</strong>{" "}
                       para visualizar as artes geradas no Cloudflare R2, ou abra
                       um <strong>Rascunho Pendente</strong> no Dashboard para
                       visualizar, editar e aprovar.
@@ -3455,50 +3411,12 @@ export default function SaasAppPage() {
                           <button
                             type="button"
                             disabled={studioAction !== "idle" || Boolean(approvingPostId)}
-                            onClick={() =>
-                              handleRunStudio({
-                                previewOnly: true,
-                                useEditedContent: true,
-                                saveAsDraft: true,
-                              })
-                            }
-                            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-800 hover:bg-slate-100 disabled:opacity-60"
-                          >
-                            {studioAction === "updating_art"
-                              ? "Atualizando Arte..."
-                              : "1. Atualizar Arte & Salvar Rascunho"}
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={studioAction !== "idle" || Boolean(approvingPostId)}
                             onClick={handleSaveDraftTextOnly}
                             className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
                           >
                             {studioAction === "saving_draft"
                               ? "Salvando Rascunho..."
-                              : "2. Salvar Só Textos no Rascunho"}
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={studioAction !== "idle" || Boolean(approvingPostId)}
-                            onClick={() =>
-                              studioPreview.draftPostId
-                                ? handleApproveDraft(
-                                    studioPreview.draftPostId,
-                                    studioPreview
-                                  )
-                                : handleRunStudio({
-                                    previewOnly: false,
-                                    useEditedContent: true,
-                                  })
-                            }
-                            className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
-                          >
-                            {studioAction === "publishing" || Boolean(approvingPostId)
-                              ? "Publicando..."
-                              : "3. Aprovar e Publicar Agora"}
+                              : "Salvar Rascunho"}
                           </button>
 
                           <button
