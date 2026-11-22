@@ -4624,6 +4624,40 @@ export default function SaasAppPage() {
                         automaticamente o bucket padrão da agência.
                       </p>
                     </div>
+
+                    <div className="rounded-xl bg-slate-100/80 p-3.5">
+                      <p className="font-extrabold text-slate-900">
+                        6. TikTok Photo &amp; Content API v2 (Conexão em 1 Clique)
+                      </p>
+                      <ol className="mt-1.5 list-decimal space-y-1 pl-4">
+                        <li>
+                          No card do TikTok ao lado, clique em{" "}
+                          <strong>Conectar Conta TikTok (1 Clique)</strong>.
+                        </li>
+                        <li>
+                          Faça login na sua conta do TikTok e clique em{" "}
+                          <strong>Autorizar</strong> para liberar as permissões{" "}
+                          <code>user.info.basic</code> e{" "}
+                          <code>video.publish</code>.
+                        </li>
+                        <li>
+                          Você voltará automaticamente para esta tela com o
+                          status <strong>Conectado</strong> e a opção{" "}
+                          <strong>Ativar</strong> marcada.
+                        </li>
+                        <li>
+                          <strong>Renovação automática:</strong> o sistema
+                          renova o token sozinho antes de vencer as 24h, sem
+                          precisar reconectar todo dia.
+                        </li>
+                        <li>
+                          <strong>Configuração manual avançada (opcional):</strong>{" "}
+                          só preencha <code>TikTok Open ID</code> e{" "}
+                          <code>TikTok Access Token</code> manualmente se você
+                          gerou um token de teste próprio via API/Sandbox.
+                        </li>
+                      </ol>
+                    </div>
                   </div>
                 </div>
               </div>
