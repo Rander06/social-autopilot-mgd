@@ -315,6 +315,7 @@ export async function POST(request: NextRequest) {
           preferred_image_ai: integInput.preferred_image_ai as
             | "GEMINI"
             | "OPENAI"
+            | "OPENAI_MINI"
             | undefined,
           gemini_api_key:
             typeof integInput.gemini_api_key === "string"
@@ -372,6 +373,10 @@ export async function POST(request: NextRequest) {
           tiktok_enabled:
             typeof integInput.tiktok_enabled === "boolean"
               ? integInput.tiktok_enabled
+              : undefined,
+          allow_image_ai_fallback:
+            typeof integInput.allow_image_ai_fallback === "boolean"
+              ? integInput.allow_image_ai_fallback
               : undefined,
         },
         session.userId
@@ -467,9 +472,18 @@ export async function POST(request: NextRequest) {
             typeof topicPayload.ai_photo_prompt === "string"
               ? topicPayload.ai_photo_prompt
               : null,
+          preferred_image_ai:
+            topicPayload.preferred_image_ai === "GEMINI" ||
+            topicPayload.preferred_image_ai === "OPENAI" ||
+            topicPayload.preferred_image_ai === "OPENAI_MINI"
+              ? topicPayload.preferred_image_ai
+              : null,
           schedule_days: Array.isArray(topicPayload.schedule_days)
             ? (topicPayload.schedule_days as number[])
             : [1, 3, 5],
+          schedule_times: Array.isArray(topicPayload.schedule_times)
+            ? (topicPayload.schedule_times as string[])
+            : undefined,
           schedule_time: String(topicPayload.schedule_time || "10:00"),
           is_active:
             typeof topicPayload.is_active === "boolean"

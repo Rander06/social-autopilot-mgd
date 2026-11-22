@@ -1,5 +1,5 @@
 export type AIProvider = "GEMINI" | "OPENAI" | "CLAUDE";
-export type ImageAIProvider = "GEMINI" | "OPENAI";
+export type ImageAIProvider = "GEMINI" | "OPENAI" | "OPENAI_MINI";
 export type AspectRatio = "1:1" | "4:5" | "9:16";
 export type PostFormat = "SINGLE" | "CAROUSEL";
 export type ApprovalMode = "AUTO" | "DRAFT";
@@ -81,6 +81,7 @@ export interface CompanyIntegrations {
   tiktok_token_enc?: string | null;
   tiktok_open_id?: string | null;
   tiktok_enabled: boolean;
+  allow_image_ai_fallback?: boolean;
 }
 
 export interface CompanyIntegrationsPublic {
@@ -109,6 +110,7 @@ export interface CompanyIntegrationsPublic {
   has_tiktok_token: boolean;
   tiktok_open_id: string;
   tiktok_enabled: boolean;
+  allow_image_ai_fallback: boolean;
 }
 
 export interface Topic {
@@ -125,8 +127,10 @@ export interface Topic {
   approval_mode: ApprovalMode;
   ai_photo_mode: AIPhotoMode;
   ai_photo_prompt?: string | null;
+  preferred_image_ai?: ImageAIProvider | null;
   schedule_days: number[];
   schedule_time: string;
+  schedule_times?: string[];
   is_active: boolean;
   last_posted_at?: string | null;
   created_at: string;

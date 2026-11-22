@@ -1,5 +1,5 @@
 -- ============================================================================
--- Social Autopilot SaaS (Multi-Empresas & Multi-IA) - Schema Supabase Free
+-- Social PilotFlow SaaS (Multi-Empresas & Multi-IA) - Schema Supabase Free
 -- ============================================================================
 -- Execute este script no SQL Editor do seu projeto Supabase.
 -- Todas as imagens (originais, melhoradas por IA e artes finais) ficam no
@@ -65,7 +65,7 @@ create table if not exists public.brand_settings (
 create table if not exists public.integrations (
   company_id text primary key references public.companies(id) on delete cascade,
   preferred_text_ai text not null default 'GEMINI' check (preferred_text_ai in ('GEMINI', 'OPENAI', 'CLAUDE')),
-  preferred_image_ai text not null default 'GEMINI' check (preferred_image_ai in ('GEMINI', 'OPENAI')),
+  preferred_image_ai text not null default 'GEMINI' check (preferred_image_ai in ('GEMINI', 'OPENAI', 'OPENAI_MINI')),
   gemini_key_enc text,
   openai_key_enc text,
   anthropic_key_enc text,
@@ -99,6 +99,7 @@ create table if not exists public.topics (
   approval_mode text not null default 'AUTO' check (approval_mode in ('AUTO', 'DRAFT')),
   ai_photo_mode text not null default 'NONE' check (ai_photo_mode in ('NONE', 'ENHANCE', 'ORIGINAL_FRAME', 'EDITORIAL_MOCKUP', 'AI_FULL_CREATIVE', 'RAW_ART')),
   ai_photo_prompt text,
+  preferred_image_ai text check (preferred_image_ai in ('GEMINI', 'OPENAI', 'OPENAI_MINI')),
   schedule_days integer[] not null default '{1,3,5}',
   schedule_time text not null default '10:00',
   is_active boolean not null default true,
@@ -214,7 +215,7 @@ alter default privileges in schema public grant all on tables to service_role;
 --     and c.status in ('ACTIVE', 'TRIAL')
 --     and c.expires_at > now()
 --     and br_dow = any(t.schedule_days)
---     and t.schedule_time = br_slot;
+--     and br_slot = any(string_to_array(t.schedule_time, ','));
 --
 --   if has_due > 0 then
 --     perform net.http_get(

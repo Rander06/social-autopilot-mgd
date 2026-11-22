@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Social Autopilot SaaS | Meu Gestor Digital",
+  title: "Social PilotFlow SaaS | Meu Gestor Digital",
   description:
     "Plataforma SaaS Multi-Empresas & Multi-IA para automação de posts, carrosséis e ambientação de produtos com IA no Instagram, Facebook e TikTok.",
 };

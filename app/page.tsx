@@ -181,6 +181,84 @@ function normalizeVisualMode(mode?: AIPhotoMode): AIPhotoMode {
   return "NONE";
 }
 
+function parseScheduleTimesList(
+  scheduleTime?: string | null,
+  scheduleTimes?: string[] | null
+): string[] {
+  const raw =
+    Array.isArray(scheduleTimes) && scheduleTimes.length > 0
+      ? scheduleTimes
+      : String(scheduleTime || "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+  const valid = Array.from(
+    new Set(raw.filter((s) => /^\d{2}:\d{2}$/.test(s)))
+  ).sort();
+  return valid.length > 0 ? valid : ["10:00"];
+}
+
+function ImageModelGuide({
+  value,
+  onChange,
+  allowDefault = true,
+  label = "Modelo da IA de Imagem",
+}: {
+  value: ImageAIProvider | "";
+  onChange: (val: ImageAIProvider | "") => void;
+  allowDefault?: boolean;
+  label?: string;
+}) {
+  return (
+    <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+      <div>
+        <label className="block text-[11px] font-bold text-slate-700">
+          {label}
+        </label>
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value as ImageAIProvider | "")}
+          className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs font-bold text-slate-800"
+        >
+          {allowDefault && (
+            <option value="">Usar padrão das Integrações (padrão)</option>
+          )}
+          <option value="OPENAI">
+            OpenAI — Máxima Qualidade (chatgpt-image-latest / gpt-image-1.5)
+          </option>
+          <option value="OPENAI_MINI">
+            OpenAI — Econômica (gpt-image-1-mini • ~4x mais barata)
+          </option>
+          <option value="GEMINI">Google Gemini Image</option>
+        </select>
+      </div>
+      <div className="space-y-1 rounded-md bg-slate-50 p-2.5 text-[11px] leading-relaxed text-slate-600">
+        {allowDefault && (
+          <p>
+            <strong>• Usar padrão das Integrações:</strong> segue o modelo
+            global configurado na aba <em>Integrações</em>.
+          </p>
+        )}
+        <p>
+          <strong>• OpenAI Máxima Qualidade (~US$ 0,034–0,04/img • ~R$ 0,20–0,25):</strong>{" "}
+          melhor nitidez para artes com muito texto em português, mockups de
+          sistema/celular e carrosséis elaborados.
+        </p>
+        <p>
+          <strong>• OpenAI Econômica gpt-image-1-mini (~US$ 0,008/img • ~R$ 0,05):</strong>{" "}
+          cerca de 4x mais barata; ótima para fotos de ambientes, paisagens ou
+          artes simples com pouco texto.
+        </p>
+        <p>
+          <strong>• Google Gemini Image:</strong> boas fotos/artes em português,
+          mas exige faturamento ativo no Google AI Studio (não gera imagem no
+          plano gratuito).
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function SaasAppPage() {
   const [bootLoading, setBootLoading] = useState(true);
   const [databaseMode, setDatabaseMode] = useState<"supabase" | "memory">(
@@ -239,6 +317,7 @@ export default function SaasAppPage() {
   // Integrations form
   const [integTextAi, setIntegTextAi] = useState<AIProvider>("GEMINI");
   const [integImageAi, setIntegImageAi] = useState<ImageAIProvider>("GEMINI");
+  const [integAllowImageFallback, setIntegAllowImageFallback] = useState(false);
   const [integGeminiKey, setIntegGeminiKey] = useState("");
   const [integOpenAiKey, setIntegOpenAiKey] = useState("");
   const [integAnthropicKey, setIntegAnthropicKey] = useState("");
@@ -273,8 +352,9 @@ export default function SaasAppPage() {
   const [topicApproval, setTopicApproval] = useState<ApprovalMode>("AUTO");
   const [topicPhotoMode, setTopicPhotoMode] = useState<AIPhotoMode>("NONE");
   const [topicPhotoPrompt, setTopicPhotoPrompt] = useState("");
+  const [topicImageAi, setTopicImageAi] = useState<ImageAIProvider | "">("");
   const [topicDays, setTopicDays] = useState<number[]>([1, 3, 5]);
-  const [topicTime, setTopicTime] = useState("10:00");
+  const [topicTimes, setTopicTimes] = useState<string[]>(["10:00"]);
   const [topicActive, setTopicActive] = useState(true);
   const [savingTopic, setSavingTopic] = useState(false);
   const [uploadingPhotoTopicId, setUploadingPhotoTopicId] = useState<
@@ -290,6 +370,7 @@ export default function SaasAppPage() {
   const [studioSlides, setStudioSlides] = useState(3);
   const [studioRatio, setStudioRatio] = useState<AspectRatio>("1:1");
   const [studioPhotoMode, setStudioPhotoMode] = useState<AIPhotoMode>("NONE");
+  const [studioImageAi, setStudioImageAi] = useState<ImageAIProvider | "">("");
   const [studioPhotoPrompt, setStudioPhotoPrompt] = useState("");
   const [studioPhotoBase64, setStudioPhotoBase64] = useState<string | null>(
     null
@@ -308,6 +389,16 @@ export default function SaasAppPage() {
     null
   );
   const [studioPublishLogs, setStudioPublishLogs] = useState<string[]>([]);
+  const [studioCreditAlert, setStudioCreditAlert] = useState<{
+    message: string;
+    failedProvider: "GEMINI" | "OPENAI";
+    alternativeProvider: "GEMINI" | "OPENAI" | null;
+    retryOptions: {
+      previewOnly: boolean;
+      useEditedContent?: boolean;
+      saveAsDraft?: boolean;
+    };
+  } | null>(null);
   const [approvingPostId, setApprovingPostId] = useState<string | null>(null);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
 
@@ -330,6 +421,7 @@ export default function SaasAppPage() {
     setBrandForm(ws.brand);
     setIntegTextAi(ws.integrations.preferred_text_ai);
     setIntegImageAi(ws.integrations.preferred_image_ai);
+    setIntegAllowImageFallback(Boolean(ws.integrations.allow_image_ai_fallback));
     setIntegIgUserId(ws.integrations.ig_user_id || "");
     setIntegFbPageId(ws.integrations.fb_page_id || "");
     setIntegR2AccountId(ws.integrations.r2_account_id || "");
@@ -356,6 +448,7 @@ export default function SaasAppPage() {
       setStudioSlides(first.slides_count);
       setStudioRatio(first.aspect_ratio);
       setStudioPhotoMode(normalizeVisualMode(first.ai_photo_mode));
+      setStudioImageAi(first.preferred_image_ai || "");
       setStudioPhotoPrompt("");
     } else {
       setStudioTopicId("__free__");
@@ -366,6 +459,7 @@ export default function SaasAppPage() {
       setStudioSlides(3);
       setStudioRatio("1:1");
       setStudioPhotoMode("NONE");
+      setStudioImageAi("");
       setStudioPhotoPrompt("");
     }
   }, []);
@@ -634,6 +728,7 @@ export default function SaasAppPage() {
       const payload: Record<string, unknown> = {
         preferred_text_ai: integTextAi,
         preferred_image_ai: integImageAi,
+        allow_image_ai_fallback: integAllowImageFallback,
         ig_user_id: integIgUserId,
         fb_page_id: integFbPageId,
         r2_account_id: integR2AccountId,
@@ -720,9 +815,10 @@ export default function SaasAppPage() {
     setTopicRatio("1:1");
     setTopicApproval("AUTO");
     setTopicPhotoMode("NONE");
+    setTopicImageAi("");
     setTopicPhotoPrompt(AI_PHOTO_PROMPT_EXAMPLES[0].prompt);
     setTopicDays([1, 3, 5]);
-    setTopicTime("10:00");
+    setTopicTimes(["10:00"]);
     setTopicActive(true);
   }
 
@@ -738,9 +834,10 @@ export default function SaasAppPage() {
     setTopicRatio(t.aspect_ratio || "1:1");
     setTopicApproval(t.approval_mode || "AUTO");
     setTopicPhotoMode(normalizeVisualMode(t.ai_photo_mode));
+    setTopicImageAi(t.preferred_image_ai || "");
     setTopicPhotoPrompt(t.ai_photo_prompt || "");
     setTopicDays(t.schedule_days || [1, 3, 5]);
-    setTopicTime(t.schedule_time || "10:00");
+    setTopicTimes(parseScheduleTimesList(t.schedule_time, t.schedule_times));
     setTopicActive(t.is_active);
   }
 
@@ -785,8 +882,10 @@ export default function SaasAppPage() {
             approval_mode: topicApproval,
             ai_photo_mode: topicPhotoMode,
             ai_photo_prompt: topicPhotoPrompt,
+            preferred_image_ai: topicImageAi || null,
             schedule_days: topicDays,
-            schedule_time: topicTime,
+            schedule_time: topicTimes.join(","),
+            schedule_times: topicTimes,
             is_active: topicActive,
           },
         }),
@@ -880,6 +979,7 @@ export default function SaasAppPage() {
       setStudioTitle("Campanha Especial");
       setStudioPrompt("");
       setStudioPrice("");
+      setStudioImageAi("");
       return;
     }
     const found = workspace?.topics.find((t) => t.id === topicId);
@@ -891,6 +991,7 @@ export default function SaasAppPage() {
     setStudioSlides(found.slides_count);
     setStudioRatio(found.aspect_ratio);
     setStudioPhotoMode(normalizeVisualMode(found.ai_photo_mode));
+    setStudioImageAi(found.preferred_image_ai || "");
     setStudioPhotoPrompt("");
   }
 
@@ -898,6 +999,8 @@ export default function SaasAppPage() {
     previewOnly: boolean;
     useEditedContent?: boolean;
     saveAsDraft?: boolean;
+    allowImageFallback?: boolean;
+    aiPhotoModeOverride?: AIPhotoMode;
   }) {
     if (!workspace) return;
     const actionKind = !options.previewOnly
@@ -907,6 +1010,7 @@ export default function SaasAppPage() {
       : "generating_preview";
     setStudioAction(actionKind);
     setGlobalNotice(null);
+    setStudioCreditAlert(null);
     setStudioPublishLogs([]);
 
     try {
@@ -928,7 +1032,9 @@ export default function SaasAppPage() {
         format: studioFormat,
         slidesCount: studioFormat === "CAROUSEL" ? studioSlides : 1,
         aspectRatio: studioRatio,
-        aiPhotoMode: studioPhotoMode,
+        aiPhotoMode: options.aiPhotoModeOverride || studioPhotoMode,
+        preferredImageAI: studioImageAi || null,
+        allowImageFallback: Boolean(options.allowImageFallback),
         manualPhotoBase64: studioPhotoBase64,
         manualPhotoContentType: studioPhotoType,
         previewOnly: options.previewOnly,
@@ -970,7 +1076,23 @@ export default function SaasAppPage() {
 
       const data = await res.json();
       if (Array.isArray(data.logs)) setStudioPublishLogs(data.logs);
-      if (!res.ok) throw new Error(data.error || "Erro ao processar post.");
+      if (!res.ok) {
+        if (data.code === "AI_CREDIT_EXHAUSTED") {
+          setStudioCreditAlert({
+            message:
+              data.error ||
+              "A IA selecionada está sem crédito ou faturamento ativo.",
+            failedProvider: data.failedProvider || "GEMINI",
+            alternativeProvider: data.alternativeProvider || null,
+            retryOptions: {
+              previewOnly: options.previewOnly,
+              useEditedContent: options.useEditedContent,
+              saveAsDraft: options.saveAsDraft,
+            },
+          });
+        }
+        throw new Error(data.error || "Erro ao processar post.");
+      }
 
       if (options.previewOnly) {
         setStudioPreview(data as StudioPreviewState);
@@ -1300,7 +1422,7 @@ export default function SaasAppPage() {
         <div className="flex items-center gap-3 rounded-2xl border border-indigo-100 bg-white/90 px-6 py-4 shadow-lg shadow-indigo-500/10">
           <span className="h-5 w-5 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
           <span className="text-sm font-semibold text-slate-700">
-            Carregando Social Autopilot SaaS...
+            Carregando Social PilotFlow SaaS...
           </span>
         </div>
       </div>
@@ -1321,7 +1443,7 @@ export default function SaasAppPage() {
                 Multi-IA &amp; Multi-Empresas
               </span>
               <h1 className="text-xl font-extrabold text-slate-900">
-                Social Autopilot SaaS
+                Social PilotFlow SaaS
               </h1>
             </div>
           </div>
@@ -1683,7 +1805,7 @@ export default function SaasAppPage() {
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-extrabold text-slate-900">
-                  Social Autopilot SaaS
+                  Social PilotFlow SaaS
                 </span>
                 <span
                   className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
@@ -2224,6 +2346,45 @@ export default function SaasAppPage() {
             {/* ---------- ABA 1: DASHBOARD DA EMPRESA ---------- */}
             {clientTab === "dashboard" && (
               <div className="space-y-6">
+                {(() => {
+                  const latestCreditError = workspace.posts.find(
+                    (p) =>
+                      p.status === "ERROR" &&
+                      (p.logs_json || []).some((line) =>
+                        /cr[ée]dito|faturamento|quota|sem saldo/i.test(line)
+                      )
+                  );
+                  if (!latestCreditError) return null;
+                  const errDetail =
+                    (latestCreditError.logs_json || []).find((line) =>
+                      /cr[ée]dito|faturamento|quota|sem saldo/i.test(line)
+                    ) ||
+                    "Post não gerado: chave OpenAI/Gemini sem crédito.";
+                  return (
+                    <div className="rounded-2xl border border-rose-300 bg-rose-50 p-4 text-sm font-semibold text-rose-900">
+                      <p>
+                        <strong>Alerta do Piloto Automático:</strong>{" "}
+                        {errDetail}
+                      </p>
+                      <p className="mt-1 text-xs font-normal text-rose-800">
+                        Assunto: <strong>{latestCreditError.topic_title}</strong>{" "}
+                        em{" "}
+                        {new Date(latestCreditError.created_at).toLocaleString(
+                          "pt-BR"
+                        )}
+                        . Nenhuma outra IA paga foi usada sem sua autorização.{" "}
+                        <button
+                          type="button"
+                          onClick={() => setClientTab("integrations")}
+                          className="font-bold underline"
+                        >
+                          Verificar Integrações e Chaves →
+                        </button>
+                      </p>
+                    </div>
+                  );
+                })()}
+
                 {metaDaysLeft !== null && metaDaysLeft <= 7 && (
                   <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
                     Alerta de Validade Meta: seu token expira em{" "}
@@ -2439,10 +2600,18 @@ export default function SaasAppPage() {
 
                   <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-7">
                     {WEEKDAY_LABELS.map((day) => {
-                      const dayTopics = workspace.topics.filter(
-                        (t) =>
-                          t.is_active && t.schedule_days.includes(day.value)
-                      );
+                      const daySlots = workspace.topics
+                        .filter(
+                          (t) =>
+                            t.is_active && t.schedule_days.includes(day.value)
+                        )
+                        .flatMap((t) =>
+                          parseScheduleTimesList(
+                            t.schedule_time,
+                            t.schedule_times
+                          ).map((time) => ({ t, time }))
+                        )
+                        .sort((a, b) => a.time.localeCompare(b.time));
                       return (
                         <div
                           key={day.value}
@@ -2452,18 +2621,18 @@ export default function SaasAppPage() {
                             {day.full}
                           </p>
                           <div className="mt-2 space-y-1.5">
-                            {dayTopics.length === 0 ? (
+                            {daySlots.length === 0 ? (
                               <p className="text-[11px] text-slate-400">
                                 Sem agendamento
                               </p>
                             ) : (
-                              dayTopics.map((t) => (
+                              daySlots.map(({ t, time }) => (
                                 <div
-                                  key={`${day.value}-${t.id}`}
+                                  key={`${day.value}-${t.id}-${time}`}
                                   className="rounded-lg border border-indigo-100 bg-white p-2 text-[11px] shadow-xs"
                                 >
                                   <span className="font-bold text-indigo-700">
-                                    {t.schedule_time}
+                                    {time}
                                   </span>{" "}
                                   <span className="font-semibold text-slate-800">
                                     {t.title}
@@ -2542,7 +2711,14 @@ export default function SaasAppPage() {
                                       ?.short
                                 )
                                 .join(", ")}{" "}
-                              às <strong>{t.schedule_time}</strong> •{" "}
+                              às{" "}
+                              <strong>
+                                {parseScheduleTimesList(
+                                  t.schedule_time,
+                                  t.schedule_times
+                                ).join(", ")}
+                              </strong>{" "}
+                              •{" "}
                               {t.post_format === "CAROUSEL"
                                 ? `Carrossel (${t.slides_count} slides)`
                                 : "Imagem Única"}{" "}
@@ -2711,11 +2887,11 @@ export default function SaasAppPage() {
                   </div>
 
                   {/* Dias da Semana e Horário */}
-                  <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
                     <p className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
-                      Dia e Hora Exclusivos Deste Assunto (Horário de Brasília)
+                      Dia e Horas Exclusivos Deste Assunto (Horário de Brasília)
                     </p>
-                    <div className="mt-2.5 flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-1.5">
                       {WEEKDAY_LABELS.map((d) => {
                         const checked = topicDays.includes(d.value);
                         return (
@@ -2739,12 +2915,48 @@ export default function SaasAppPage() {
                           </button>
                         );
                       })}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 border-t border-slate-200/80 pt-2.5">
+                      <span className="text-[11px] font-bold text-slate-600">
+                        Horários por dia:
+                      </span>
+                      {topicTimes.map((time) => (
+                        <span
+                          key={time}
+                          className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-bold text-indigo-800"
+                        >
+                          {time}
+                          {topicTimes.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setTopicTimes((prev) =>
+                                  prev.filter((t) => t !== time)
+                                )
+                              }
+                              title="Remover horário"
+                              className="ml-0.5 text-indigo-500 hover:text-rose-600"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </span>
+                      ))}
                       <select
-                        value={topicTime}
-                        onChange={(e) => setTopicTime(e.target.value)}
-                        className="ml-auto rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-800"
+                        value=""
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (!val) return;
+                          setTopicTimes((prev) =>
+                            Array.from(new Set([...prev, val])).sort()
+                          );
+                        }}
+                        className="ml-auto rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-800"
                       >
-                        {SCHEDULE_TIME_SLOTS.map((slot) => (
+                        <option value="">+ Adicionar horário</option>
+                        {SCHEDULE_TIME_SLOTS.filter(
+                          (slot) => !topicTimes.includes(slot)
+                        ).map((slot) => (
                           <option key={slot} value={slot}>
                             {slot}
                           </option>
@@ -2850,6 +3062,13 @@ export default function SaasAppPage() {
                     <p className="text-[11px] text-cyan-900/80">
                       O campo <strong>Prompt / Briefing para a IA</strong> acima é usado diretamente para gerar a arte e a legenda. Se houver fotos na fila deste assunto, elas serão usadas como arte pronta (modo 1) ou referência visual para a IA (modo 2).
                     </p>
+                    {topicPhotoMode === "AI_FULL_CREATIVE" && (
+                      <ImageModelGuide
+                        value={topicImageAi}
+                        onChange={setTopicImageAi}
+                        allowDefault
+                      />
+                    )}
                   </div>
 
                   <div className="flex items-center justify-between">
@@ -3022,7 +3241,61 @@ export default function SaasAppPage() {
                         3 - Padrão Original do App (Cards Luminosos — Sem Foto)
                       </option>
                     </select>
+                    {studioPhotoMode === "AI_FULL_CREATIVE" && (
+                      <ImageModelGuide
+                        value={studioImageAi}
+                        onChange={setStudioImageAi}
+                        allowDefault
+                      />
+                    )}
                   </div>
+
+                  {studioCreditAlert && (
+                    <div className="space-y-2 rounded-xl border border-rose-300 bg-rose-50 p-3.5 text-xs text-rose-900">
+                      <p className="font-extrabold">
+                        {studioCreditAlert.message}
+                      </p>
+                      <p className="text-[11px] text-rose-800">
+                        O sistema não trocou de IA automaticamente para evitar
+                        gastos sem sua autorização. Como deseja prosseguir?
+                      </p>
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        {studioCreditAlert.alternativeProvider && (
+                          <button
+                            type="button"
+                            disabled={studioAction !== "idle"}
+                            onClick={() =>
+                              handleRunStudio({
+                                ...studioCreditAlert.retryOptions,
+                                allowImageFallback: true,
+                              })
+                            }
+                            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-indigo-700"
+                          >
+                            Autorizar{" "}
+                            {studioCreditAlert.alternativeProvider === "OPENAI"
+                              ? "OpenAI"
+                              : "Google Gemini"}{" "}
+                            desta vez
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={studioAction !== "idle"}
+                          onClick={() => {
+                            setStudioPhotoMode("NONE");
+                            void handleRunStudio({
+                              ...studioCreditAlert.retryOptions,
+                              aiPhotoModeOverride: "NONE",
+                            });
+                          }}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-800 hover:bg-slate-100"
+                        >
+                          Usar Cards Originais (Grátis)
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <button
@@ -3707,20 +3980,133 @@ export default function SaasAppPage() {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-600">
-                        IA para Melhorar Fotos de Produtos
-                      </label>
-                      <select
+                      <ImageModelGuide
                         value={integImageAi}
-                        onChange={(e) =>
-                          setIntegImageAi(e.target.value as ImageAIProvider)
+                        onChange={(val) =>
+                          setIntegImageAi((val || "GEMINI") as ImageAIProvider)
                         }
-                        className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold"
-                      >
-                        <option value="GEMINI">Google Gemini Image</option>
-                        <option value="OPENAI">OpenAI (gpt-image-1)</option>
-                      </select>
+                        allowDefault={false}
+                        label="IA de Imagem Padrão da Empresa"
+                      />
                     </div>
+                  </div>
+
+                  <label className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-xs text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={integAllowImageFallback}
+                      onChange={(e) =>
+                        setIntegAllowImageFallback(e.target.checked)
+                      }
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600"
+                    />
+                    <span>
+                      <strong>
+                        Permitir usar a outra IA automaticamente como backup no
+                        cron caso falte crédito
+                      </strong>
+                      <span className="mt-0.5 block text-[11px] text-slate-600">
+                        Desmarcado por padrão: se a IA escolhida ficar sem
+                        crédito no piloto automático, o post é pausado e um
+                        alerta aparece no Dashboard sem gastar outra IA paga.
+                      </span>
+                    </span>
+                  </label>
+
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-2">
+                    <p className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
+                      Status e Saldo das IAs
+                    </p>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 text-xs">
+                      <div className="rounded-lg border border-slate-200 bg-white p-3">
+                        <p className="font-bold text-slate-800">
+                          OpenAI (ChatGPT / gpt-image)
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-slate-600">
+                          Chave:{" "}
+                          <strong
+                            className={
+                              workspace.integrations.has_openai_key
+                                ? "text-emerald-700"
+                                : "text-slate-500"
+                            }
+                          >
+                            {workspace.integrations.has_openai_key
+                              ? `Configurada (${workspace.integrations.openai_key_mask})`
+                              : "Não configurada"}
+                          </strong>
+                        </p>
+                        <a
+                          href="https://platform.openai.com/settings/organization/billing"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-1.5 inline-block text-[11px] font-bold text-indigo-600 underline"
+                        >
+                          Ver saldo em US$ no painel OpenAI →
+                        </a>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-white p-3">
+                        <p className="font-bold text-slate-800">
+                          Google Gemini
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-slate-600">
+                          Chave:{" "}
+                          <strong
+                            className={
+                              workspace.integrations.has_gemini_key
+                                ? "text-emerald-700"
+                                : "text-slate-500"
+                            }
+                          >
+                            {workspace.integrations.has_gemini_key
+                              ? `Configurada (${workspace.integrations.gemini_key_mask})`
+                              : "Não configurada"}
+                          </strong>
+                        </p>
+                        <a
+                          href="https://aistudio.google.com/"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-1.5 inline-block text-[11px] font-bold text-indigo-600 underline"
+                        >
+                          Ver faturamento no Google AI Studio →
+                        </a>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-white p-3">
+                        <p className="font-bold text-slate-800">
+                          Anthropic Claude (Texto/Copy)
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-slate-600">
+                          Chave:{" "}
+                          <strong
+                            className={
+                              workspace.integrations.has_anthropic_key
+                                ? "text-emerald-700"
+                                : "text-slate-500"
+                            }
+                          >
+                            {workspace.integrations.has_anthropic_key
+                              ? `Configurada (${workspace.integrations.anthropic_key_mask})`
+                              : "Não configurada"}
+                          </strong>
+                        </p>
+                        <a
+                          href="https://console.anthropic.com/settings/billing"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-1.5 inline-block text-[11px] font-bold text-indigo-600 underline"
+                        >
+                          Ver saldo em US$ na Anthropic →
+                        </a>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Nota: por segurança das plataformas, chaves de API comuns (
+                      <code>sk-proj-...</code> e <code>AIza...</code>) não
+                      liberam consulta automática do saldo em dólares — o painel
+                      avisa imediatamente sempre que alguma chamada retornar
+                      falta de crédito.
+                    </p>
                   </div>
 
                   <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
@@ -3954,61 +4340,202 @@ export default function SaasAppPage() {
                 {/* Tutorial Guiado para o Cliente */}
                 <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-5">
                   <h2 className="text-base font-extrabold text-slate-900">
-                    Tutorial Rápido Para Clientes
+                    Tutorial Rápido — Passo a Passo de Cada Campo
                   </h2>
-                  <div className="space-y-3 text-xs text-slate-600">
+                  <div className="space-y-3 text-xs leading-relaxed text-slate-600">
                     <div className="rounded-xl bg-slate-50 p-3.5">
                       <p className="font-extrabold text-indigo-700">
-                        1. Google Gemini (Gratuito para Textos)
+                        1. Google Gemini (GEMINI_API_KEY)
                       </p>
-                      <p className="mt-1">
-                        Acesse <code>aistudio.google.com</code> → clique em{" "}
-                        <strong>Get API key</strong> → crie uma chave e cole no
-                        campo <code>GEMINI_API_KEY</code>. Para edição avançada
-                        de fotos na IA, ative o faturamento no projeto Google.
-                      </p>
+                      <ol className="mt-1.5 list-decimal space-y-1 pl-4">
+                        <li>
+                          Acesse{" "}
+                          <a
+                            href="https://aistudio.google.com/"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-semibold text-indigo-600 underline"
+                          >
+                            aistudio.google.com
+                          </a>{" "}
+                          e faça login com sua conta Google.
+                        </li>
+                        <li>
+                          No menu lateral, clique em <strong>Get API key</strong>{" "}
+                          → <strong>Create API key</strong>.
+                        </li>
+                        <li>
+                          Copie a chave (começa com <code>AIza...</code> ou{" "}
+                          <code>AQ...</code>) e cole em{" "}
+                          <code>GEMINI_API_KEY</code>.
+                        </li>
+                        <li>
+                          <strong>Grátis para textos e legendas.</strong> Para
+                          gerar imagens com Gemini, ative o faturamento (Billing)
+                          no projeto Google Cloud.
+                        </li>
+                      </ol>
                     </div>
+
                     <div className="rounded-xl bg-slate-50 p-3.5">
                       <p className="font-extrabold text-indigo-700">
-                        2. OpenAI (ChatGPT) ou Anthropic (Claude)
+                        2. OpenAI — ChatGPT e Imagens (OPENAI_API_KEY)
                       </p>
-                      <p className="mt-1">
-                        Para copywriting com Claude, gere sua chave em{" "}
-                        <code>console.anthropic.com</code>. Para ambientação
-                        avançada de produtos (<code>gpt-image-1</code>), gere em{" "}
-                        <code>platform.openai.com</code>.
-                      </p>
+                      <ol className="mt-1.5 list-decimal space-y-1 pl-4">
+                        <li>
+                          Acesse{" "}
+                          <a
+                            href="https://platform.openai.com/settings/organization/billing"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-semibold text-indigo-600 underline"
+                          >
+                            platform.openai.com
+                          </a>{" "}
+                          e entre na sua conta.
+                        </li>
+                        <li>
+                          Em <strong>Settings → Billing</strong>, adicione um
+                          saldo pré-pago (mínimo US$ 5) para liberar a geração
+                          de imagens (<code>gpt-image-1.5</code> e{" "}
+                          <code>gpt-image-1-mini</code>).
+                        </li>
+                        <li>
+                          Vá em <strong>API Keys → Create new secret key</strong>
+                          , dê um nome e copie a chave (<code>sk-proj-...</code>
+                          ).
+                        </li>
+                        <li>
+                          Cole no campo <code>OPENAI_API_KEY</code> e salve.
+                        </li>
+                      </ol>
                     </div>
+
                     <div className="rounded-xl bg-slate-50 p-3.5">
                       <p className="font-extrabold text-indigo-700">
-                        3. Instagram Business &amp; Facebook Page
+                        3. Anthropic Claude (ANTHROPIC_API_KEY — Opcional)
                       </p>
-                      <p className="mt-1">
-                        Garanta que o Instagram está como{" "}
-                        <strong>Conta Profissional</strong> vinculada à Página do
-                        Facebook. No Business Manager → Usuários do Sistema →
-                        gere um token permanente com{" "}
-                        <code>
-                          instagram_basic, instagram_content_publish,
-                          pages_show_list, pages_read_engagement,
-                          pages_manage_posts
-                        </code>
-                        .
-                      </p>
+                      <ol className="mt-1.5 list-decimal space-y-1 pl-4">
+                        <li>
+                          Acesse{" "}
+                          <a
+                            href="https://console.anthropic.com/"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-semibold text-indigo-600 underline"
+                          >
+                            console.anthropic.com
+                          </a>{" "}
+                          (usado apenas caso escolha Claude como IA de texto).
+                        </li>
+                        <li>
+                          Adicione créditos em <strong>Billing</strong> e gere a
+                          chave em <strong>API Keys</strong> (<code>sk-ant-...</code>
+                          ).
+                        </li>
+                      </ol>
                     </div>
+
                     <div className="rounded-xl bg-slate-50 p-3.5">
                       <p className="font-extrabold text-indigo-700">
-                        4. Cloudflare R2 Storage (10 GB Grátis)
+                        4. Meta Graph API (Token, IG_USER_ID e FB_PAGE_ID)
                       </p>
-                      <p className="mt-1">
-                        Acesse <code>dash.cloudflare.com</code> →{" "}
-                        <strong>R2 Object Storage</strong> → crie um bucket,
-                        ative o acesso público (<strong>Public r2.dev URL</strong>
-                        ) em Settings e clique em{" "}
-                        <strong>Manage R2 API Tokens</strong> →{" "}
-                        <em>Create API token</em> (Object Read &amp; Write) para
-                        copiar o <code>Access Key ID</code> e{" "}
-                        <code>Secret Access Key</code>.
+                      <ol className="mt-1.5 list-decimal space-y-1 pl-4">
+                        <li>
+                          Garanta que seu Instagram seja{" "}
+                          <strong>Conta Profissional (Comercial/Criador)</strong>{" "}
+                          e esteja vinculado à sua <strong>Página do Facebook</strong>.
+                        </li>
+                        <li>
+                          No{" "}
+                          <a
+                            href="https://business.facebook.com/settings/system-users"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-semibold text-indigo-600 underline"
+                          >
+                            Meta Business Manager → Usuários do Sistema
+                          </a>
+                          , crie um usuário Admin, vincule a Página e a conta do
+                          Instagram e clique em <strong>Gerar novo token</strong>{" "}
+                          (sem expiração) marcando:{" "}
+                          <code>
+                            instagram_basic, instagram_content_publish,
+                            pages_show_list, pages_read_engagement,
+                            pages_manage_posts
+                          </code>
+                          . Cole em <code>META_ACCESS_TOKEN</code>.
+                        </li>
+                        <li>
+                          <strong>FB_PAGE_ID (2º campo à direita):</strong> abra
+                          sua Página no Facebook →{" "}
+                          <em>Sobre → Transparência da Página</em> (ou no Graph
+                          API Explorer rode <code>/me/accounts</code>) e copie o ID
+                          numérico.
+                        </li>
+                        <li>
+                          <strong>IG_USER_ID (1º campo à esquerda):</strong> no{" "}
+                          <a
+                            href="https://developers.facebook.com/tools/explorer/"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-semibold text-indigo-600 underline"
+                          >
+                            Graph API Explorer
+                          </a>
+                          , consulte{" "}
+                          <code>
+                            /SEU_FB_PAGE_ID?fields=instagram_business_account
+                          </code>{" "}
+                          e copie o <code>id</code> retornado.
+                        </li>
+                      </ol>
+                    </div>
+
+                    <div className="rounded-xl bg-cyan-50/70 p-3.5">
+                      <p className="font-extrabold text-cyan-900">
+                        5. Cloudflare R2 Storage (10 GB Grátis/mês)
+                      </p>
+                      <ol className="mt-1.5 list-decimal space-y-1 pl-4">
+                        <li>
+                          Acesse{" "}
+                          <a
+                            href="https://dash.cloudflare.com/"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-semibold text-cyan-800 underline"
+                          >
+                            dash.cloudflare.com
+                          </a>{" "}
+                          → menu <strong>R2 Object Storage</strong>.
+                        </li>
+                        <li>
+                          <strong>R2_ACCOUNT_ID (1º campo):</strong> copie o{" "}
+                          <em>Account ID</em> exibido na barra lateral direita do
+                          R2.
+                        </li>
+                        <li>
+                          <strong>R2_BUCKET_NAME (2º campo):</strong> clique em{" "}
+                          <strong>Create bucket</strong>, dê um nome (ex.:{" "}
+                          <code>minha-empresa-media</code>) e cole aqui.
+                        </li>
+                        <li>
+                          <strong>R2_PUBLIC_URL (3º campo):</strong> dentro do
+                          bucket, vá em <strong>Settings → Public Development URL</strong>
+                          , clique em <strong>Enable</strong> e cole a URL (
+                          <code>https://pub-xxxx.r2.dev</code>).
+                        </li>
+                        <li>
+                          <strong>R2_ACCESS_KEY_ID e R2_SECRET_ACCESS_KEY:</strong>{" "}
+                          na tela inicial do R2 clique em{" "}
+                          <strong>Manage R2 API Tokens → Create API Token</strong>{" "}
+                          com permissão <strong>Object Read &amp; Write</strong> e
+                          cole as duas chaves geradas.
+                        </li>
+                      </ol>
+                      <p className="mt-1.5 text-[11px] text-cyan-900/80">
+                        * Se o cliente deixar o R2 em branco, o sistema usa
+                        automaticamente o bucket padrão da agência.
                       </p>
                     </div>
                   </div>

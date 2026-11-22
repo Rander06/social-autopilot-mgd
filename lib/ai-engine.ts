@@ -628,13 +628,20 @@ export async function enhanceProductPhotoWithAI(params: {
 
     const editInstruction = `${params.aiPhotoPrompt.trim()}. Preserve fielmente o produto original, suas cores, formato e detalhes, gerando fotografia publicitária nítida e iluminada em alta qualidade.`;
 
-    if (params.preferredImageAI === "OPENAI" && params.keys.openai) {
-      const openAiModels = [
-        "chatgpt-image-latest",
-        "gpt-image-1.5",
-        "gpt-image-2",
-        "gpt-image-1-mini",
-      ];
+    if (
+      (params.preferredImageAI === "OPENAI" ||
+        params.preferredImageAI === "OPENAI_MINI") &&
+      params.keys.openai
+    ) {
+      const openAiModels =
+        params.preferredImageAI === "OPENAI_MINI"
+          ? ["gpt-image-1-mini", "gpt-image-1.5", "chatgpt-image-latest"]
+          : [
+              "chatgpt-image-latest",
+              "gpt-image-1.5",
+              "gpt-image-2",
+              "gpt-image-1-mini",
+            ];
       for (const openAiModel of openAiModels) {
         try {
           appendLog(
@@ -777,11 +784,33 @@ export async function enhanceProductPhotoWithAI(params: {
   return null;
 }
 
+export class AICreditError extends Error {
+  failedProvider: "GEMINI" | "OPENAI";
+  alternativeProvider: "GEMINI" | "OPENAI" | null;
+  constructor(
+    message: string,
+    failedProvider: "GEMINI" | "OPENAI",
+    alternativeProvider: "GEMINI" | "OPENAI" | null
+  ) {
+    super(message);
+    this.name = "AICreditError";
+    this.failedProvider = failedProvider;
+    this.alternativeProvider = alternativeProvider;
+  }
+}
+
+function isCreditOrQuotaError(msg: string): boolean {
+  return /429|quota|insufficient_quota|credit_balance|billing|RESOURCE_EXHAUSTED|limit:\s*0|exceeded/i.test(
+    msg
+  );
+}
+
 export async function generateFullCreativeWithAI(params: {
   companyId: string;
   promptText: string;
   aspectRatio: AspectRatio;
   preferredImageAI: ImageAIProvider;
+  allowFallback?: boolean;
   referencePhotoUrl?: string | null;
   keys: { gemini?: string | null; openai?: string | null };
   r2Config?: R2StorageConfig;
@@ -806,20 +835,37 @@ export async function generateFullCreativeWithAI(params: {
     }
   }
 
-  const order: ImageAIProvider[] = Array.from(
-    new Set([params.preferredImageAI, "GEMINI", "OPENAI"] as ImageAIProvider[])
-  );
+  const normalizedPref: "GEMINI" | "OPENAI" =
+    params.preferredImageAI === "OPENAI" ||
+    params.preferredImageAI === "OPENAI_MINI"
+      ? "OPENAI"
+      : "GEMINI";
+  const otherProvider: "GEMINI" | "OPENAI" =
+    normalizedPref === "OPENAI" ? "GEMINI" : "OPENAI";
+  const hasOtherKey =
+    otherProvider === "OPENAI"
+      ? Boolean(params.keys.openai?.trim())
+      : Boolean(params.keys.gemini?.trim());
+  const order: Array<"GEMINI" | "OPENAI"> = params.allowFallback
+    ? [normalizedPref, otherProvider]
+    : [normalizedPref];
+
+  let creditErrorDetected: { provider: "GEMINI" | "OPENAI"; detail: string } | null =
+    null;
 
   for (const provider of order) {
     if (provider === "OPENAI" && params.keys.openai?.trim()) {
       const openAiKey = params.keys.openai.trim();
       const gptSize = params.aspectRatio === "1:1" ? "1024x1024" : "1024x1536";
-      const openAiModels = [
-        "chatgpt-image-latest",
-        "gpt-image-1.5",
-        "gpt-image-2",
-        "gpt-image-1-mini",
-      ];
+      const openAiModels =
+        params.preferredImageAI === "OPENAI_MINI"
+          ? ["gpt-image-1-mini", "gpt-image-1.5", "chatgpt-image-latest"]
+          : [
+              "chatgpt-image-latest",
+              "gpt-image-1.5",
+              "gpt-image-2",
+              "gpt-image-1-mini",
+            ];
 
       const extractOpenAiBuffer = async (data: {
         data?: Array<{ b64_json?: string; url?: string }>;
@@ -896,18 +942,22 @@ export async function generateFullCreativeWithAI(params: {
             );
             return url;
           }
+          const errMsg = data.error?.message || res.statusText;
+          if (isCreditOrQuotaError(errMsg) && !creditErrorDetected) {
+            creditErrorDetected = { provider: "OPENAI", detail: errMsg };
+          }
           appendLog(
             params.logs,
-            `Criativo IA (OpenAI ${openAiModel}) indisponível: ${
-              data.error?.message || res.statusText
-            }`
+            `Criativo IA (OpenAI ${openAiModel}) indisponível: ${errMsg}`
           );
         } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          if (isCreditOrQuotaError(errMsg) && !creditErrorDetected) {
+            creditErrorDetected = { provider: "OPENAI", detail: errMsg };
+          }
           appendLog(
             params.logs,
-            `Criativo IA (OpenAI ${openAiModel}) erro: ${
-              err instanceof Error ? err.message : String(err)
-            }`
+            `Criativo IA (OpenAI ${openAiModel}) erro: ${errMsg}`
           );
         }
       }
@@ -966,14 +1016,29 @@ export async function generateFullCreativeWithAI(params: {
             return url;
           }
         } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          if (isCreditOrQuotaError(errMsg) && !creditErrorDetected) {
+            creditErrorDetected = { provider: "GEMINI", detail: errMsg };
+          }
           appendLog(
             params.logs,
-            `Criativo IA (${model}) indisponível: ${err instanceof Error ? err.message : String(err)
-            }`
+            `Criativo IA (${model}) indisponível: ${errMsg}`
           );
         }
       }
     }
+  }
+
+  if (creditErrorDetected) {
+    const label =
+      creditErrorDetected.provider === "OPENAI"
+        ? "OpenAI"
+        : "Google Gemini";
+    throw new AICreditError(
+      `Post não gerado: chave ${label} sem crédito, cota ou faturamento ativo.`,
+      creditErrorDetected.provider,
+      hasOtherKey ? otherProvider : null
+    );
   }
 
   return null;

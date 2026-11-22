@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  AICreditError,
   cleanCreativePrompt,
   enhanceProductPhotoWithAI,
   generateContentWithMultiAI,
@@ -73,6 +74,8 @@ async function runPostPipeline(params: {
   aspectRatio?: AspectRatio;
   aiPhotoMode?: AIPhotoMode;
   aiPhotoPrompt?: string | null;
+  preferredImageAI?: "GEMINI" | "OPENAI" | "OPENAI_MINI" | null;
+  allowImageFallback?: boolean;
   manualPhotoUrl?: string | null;
   manualPhotoBase64?: string | null;
   manualPhotoContentType?: string | null;
@@ -131,6 +134,10 @@ async function runPostPipeline(params: {
     params.aiPhotoPrompt !== undefined
       ? params.aiPhotoPrompt
       : topic?.ai_photo_prompt || null;
+  const effectiveImageAI =
+    params.preferredImageAI ||
+    topic?.preferred_image_ai ||
+    secrets.preferred_image_ai;
 
   log(
     `Iniciando pipeline para "${quota.company.name}" | Assunto: "${topicTitle}" | ${format} (${slidesCount}x ${aspectRatio})`
@@ -181,7 +188,7 @@ async function runPostPipeline(params: {
       originalPhotoUrl,
       aiPhotoMode,
       aiPhotoPrompt,
-      preferredImageAI: secrets.preferred_image_ai,
+      preferredImageAI: effectiveImageAI,
       keys: {
         gemini: secrets.gemini_api_key,
         openai: secrets.openai_api_key,
@@ -280,76 +287,109 @@ async function runPostPipeline(params: {
   } else if (aiPhotoMode === "AI_FULL_CREATIVE") {
     const basePrompt =
       cleanedVisualPrompt || `${content.headline_arte} - ${promptInstructions}`;
+    const shouldAllowFallback =
+      Boolean(params.allowImageFallback) ||
+      (!params.forcePublish && Boolean(secrets.allow_image_ai_fallback));
 
     let aiResults: Array<string | null> = [];
-    if (slidesCount === 1) {
-      const singleUrl = await generateFullCreativeWithAI({
-        companyId: params.companyId,
-        promptText: basePrompt,
-        aspectRatio,
-        preferredImageAI: secrets.preferred_image_ai,
-        referencePhotoUrl: photoToRender,
-        keys: {
-          gemini: secrets.gemini_api_key,
-          openai: secrets.openai_api_key,
-        },
-        r2Config: secrets.r2_config,
-        logs,
-      });
-      aiResults = [singleUrl];
-    } else {
-      const firstSlide = content.slides[0];
-      const slide1Prompt = `${basePrompt}\n\nDIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE 1/${slidesCount} — CAPA): Crie a capa usando o gancho "${firstSlide?.title || content.headline_arte}"${firstSlide?.body ? ` e subtítulo curto "${firstSlide.body}"` : ""}. Adicione no canto inferior direito um indicador visual nítido "Arraste →" (${`1/${slidesCount}`}) e um leve elemento gráfico na borda direita sugerindo continuação para o próximo slide. Design full-bleed sem bordas brancas externas.`;
-
-      const slide1Url = await generateFullCreativeWithAI({
-        companyId: params.companyId,
-        promptText: slide1Prompt,
-        aspectRatio,
-        preferredImageAI: secrets.preferred_image_ai,
-        referencePhotoUrl: photoToRender,
-        keys: {
-          gemini: secrets.gemini_api_key,
-          openai: secrets.openai_api_key,
-        },
-        r2Config: secrets.r2_config,
-        logs,
-      });
-
-      if (!slide1Url) {
-        aiResults = [null];
+    try {
+      if (slidesCount === 1) {
+        const singleUrl = await generateFullCreativeWithAI({
+          companyId: params.companyId,
+          promptText: basePrompt,
+          aspectRatio,
+          preferredImageAI: effectiveImageAI,
+          allowFallback: shouldAllowFallback,
+          referencePhotoUrl: photoToRender,
+          keys: {
+            gemini: secrets.gemini_api_key,
+            openai: secrets.openai_api_key,
+          },
+          r2Config: secrets.r2_config,
+          logs,
+        });
+        aiResults = [singleUrl];
       } else {
-        const remainingResults = await Promise.all(
-          Array.from({ length: slidesCount - 1 }, (_, i) => {
-            const idx = i + 1;
-            const isLastSlide = idx === slidesCount - 1;
-            const sl = content.slides[idx] || {
-              badge: isLastSlide ? "OFERTA" : `PASSO ${idx + 1}`,
-              title: content.headline_arte,
-              body: content.subtitulo_arte,
-              highlight: offerPrice || content.destaque_selo,
-            };
-            const offerHighlight = offerPrice || sl.highlight || content.destaque_selo;
-            const slidePrompt = isLastSlide
-              ? `Slide ${idx + 1} de ${slidesCount} (FECHAMENTO DO CARROSSEL). Use a imagem de referência (Slide 1) como guia visual OBRIGATÓRIO: mantenha EXATAMENTE a mesma paleta de cores, fundo, tipografia, iluminação e estilo gráfico do Slide 1 (sem mudar de tema e sem bordas brancas externas). Conteúdo deste slide final (${sl.badge}): título grande "${sl.title}", texto nítido "${sl.body}", destaque em pílula/selo "${offerHighlight}", CTA "${brand.cta_default}" e assinatura "${brand.footer_name}". No canto inferior direito mostre apenas "${idx + 1}/${slidesCount}" (sem seta de continuar).`
-              : `Slide ${idx + 1} de ${slidesCount} (CONTINUAÇÃO DO CARROSSEL). Use a imagem de referência (Slide 1) como guia visual OBRIGATÓRIO: mantenha EXATAMENTE a mesma paleta de cores, fundo, tipografia, iluminação e estilo gráfico do Slide 1 (sem mudar de tema e sem bordas brancas externas), dando continuidade visual da esquerda para a direita. Conteúdo deste slide (${sl.badge}): título grande "${sl.title}", texto explicativo nítido "${sl.body}". No canto inferior direito adicione o indicador "Arraste →" (${idx + 1}/${slidesCount}) convidando a rolar para o próximo slide.`;
+        const firstSlide = content.slides[0];
+        const slide1Prompt = `${basePrompt}\n\nDIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE 1/${slidesCount} — CAPA): Crie a capa usando o gancho "${firstSlide?.title || content.headline_arte}"${firstSlide?.body ? ` e subtítulo curto "${firstSlide.body}"` : ""}. Adicione no canto inferior direito um indicador visual nítido "Arraste →" (${`1/${slidesCount}`}) e um leve elemento gráfico na borda direita sugerindo continuação para o próximo slide. Design full-bleed sem bordas brancas externas.`;
 
-            return generateFullCreativeWithAI({
-              companyId: params.companyId,
-              promptText: slidePrompt,
-              aspectRatio,
-              preferredImageAI: secrets.preferred_image_ai,
-              referencePhotoUrl: slide1Url,
-              keys: {
-                gemini: secrets.gemini_api_key,
-                openai: secrets.openai_api_key,
-              },
-              r2Config: secrets.r2_config,
-              logs,
-            });
-          })
-        );
-        aiResults = [slide1Url, ...remainingResults];
+        const slide1Url = await generateFullCreativeWithAI({
+          companyId: params.companyId,
+          promptText: slide1Prompt,
+          aspectRatio,
+          preferredImageAI: effectiveImageAI,
+          allowFallback: shouldAllowFallback,
+          referencePhotoUrl: photoToRender,
+          keys: {
+            gemini: secrets.gemini_api_key,
+            openai: secrets.openai_api_key,
+          },
+          r2Config: secrets.r2_config,
+          logs,
+        });
+
+        if (!slide1Url) {
+          aiResults = [null];
+        } else {
+          const remainingResults = await Promise.all(
+            Array.from({ length: slidesCount - 1 }, (_, i) => {
+              const idx = i + 1;
+              const isLastSlide = idx === slidesCount - 1;
+              const sl = content.slides[idx] || {
+                badge: isLastSlide ? "OFERTA" : `PASSO ${idx + 1}`,
+                title: content.headline_arte,
+                body: content.subtitulo_arte,
+                highlight: offerPrice || content.destaque_selo,
+              };
+              const offerHighlight = offerPrice || sl.highlight || content.destaque_selo;
+              const slidePrompt = isLastSlide
+                ? `Slide ${idx + 1} de ${slidesCount} (FECHAMENTO DO CARROSSEL). Use a imagem de referência (Slide 1) como guia visual OBRIGATÓRIO: mantenha EXATAMENTE a mesma paleta de cores, fundo, tipografia, iluminação e estilo gráfico do Slide 1 (sem mudar de tema e sem bordas brancas externas). Conteúdo deste slide final (${sl.badge}): título grande "${sl.title}", texto nítido "${sl.body}", destaque em pílula/selo "${offerHighlight}", CTA "${brand.cta_default}" e assinatura "${brand.footer_name}". No canto inferior direito mostre apenas "${idx + 1}/${slidesCount}" (sem seta de continuar).`
+                : `Slide ${idx + 1} de ${slidesCount} (CONTINUAÇÃO DO CARROSSEL). Use a imagem de referência (Slide 1) como guia visual OBRIGATÓRIO: mantenha EXATAMENTE a mesma paleta de cores, fundo, tipografia, iluminação e estilo gráfico do Slide 1 (sem mudar de tema e sem bordas brancas externas), dando continuidade visual da esquerda para a direita. Conteúdo deste slide (${sl.badge}): título grande "${sl.title}", texto explicativo nítido "${sl.body}". No canto inferior direito adicione o indicador "Arraste →" (${idx + 1}/${slidesCount}) convidando a rolar para o próximo slide.`;
+
+              return generateFullCreativeWithAI({
+                companyId: params.companyId,
+                promptText: slidePrompt,
+                aspectRatio,
+                preferredImageAI: effectiveImageAI,
+                allowFallback: shouldAllowFallback,
+                referencePhotoUrl: slide1Url,
+                keys: {
+                  gemini: secrets.gemini_api_key,
+                  openai: secrets.openai_api_key,
+                },
+                r2Config: secrets.r2_config,
+                logs,
+              });
+            })
+          );
+          aiResults = [slide1Url, ...remainingResults];
+        }
       }
+    } catch (err) {
+      if (err instanceof AICreditError) {
+        log(err.message);
+        if (!params.forcePublish) {
+          await recordGeneratedPost({
+            company_id: params.companyId,
+            topic_id: topic?.id || null,
+            topic_title: topicTitle,
+            ai_provider_used: providerUsed,
+            format,
+            aspect_ratio: aspectRatio,
+            slides_count: slidesCount,
+            headline: content.headline_arte,
+            content_json: content,
+            image_urls_json: [],
+            ig_post_id: null,
+            fb_post_id: null,
+            tiktok_post_id: null,
+            status: "ERROR",
+            logs_json: [err.message, ...logs],
+          });
+        }
+        throw err;
+      }
+      throw err;
     }
 
     const anyFailed = aiResults.some((u) => !u);
@@ -754,6 +794,13 @@ export async function POST(request: NextRequest) {
         typeof body.aiPhotoPrompt === "string"
           ? body.aiPhotoPrompt
           : undefined,
+      preferredImageAI:
+        body.preferredImageAI === "GEMINI" ||
+        body.preferredImageAI === "OPENAI" ||
+        body.preferredImageAI === "OPENAI_MINI"
+          ? body.preferredImageAI
+          : null,
+      allowImageFallback: Boolean(body.allowImageFallback),
       manualPhotoUrl:
         typeof body.manualPhotoUrl === "string"
           ? body.manualPhotoUrl
@@ -787,6 +834,18 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result, { status: 200 });
   } catch (error) {
+    if (error instanceof AICreditError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: "AI_CREDIT_EXHAUSTED",
+          failedProvider: error.failedProvider,
+          alternativeProvider: error.alternativeProvider,
+          logs: [error.message],
+        },
+        { status: 402 }
+      );
+    }
     const message =
       error instanceof Error
         ? error.message

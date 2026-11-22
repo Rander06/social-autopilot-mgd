@@ -896,6 +896,7 @@ function unpackIntegrationsRow(raw: CompanyIntegrations): CompanyIntegrations {
       const packed = JSON.parse(decryptedTk) as {
         __packed?: boolean;
         tiktok_token?: string | null;
+        allow_image_ai_fallback?: boolean;
         r2?: {
           account_id?: string | null;
           access_key_id?: string | null;
@@ -923,6 +924,9 @@ function unpackIntegrationsRow(raw: CompanyIntegrations): CompanyIntegrations {
           result.r2_bucket_name || packed.r2.bucket_name || null;
         result.r2_public_url =
           result.r2_public_url || packed.r2.public_url || null;
+      }
+      if (typeof packed.allow_image_ai_fallback === "boolean") {
+        result.allow_image_ai_fallback = packed.allow_image_ai_fallback;
       }
     } catch {
       // Ignora JSON inválido
@@ -976,6 +980,7 @@ export function toPublicIntegrations(
     has_tiktok_token: Boolean(decryptSecret(integ.tiktok_token_enc)),
     tiktok_open_id: integ.tiktok_open_id || "",
     tiktok_enabled: Boolean(integ.tiktok_enabled),
+    allow_image_ai_fallback: Boolean(integ.allow_image_ai_fallback),
   };
 }
 
@@ -1234,22 +1239,61 @@ export async function getCompanySecrets(companyId: string) {
     tiktok_access_token: decryptSecret(integ.tiktok_token_enc),
     tiktok_open_id: integ.tiktok_open_id?.trim() || null,
     tiktok_enabled: Boolean(integ.tiktok_enabled),
+    allow_image_ai_fallback: Boolean(integ.allow_image_ai_fallback),
   };
 }
 
+export function parseScheduleTimes(
+  scheduleTime?: string | null,
+  scheduleTimes?: string[] | null
+): string[] {
+  const raw = Array.isArray(scheduleTimes) && scheduleTimes.length > 0
+    ? scheduleTimes
+    : String(scheduleTime || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+  const valid = Array.from(
+    new Set(
+      raw
+        .map((s) => s.trim())
+        .filter((s) => /^\d{2}:\d{2}$/.test(s))
+    )
+  ).sort();
+  return valid.length > 0 ? valid : ["10:00"];
+}
+
 function unpackTopicRow(t: Topic): Topic {
-  const marker = "__mode:";
-  const idx = (t.niche_template || "").indexOf(marker);
-  if (idx >= 0) {
-    const cleanNiche = t.niche_template.slice(0, idx) || "custom";
-    const mode = t.niche_template.slice(idx + marker.length) as Topic["ai_photo_mode"];
-    return {
-      ...t,
-      niche_template: cleanNiche,
-      ai_photo_mode: mode || t.ai_photo_mode,
-    };
+  let cleanNiche = t.niche_template || "custom";
+  let mode = t.ai_photo_mode;
+  let imgPref = t.preferred_image_ai ?? null;
+
+  const imgMarker = "__img:";
+  const imgIdx = cleanNiche.indexOf(imgMarker);
+  if (imgIdx >= 0) {
+    const rawImg = cleanNiche.slice(imgIdx + imgMarker.length).split("__")[0];
+    cleanNiche = cleanNiche.slice(0, imgIdx) || "custom";
+    if (rawImg === "GEMINI" || rawImg === "OPENAI" || rawImg === "OPENAI_MINI") {
+      imgPref = imgPref || rawImg;
+    }
   }
-  return t;
+
+  const marker = "__mode:";
+  const idx = cleanNiche.indexOf(marker);
+  if (idx >= 0) {
+    mode = (cleanNiche.slice(idx + marker.length) as Topic["ai_photo_mode"]) || mode;
+    cleanNiche = cleanNiche.slice(0, idx) || "custom";
+  }
+
+  const schedule_times = parseScheduleTimes(t.schedule_time, t.schedule_times);
+  return {
+    ...t,
+    niche_template: cleanNiche,
+    ai_photo_mode: mode,
+    preferred_image_ai: imgPref,
+    schedule_times,
+    schedule_time: schedule_times[0],
+  };
 }
 
 export async function listTopicsByCompany(companyId: string): Promise<Topic[]> {
@@ -1456,7 +1500,7 @@ export async function saveCompanyIntegrations(
   companyId: string,
   input: {
     preferred_text_ai?: "GEMINI" | "OPENAI" | "CLAUDE";
-    preferred_image_ai?: "GEMINI" | "OPENAI";
+    preferred_image_ai?: "GEMINI" | "OPENAI" | "OPENAI_MINI";
     gemini_api_key?: string;
     openai_api_key?: string;
     anthropic_api_key?: string;
@@ -1472,6 +1516,7 @@ export async function saveCompanyIntegrations(
     tiktok_access_token?: string;
     tiktok_open_id?: string;
     tiktok_enabled?: boolean;
+    allow_image_ai_fallback?: boolean;
   },
   userId?: string
 ): Promise<CompanyIntegrationsPublic> {
@@ -1482,6 +1527,10 @@ export async function saveCompanyIntegrations(
     company_id: companyId,
     preferred_text_ai: input.preferred_text_ai || current.preferred_text_ai,
     preferred_image_ai: input.preferred_image_ai || current.preferred_image_ai,
+    allow_image_ai_fallback:
+      input.allow_image_ai_fallback !== undefined
+        ? Boolean(input.allow_image_ai_fallback)
+        : Boolean(current.allow_image_ai_fallback),
     gemini_key_enc:
       input.gemini_api_key !== undefined
         ? encryptSecret(input.gemini_api_key)
@@ -1559,6 +1608,7 @@ export async function saveCompanyIntegrations(
         const packedPayload = JSON.stringify({
           __packed: true,
           tiktok_token: decryptSecret(next.tiktok_token_enc),
+          allow_image_ai_fallback: Boolean(next.allow_image_ai_fallback),
           r2: {
             account_id: next.r2_account_id,
             access_key_id: decryptSecret(next.r2_access_key_id_enc),
@@ -1623,6 +1673,16 @@ export async function upsertTopic(
     ? existingTopics.find((t) => t.id === input.id)
     : undefined;
 
+  const parsedTimes = parseScheduleTimes(
+    input.schedule_time ?? existing?.schedule_time,
+    input.schedule_times ?? existing?.schedule_times
+  );
+  const serializedTime = parsedTimes.join(",");
+  const preferredImageAI =
+    input.preferred_image_ai !== undefined
+      ? input.preferred_image_ai
+      : existing?.preferred_image_ai ?? null;
+
   const topic: Topic = {
     id: existing?.id || generateId("top"),
     company_id: companyId,
@@ -1647,30 +1707,42 @@ export async function upsertTopic(
       input.ai_photo_prompt !== undefined
         ? input.ai_photo_prompt
         : existing?.ai_photo_prompt || null,
+    preferred_image_ai: preferredImageAI,
     schedule_days:
       input.schedule_days ?? existing?.schedule_days ?? [1, 3, 5],
-    schedule_time: input.schedule_time || existing?.schedule_time || "10:00",
+    schedule_time: serializedTime,
+    schedule_times: parsedTimes,
     is_active: input.is_active ?? existing?.is_active ?? true,
     last_posted_at: existing?.last_posted_at || null,
     created_at: existing?.created_at || new Date().toISOString(),
   };
 
   if (isSupabaseConfigured()) {
+    const dbTopic: Record<string, unknown> = { ...topic };
+    delete dbTopic.schedule_times;
     try {
       await sbRequest("topics?on_conflict=id", {
         method: "POST",
         headers: { Prefer: "resolution=merge-duplicates" },
-        body: JSON.stringify(topic),
+        body: JSON.stringify(dbTopic),
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("23514") || msg.includes("ai_photo_mode")) {
-        // Fallback compatível quando o banco Supabase ainda tem CHECK constraint antigo em ai_photo_mode
-        const legacyTopic = {
-          ...topic,
-          niche_template: `${topic.niche_template || "custom"}__mode:${topic.ai_photo_mode}`,
+      if (
+        msg.includes("23514") ||
+        msg.includes("PGRST204") ||
+        msg.includes("ai_photo_mode") ||
+        msg.includes("preferred_image_ai")
+      ) {
+        const legacyNiche = `${topic.niche_template || "custom"}__mode:${topic.ai_photo_mode}${
+          topic.preferred_image_ai ? `__img:${topic.preferred_image_ai}` : ""
+        }`;
+        const legacyTopic: Record<string, unknown> = {
+          ...dbTopic,
+          niche_template: legacyNiche,
           ai_photo_mode: "ORIGINAL_FRAME" as const,
         };
+        delete legacyTopic.preferred_image_ai;
         await sbRequest("topics?on_conflict=id", {
           method: "POST",
           headers: { Prefer: "resolution=merge-duplicates" },
@@ -2151,9 +2223,10 @@ export async function findDueScheduledTopics(
     const topics = await listTopicsByCompany(company.id);
     for (const topic of topics) {
       if (!topic.is_active) continue;
+      const times = parseScheduleTimes(topic.schedule_time, topic.schedule_times);
       if (
         topic.schedule_days.includes(weekday) &&
-        topic.schedule_time === slotHHmm
+        times.includes(slotHHmm)
       ) {
         due.push({ company, topic });
       }
