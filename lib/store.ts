@@ -896,6 +896,8 @@ function unpackIntegrationsRow(raw: CompanyIntegrations): CompanyIntegrations {
       const packed = JSON.parse(decryptedTk) as {
         __packed?: boolean;
         tiktok_token?: string | null;
+        tiktok_refresh_token?: string | null;
+        tiktok_expires_at?: string | null;
         allow_image_ai_fallback?: boolean;
         r2?: {
           account_id?: string | null;
@@ -908,6 +910,10 @@ function unpackIntegrationsRow(raw: CompanyIntegrations): CompanyIntegrations {
       result.tiktok_token_enc = packed.tiktok_token
         ? encryptSecret(packed.tiktok_token)
         : null;
+      result.tiktok_refresh_token_enc = packed.tiktok_refresh_token
+        ? encryptSecret(packed.tiktok_refresh_token)
+        : null;
+      result.tiktok_expires_at = packed.tiktok_expires_at || null;
       if (packed.r2) {
         result.r2_account_id = result.r2_account_id || packed.r2.account_id || null;
         result.r2_access_key_id_enc =
@@ -1237,10 +1243,75 @@ export async function getCompanySecrets(companyId: string) {
       publicUrl: integ.r2_public_url?.trim() || null,
     },
     tiktok_access_token: decryptSecret(integ.tiktok_token_enc),
+    tiktok_refresh_token: decryptSecret(integ.tiktok_refresh_token_enc),
+    tiktok_expires_at: integ.tiktok_expires_at || null,
     tiktok_open_id: integ.tiktok_open_id?.trim() || null,
     tiktok_enabled: Boolean(integ.tiktok_enabled),
     allow_image_ai_fallback: Boolean(integ.allow_image_ai_fallback),
   };
+}
+
+export async function refreshTikTokTokenIfNeeded(
+  companyId: string
+): Promise<string | null> {
+  const secrets = await getCompanySecrets(companyId);
+  if (!secrets.tiktok_enabled || !secrets.tiktok_access_token) {
+    return null;
+  }
+  const expiresMs = secrets.tiktok_expires_at
+    ? new Date(secrets.tiktok_expires_at).getTime()
+    : 0;
+  const needsRefresh =
+    Boolean(secrets.tiktok_refresh_token) &&
+    (!expiresMs || Date.now() >= expiresMs - 10 * 60_000);
+
+  if (!needsRefresh) {
+    return secrets.tiktok_access_token;
+  }
+
+  const clientKey = process.env.TIKTOK_CLIENT_KEY?.trim();
+  const clientSecret = process.env.TIKTOK_CLIENT_SECRET?.trim();
+  if (!clientKey || !clientSecret || !secrets.tiktok_refresh_token) {
+    return secrets.tiktok_access_token;
+  }
+
+  try {
+    const body = new URLSearchParams({
+      client_key: clientKey,
+      client_secret: clientSecret,
+      grant_type: "refresh_token",
+      refresh_token: secrets.tiktok_refresh_token,
+    });
+    const res = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+      signal: AbortSignal.timeout(12_000),
+    });
+    const data = (await res.json()) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      open_id?: string;
+    };
+    if (res.ok && data.access_token) {
+      const expiresAt = new Date(
+        Date.now() + Number(data.expires_in || 86400) * 1000
+      ).toISOString();
+      await saveCompanyIntegrations(companyId, {
+        tiktok_access_token: data.access_token,
+        tiktok_refresh_token:
+          data.refresh_token || secrets.tiktok_refresh_token,
+        tiktok_expires_at: expiresAt,
+        tiktok_open_id: data.open_id || secrets.tiktok_open_id || undefined,
+        tiktok_enabled: true,
+      });
+      return data.access_token;
+    }
+  } catch {
+    // Mantém token atual se o refresh falhar momentaneamente
+  }
+  return secrets.tiktok_access_token;
 }
 
 export function parseScheduleTimes(
@@ -1514,6 +1585,8 @@ export async function saveCompanyIntegrations(
     r2_bucket_name?: string;
     r2_public_url?: string;
     tiktok_access_token?: string;
+    tiktok_refresh_token?: string;
+    tiktok_expires_at?: string | null;
     tiktok_open_id?: string;
     tiktok_enabled?: boolean;
     allow_image_ai_fallback?: boolean;
@@ -1583,6 +1656,14 @@ export async function saveCompanyIntegrations(
       input.tiktok_access_token !== undefined
         ? encryptSecret(input.tiktok_access_token)
         : current.tiktok_token_enc,
+    tiktok_refresh_token_enc:
+      input.tiktok_refresh_token !== undefined
+        ? encryptSecret(input.tiktok_refresh_token)
+        : current.tiktok_refresh_token_enc ?? null,
+    tiktok_expires_at:
+      input.tiktok_expires_at !== undefined
+        ? input.tiktok_expires_at
+        : current.tiktok_expires_at ?? null,
     tiktok_open_id:
       input.tiktok_open_id !== undefined
         ? input.tiktok_open_id.trim() || null
@@ -1593,13 +1674,30 @@ export async function saveCompanyIntegrations(
         : current.tiktok_enabled,
   };
 
+  const rawTk = decryptSecret(next.tiktok_token_enc);
+  const rawRefresh = decryptSecret(next.tiktok_refresh_token_enc);
+  if (rawRefresh || next.tiktok_expires_at) {
+    next.tiktok_token_enc = encryptSecret(
+      JSON.stringify({
+        __packed: true,
+        tiktok_token: rawTk,
+        tiktok_refresh_token: rawRefresh,
+        tiktok_expires_at: next.tiktok_expires_at || null,
+        allow_image_ai_fallback: Boolean(next.allow_image_ai_fallback),
+      })
+    );
+  }
+
   if (isSupabaseConfigured()) {
     const nowIso = new Date().toISOString();
+    const dbRow: Record<string, unknown> = { ...next, updated_at: nowIso };
+    delete dbRow.tiktok_refresh_token_enc;
+    delete dbRow.tiktok_expires_at;
     try {
       await sbRequest("integrations?on_conflict=company_id", {
         method: "POST",
         headers: { Prefer: "resolution=merge-duplicates" },
-        body: JSON.stringify({ ...next, updated_at: nowIso }),
+        body: JSON.stringify(dbRow),
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1607,7 +1705,9 @@ export async function saveCompanyIntegrations(
         // Fallback compatível quando a tabela integrations no Supabase ainda não recebeu ALTER TABLE com colunas r2_*
         const packedPayload = JSON.stringify({
           __packed: true,
-          tiktok_token: decryptSecret(next.tiktok_token_enc),
+          tiktok_token: rawTk,
+          tiktok_refresh_token: rawRefresh,
+          tiktok_expires_at: next.tiktok_expires_at || null,
           allow_image_ai_fallback: Boolean(next.allow_image_ai_fallback),
           r2: {
             account_id: next.r2_account_id,

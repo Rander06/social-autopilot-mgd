@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
   AI_PHOTO_PROMPT_EXAMPLES,
@@ -497,6 +498,30 @@ export default function SaasAppPage() {
 
   useEffect(() => {
     void loadState();
+    if (typeof window !== "undefined") {
+      const searchParams = new URLSearchParams(window.location.search);
+      const tabParam = searchParams.get("tab");
+      const tiktokStatus = searchParams.get("tiktok");
+      const tiktokError = searchParams.get("tiktok_error");
+      if (tabParam === "integrations") {
+        setClientTab("integrations");
+      }
+      if (tiktokStatus === "connected") {
+        setClientTab("integrations");
+        setGlobalNotice({
+          type: "success",
+          text: "Conta TikTok conectada com sucesso! O token será renovado automaticamente.",
+        });
+        window.history.replaceState(null, "", window.location.pathname);
+      } else if (tiktokError) {
+        setClientTab("integrations");
+        setGlobalNotice({
+          type: "error",
+          text: `TikTok: ${tiktokError}`,
+        });
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    }
     if (typeof window !== "undefined" && window.location.hash) {
       const hashParams = new URLSearchParams(
         window.location.hash.replace(/^#/, "")
@@ -1435,9 +1460,11 @@ export default function SaasAppPage() {
       <main className="flex min-h-screen items-center justify-center px-4 py-12">
         <div className="w-full max-w-md rounded-3xl border border-white/80 bg-white/90 p-8 shadow-2xl shadow-indigo-500/10 backdrop-blur-xl">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-600 via-violet-600 to-cyan-500 text-lg font-extrabold text-white shadow-lg shadow-indigo-500/30">
-              SA
-            </div>
+            <img
+              src="/logo-pilotflow.jpg"
+              alt="Social PilotFlow SaaS"
+              className="h-12 w-12 rounded-2xl border border-slate-200 bg-white object-cover shadow-lg shadow-indigo-500/15"
+            />
             <div>
               <span className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-indigo-700">
                 Multi-IA &amp; Multi-Empresas
@@ -1770,8 +1797,22 @@ export default function SaasAppPage() {
             </div>
           )}
 
-          <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4 text-[11px] text-slate-500">
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4 text-[11px] text-slate-500">
             <span>Meu Gestor Digital</span>
+            <div className="flex items-center gap-3">
+              <Link
+                href="/termos"
+                className="font-semibold text-slate-600 hover:text-indigo-600 hover:underline"
+              >
+                Termos de Serviço
+              </Link>
+              <Link
+                href="/privacidade"
+                className="font-semibold text-slate-600 hover:text-indigo-600 hover:underline"
+              >
+                Política de Privacidade
+              </Link>
+            </div>
             <span>
               Banco:{" "}
               <strong className="text-slate-700">
@@ -1799,9 +1840,11 @@ export default function SaasAppPage() {
       <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/85 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-3.5 md:px-8">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 via-violet-600 to-cyan-500 text-sm font-extrabold text-white shadow-md shadow-indigo-500/25">
-              SA
-            </div>
+            <img
+              src="/logo-pilotflow.jpg"
+              alt="Social PilotFlow SaaS"
+              className="h-10 w-10 rounded-xl border border-slate-200 bg-white object-cover shadow-sm"
+            />
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-extrabold text-slate-900">
@@ -4287,11 +4330,31 @@ export default function SaasAppPage() {
                     </p>
                   </div>
 
-                  <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-extrabold uppercase tracking-wider text-slate-800">
-                        TikTok Photo &amp; Content API v2 (Estrutura Pronta)
-                      </span>
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <span className="text-xs font-extrabold uppercase tracking-wider text-slate-800">
+                          TikTok Photo &amp; Content API v2
+                        </span>
+                        <span
+                          className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            workspace.integrations.has_tiktok_token
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-slate-200 text-slate-600"
+                          }`}
+                        >
+                          {workspace.integrations.has_tiktok_token
+                            ? `Conectado (${
+                                workspace.integrations.tiktok_open_id
+                                  ? workspace.integrations.tiktok_open_id.slice(
+                                      0,
+                                      10
+                                    ) + "..."
+                                  : "Token ativo"
+                              })`
+                            : "Desconectado"}
+                        </span>
+                      </div>
                       <label className="flex items-center gap-1.5 text-xs font-bold">
                         <input
                           type="checkbox"
@@ -4303,21 +4366,44 @@ export default function SaasAppPage() {
                         Ativar
                       </label>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        value={integTiktokOpenId}
-                        onChange={(e) => setIntegTiktokOpenId(e.target.value)}
-                        placeholder="TikTok Open ID"
-                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
-                      />
-                      <input
-                        type="password"
-                        value={integTiktokToken}
-                        onChange={(e) => setIntegTiktokToken(e.target.value)}
-                        placeholder="TikTok Access Token"
-                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
-                      />
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <a
+                        href={`/api/tiktok/auth?companyId=${encodeURIComponent(
+                          workspace.company.id
+                        )}`}
+                        className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm hover:bg-slate-800"
+                      >
+                        {workspace.integrations.has_tiktok_token
+                          ? "Reconectar Conta TikTok (1 Clique)"
+                          : "Conectar Conta TikTok (1 Clique)"}
+                      </a>
+                      <span className="text-[11px] text-slate-500">
+                        O cliente autoriza direto no TikTok dele e o token é
+                        renovado automaticamente.
+                      </span>
                     </div>
+
+                    <details className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
+                      <summary className="cursor-pointer text-[11px] font-bold text-slate-600">
+                        Configuração manual avançada (opcional)
+                      </summary>
+                      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <input
+                          value={integTiktokOpenId}
+                          onChange={(e) => setIntegTiktokOpenId(e.target.value)}
+                          placeholder="TikTok Open ID"
+                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                        />
+                        <input
+                          type="password"
+                          value={integTiktokToken}
+                          onChange={(e) => setIntegTiktokToken(e.target.value)}
+                          placeholder="TikTok Access Token"
+                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                        />
+                      </div>
+                    </details>
                   </div>
 
                   <button
@@ -4656,6 +4742,27 @@ export default function SaasAppPage() {
           </div>
         )}
       </main>
+
+      <footer className="mx-auto mt-10 flex max-w-7xl flex-wrap items-center justify-between gap-3 border-t border-slate-200/80 px-4 py-6 text-xs text-slate-500 md:px-8">
+        <span>
+          © {new Date().getFullYear()} Social PilotFlow SaaS • Meu Gestor
+          Digital
+        </span>
+        <div className="flex items-center gap-4">
+          <Link
+            href="/termos"
+            className="font-semibold text-slate-600 hover:text-indigo-600 hover:underline"
+          >
+            Termos de Serviço
+          </Link>
+          <Link
+            href="/privacidade"
+            className="font-semibold text-slate-600 hover:text-indigo-600 hover:underline"
+          >
+            Política de Privacidade
+          </Link>
+        </div>
+      </footer>
     </div>
   );
 }

@@ -79,6 +79,8 @@ export interface CompanyIntegrations {
   r2_bucket_name?: string | null;
   r2_public_url?: string | null;
   tiktok_token_enc?: string | null;
+  tiktok_refresh_token_enc?: string | null;
+  tiktok_expires_at?: string | null;
   tiktok_open_id?: string | null;
   tiktok_enabled: boolean;
   allow_image_ai_fallback?: boolean;

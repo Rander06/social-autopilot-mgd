@@ -23,6 +23,7 @@ import {
   pickNextTopicForCompany,
   pickNextTopicPhoto,
   recordGeneratedPost,
+  refreshTikTokTokenIfNeeded,
   updatePostRecord,
 } from "@/lib/store";
 import {
@@ -574,10 +575,20 @@ async function runPostPipeline(params: {
     logs,
   });
 
+  const freshTikTokToken = await refreshTikTokTokenIfNeeded(params.companyId);
+  const siteBaseUrl = (
+    process.env.NEXT_PUBLIC_SITE_URL || "https://social.pilotflow.com.br"
+  )
+    .trim()
+    .replace(/\/+$/, "");
+  const tiktokImageUrls = imageUrls.map(
+    (u) => `${siteBaseUrl}/api/media/proxy?url=${encodeURIComponent(u)}`
+  );
+
   const tiktokPostId = await publishToTikTok({
-    tiktokAccessToken: secrets.tiktok_access_token,
+    tiktokAccessToken: freshTikTokToken,
     enabled: secrets.tiktok_enabled,
-    imageUrls,
+    imageUrls: tiktokImageUrls,
     caption: fullCaption,
     logs,
   });
