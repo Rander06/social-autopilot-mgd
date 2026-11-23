@@ -1458,36 +1458,53 @@ export async function publishToTikTok(params: {
     "TikTok Photo API v2: Enviando publicação de imagens..."
   );
 
-  const res = await fetch(
-    "https://open.tiktokapis.com/v2/post/publish/content/init/",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${params.tiktokAccessToken.trim()}`,
-        "Content-Type": "application/json; charset=UTF-8",
-      },
-      body: JSON.stringify({
-        post_info: {
-          title: params.caption.slice(0, 90),
-          description: params.caption.slice(0, 4000),
-          privacy_level: "PUBLIC_TO_EVERYONE",
-          disable_comment: false,
+  const postWithPrivacy = async (privacyLevel: "PUBLIC_TO_EVERYONE" | "SELF_ONLY") => {
+    const res = await fetch(
+      "https://open.tiktokapis.com/v2/post/publish/content/init/",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${params.tiktokAccessToken!.trim()}`,
+          "Content-Type": "application/json; charset=UTF-8",
         },
-        source_info: {
-          source: "PULL_FROM_URL",
-          photo_cover_index: 0,
-          photo_images: params.imageUrls,
-        },
-        post_mode: "DIRECT_POST",
-        media_type: "PHOTO",
-      }),
-    }
-  );
-
-  const data = (await res.json()) as {
-    data?: { publish_id?: string };
-    error?: { code?: string; message?: string };
+        body: JSON.stringify({
+          post_info: {
+            title: params.caption.slice(0, 90),
+            description: params.caption.slice(0, 4000),
+            privacy_level: privacyLevel,
+            disable_comment: false,
+          },
+          source_info: {
+            source: "PULL_FROM_URL",
+            photo_cover_index: 0,
+            photo_images: params.imageUrls,
+          },
+          post_mode: "DIRECT_POST",
+          media_type: "PHOTO",
+        }),
+      }
+    );
+    const data = (await res.json()) as {
+      data?: { publish_id?: string };
+      error?: { code?: string; message?: string };
+    };
+    return { res, data };
   };
+
+  let { res, data } = await postWithPrivacy("PUBLIC_TO_EVERYONE");
+
+  if (
+    (!res.ok || data.error?.code !== "ok") &&
+    /unaudited|integration guidelines|private_accounts|privacy_level/i.test(
+      `${data.error?.code || ""} ${data.error?.message || ""}`
+    )
+  ) {
+    appendLog(
+      params.logs,
+      "TikTok Sandbox/não auditado: reenviando com privacidade SELF_ONLY (privado)..."
+    );
+    ({ res, data } = await postWithPrivacy("SELF_ONLY"));
+  }
 
   if (!res.ok || data.error?.code !== "ok") {
     appendLog(
