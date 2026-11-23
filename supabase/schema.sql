@@ -219,8 +219,9 @@ alter default privileges in schema public grant all on tables to service_role;
 --
 --   if has_due > 0 then
 --     perform net.http_get(
---       url := 'https://social.meugestordigital.com.br/api/cron/gerar-e-postar?source=supabase_cron&slot=' || br_slot,
---       headers := jsonb_build_object('Authorization', 'Bearer SEU_CRON_SECRET')
+--       url := 'https://social.pilotflow.com.br/api/cron/gerar-e-postar?source=supabase_cron&slot=' || br_slot,
+--       headers := jsonb_build_object('Authorization', 'Bearer SEU_CRON_SECRET'),
+--       timeout_milliseconds := 60000
 --     );
 --   end if;
 -- end;
