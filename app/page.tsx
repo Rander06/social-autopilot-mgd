@@ -844,6 +844,15 @@ export default function SaasAppPage() {
   const [approvingPostId, setApprovingPostId] = useState<string | null>(null);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
 
+  // History filter & pagination (20 em 20)
+  const [historyVisibleCount, setHistoryVisibleCount] = useState(20);
+  const [historyDateFrom, setHistoryDateFrom] = useState("");
+  const [historyDateTo, setHistoryDateTo] = useState("");
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<
+    "ALL" | "PUBLISHED" | "PENDING_APPROVAL" | "ERROR"
+  >("ALL");
+
   // Admin: New / Edit Company
   const [admCompId, setAdmCompId] = useState<string | undefined>(undefined);
   const [admCompName, setAdmCompName] = useState("");
@@ -5311,116 +5320,308 @@ export default function SaasAppPage() {
             )}
 
             {/* ---------- ABA 6: HISTÓRICO DE PUBLICAÇÕES ---------- */}
-            {clientTab === "history" && (
-              <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
-                <h2 className="text-base font-extrabold text-slate-900">
-                  Histórico de Publicações ({workspace.posts.length})
-                </h2>
-                {workspace.posts.length === 0 ? (
-                  <p className="mt-4 text-xs text-slate-500">
-                    Nenhum post gerado ainda para esta empresa.
-                  </p>
-                ) : (
-                  <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                    {workspace.posts.map((p) => (
-                      <div
-                        key={p.id}
-                        className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/60 p-4"
-                      >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
-                          {p.image_urls_json[0] && (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenDraftInStudio(p)}
-                              className="relative h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-slate-200"
-                              title="Clique para visualizar e editar no Estúdio"
+            {clientTab === "history" &&
+              (() => {
+                const hasActiveFilters = Boolean(
+                  historyDateFrom ||
+                    historyDateTo ||
+                    historySearch.trim() ||
+                    historyStatusFilter !== "ALL"
+                );
+                const query = historySearch.trim().toLowerCase();
+
+                const filteredPosts = workspace.posts.filter((p) => {
+                  const localDateStr = new Date(
+                    p.created_at
+                  ).toLocaleDateString("sv-SE");
+                  if (historyDateFrom && localDateStr < historyDateFrom) {
+                    return false;
+                  }
+                  if (historyDateTo && localDateStr > historyDateTo) {
+                    return false;
+                  }
+                  if (
+                    historyStatusFilter !== "ALL" &&
+                    p.status !== historyStatusFilter
+                  ) {
+                    return false;
+                  }
+                  if (query) {
+                    const haystack = [
+                      p.headline,
+                      p.topic_title,
+                      p.content_json?.legenda,
+                      p.ig_post_id,
+                      p.fb_post_id,
+                      p.tiktok_post_id,
+                    ]
+                      .filter(Boolean)
+                      .join(" ")
+                      .toLowerCase();
+                    if (!haystack.includes(query)) return false;
+                  }
+                  return true;
+                });
+
+                const visiblePosts = filteredPosts.slice(
+                  0,
+                  historyVisibleCount
+                );
+                const remainingCount = Math.max(
+                  0,
+                  filteredPosts.length - visiblePosts.length
+                );
+
+                return (
+                  <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h2 className="text-base font-extrabold text-slate-900">
+                          Histórico de Publicações ({workspace.posts.length})
+                        </h2>
+                        <p className="text-xs text-slate-500">
+                          Exibindo <strong>{visiblePosts.length}</strong> de{" "}
+                          <strong>{filteredPosts.length}</strong> post(s)
+                          {hasActiveFilters ? " filtrados" : " mais recentes"} (20
+                          por página)
+                        </p>
+                      </div>
+                      {hasActiveFilters && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHistoryDateFrom("");
+                            setHistoryDateTo("");
+                            setHistorySearch("");
+                            setHistoryStatusFilter("ALL");
+                            setHistoryVisibleCount(20);
+                          }}
+                          className="rounded-xl border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-200"
+                        >
+                          Limpar Filtros
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Barra de Filtros por Data, Status e Texto */}
+                    <div className="grid grid-cols-1 gap-2.5 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 sm:grid-cols-2 lg:grid-cols-4">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-600">
+                          Data Inicial (De)
+                        </label>
+                        <input
+                          type="date"
+                          value={historyDateFrom}
+                          onChange={(e) => {
+                            setHistoryDateFrom(e.target.value);
+                            setHistoryVisibleCount(20);
+                          }}
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-600">
+                          Data Final (Até)
+                        </label>
+                        <input
+                          type="date"
+                          value={historyDateTo}
+                          onChange={(e) => {
+                            setHistoryDateTo(e.target.value);
+                            setHistoryVisibleCount(20);
+                          }}
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-600">
+                          Status da Publicação
+                        </label>
+                        <select
+                          value={historyStatusFilter}
+                          onChange={(e) => {
+                            setHistoryStatusFilter(
+                              e.target.value as
+                                | "ALL"
+                                | "PUBLISHED"
+                                | "PENDING_APPROVAL"
+                                | "ERROR"
+                            );
+                            setHistoryVisibleCount(20);
+                          }}
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-indigo-500"
+                        >
+                          <option value="ALL">Todos os Status</option>
+                          <option value="PUBLISHED">Publicados (PUBLISHED)</option>
+                          <option value="PENDING_APPROVAL">
+                            Rascunhos Pendentes
+                          </option>
+                          <option value="ERROR">Com Erro (ERROR)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-600">
+                          Pesquisar Título / Legenda
+                        </label>
+                        <input
+                          type="text"
+                          value={historySearch}
+                          onChange={(e) => {
+                            setHistorySearch(e.target.value);
+                            setHistoryVisibleCount(20);
+                          }}
+                          placeholder="Buscar palavra-chave..."
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+
+                    {filteredPosts.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-8 text-center text-xs text-slate-500">
+                        {workspace.posts.length === 0
+                          ? "Nenhum post gerado ainda para esta empresa."
+                          : "Nenhum post encontrado para a data ou filtro selecionado."}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                          {visiblePosts.map((p) => (
+                            <div
+                              key={p.id}
+                              className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/60 p-4"
                             >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={p.image_urls_json[0]}
-                                alt={p.headline}
-                                className="h-full w-full object-cover transition hover:scale-105"
-                              />
-                              {p.image_urls_json.length > 1 && (
-                                <span className="absolute bottom-1 right-1 rounded bg-slate-900/80 px-1.5 py-0.5 text-[9px] font-bold text-white">
-                                  {p.image_urls_json.length} slides
-                                </span>
-                              )}
-                            </button>
-                          )}
-                          <div className="min-w-0 flex-1 space-y-1 text-xs">
-                            <div className="flex flex-wrap items-center justify-between gap-1.5">
-                              <span
-                                className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                  p.status === "PENDING_APPROVAL"
-                                    ? "bg-amber-100 text-amber-800"
-                                    : p.status === "ERROR"
-                                    ? "bg-rose-100 text-rose-700"
-                                    : "bg-emerald-100 text-emerald-700"
-                                }`}
-                              >
-                                {p.status === "PENDING_APPROVAL"
-                                  ? "RASCUNHO PENDENTE"
-                                  : p.status}
-                              </span>
-                              <span className="text-[11px] text-slate-400">
-                                {new Date(p.created_at).toLocaleString("pt-BR")}
-                              </span>
+                              <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
+                                {p.image_urls_json[0] && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenDraftInStudio(p)}
+                                    className="relative h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-slate-200"
+                                    title="Clique para visualizar e editar no Estúdio"
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={p.image_urls_json[0]}
+                                      alt={p.headline}
+                                      className="h-full w-full object-cover transition hover:scale-105"
+                                    />
+                                    {p.image_urls_json.length > 1 && (
+                                      <span className="absolute bottom-1 right-1 rounded bg-slate-900/80 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                                        {p.image_urls_json.length} slides
+                                      </span>
+                                    )}
+                                  </button>
+                                )}
+                                <div className="min-w-0 flex-1 space-y-1 text-xs">
+                                  <div className="flex flex-wrap items-center justify-between gap-1.5">
+                                    <span
+                                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                        p.status === "PENDING_APPROVAL"
+                                          ? "bg-amber-100 text-amber-800"
+                                          : p.status === "ERROR"
+                                          ? "bg-rose-100 text-rose-700"
+                                          : "bg-emerald-100 text-emerald-700"
+                                      }`}
+                                    >
+                                      {p.status === "PENDING_APPROVAL"
+                                        ? "RASCUNHO PENDENTE"
+                                        : p.status}
+                                    </span>
+                                    <span className="text-[11px] text-slate-400">
+                                      {new Date(p.created_at).toLocaleString(
+                                        "pt-BR"
+                                      )}
+                                    </span>
+                                  </div>
+                                  <p className="break-words text-sm font-extrabold text-slate-900">
+                                    {p.headline}
+                                  </p>
+                                  <p className="text-[11px] text-slate-600">
+                                    IA: {p.ai_provider_used} • {p.format} (
+                                    {p.slides_count}x {p.aspect_ratio})
+                                  </p>
+                                  <p className="break-all font-mono text-[10px] text-indigo-700">
+                                    IG: {p.ig_post_id || "—"} | FB:{" "}
+                                    {p.fb_post_id || "—"} | TikTok:{" "}
+                                    {p.tiktok_post_id || "—"}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2 border-t border-slate-200/70 pt-2.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenDraftInStudio(p)}
+                                  className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-50"
+                                >
+                                  {p.status === "PENDING_APPROVAL"
+                                    ? "Visualizar & Editar Rascunho"
+                                    : "Visualizar / Reabrir no Estúdio"}
+                                </button>
+                                {p.status === "PENDING_APPROVAL" && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      disabled={approvingPostId === p.id}
+                                      onClick={() => handleApproveDraft(p.id)}
+                                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
+                                    >
+                                      {approvingPostId === p.id
+                                        ? "Publicando..."
+                                        : "Aprovar e Publicar"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={deletingPostId === p.id}
+                                      onClick={() => handleDeleteDraft(p.id)}
+                                      className="ml-auto rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-bold text-rose-700 hover:bg-rose-100"
+                                    >
+                                      Excluir
+                                    </button>
+                                  </>
+                                )}
+                              </div>
                             </div>
-                            <p className="break-words text-sm font-extrabold text-slate-900">
-                              {p.headline}
-                            </p>
-                            <p className="text-[11px] text-slate-600">
-                              IA: {p.ai_provider_used} • {p.format} ({p.slides_count}x{" "}
-                              {p.aspect_ratio})
-                            </p>
-                            <p className="break-all font-mono text-[10px] text-indigo-700">
-                              IG: {p.ig_post_id || "—"} | FB:{" "}
-                              {p.fb_post_id || "—"} | TikTok:{" "}
-                              {p.tiktok_post_id || "—"}
-                            </p>
-                          </div>
+                          ))}
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2 border-t border-slate-200/70 pt-2.5">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenDraftInStudio(p)}
-                            className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-50"
-                          >
-                            {p.status === "PENDING_APPROVAL"
-                              ? "Visualizar & Editar Rascunho"
-                              : "Visualizar / Reabrir no Estúdio"}
-                          </button>
-                          {p.status === "PENDING_APPROVAL" && (
-                            <>
+                        {/* Rodapé de Paginação (20 em 20) */}
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/80 pt-4">
+                          <span className="text-xs font-semibold text-slate-600">
+                            Mostrando <strong>{visiblePosts.length}</strong> de{" "}
+                            <strong>{filteredPosts.length}</strong> post(s)
+                          </span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {historyVisibleCount > 20 && (
                               <button
                                 type="button"
-                                disabled={approvingPostId === p.id}
-                                onClick={() => handleApproveDraft(p.id)}
-                                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
+                                onClick={() => setHistoryVisibleCount(20)}
+                                className="rounded-xl border border-slate-200 bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200"
                               >
-                                {approvingPostId === p.id
-                                  ? "Publicando..."
-                                  : "Aprovar e Publicar"}
+                                Mostrar apenas os últimos 20
                               </button>
+                            )}
+                            {remainingCount > 0 && (
                               <button
                                 type="button"
-                                disabled={deletingPostId === p.id}
-                                onClick={() => handleDeleteDraft(p.id)}
-                                className="ml-auto rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-bold text-rose-700 hover:bg-rose-100"
+                                onClick={() =>
+                                  setHistoryVisibleCount((prev) => prev + 20)
+                                }
+                                className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-xs font-extrabold text-white shadow-sm hover:opacity-95"
                               >
-                                Excluir
+                                + Carregar mais 20 posts (restam{" "}
+                                {remainingCount})
                               </button>
-                            </>
-                          )}
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      </>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
+                );
+              })()}
           </div>
         )}
       </main>

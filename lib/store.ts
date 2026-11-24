@@ -1492,7 +1492,7 @@ export async function listPhotosByCompany(
 
 export async function listPostsHistory(
   companyId?: string,
-  limit = 40
+  limit = 250
 ): Promise<PostHistoryItem[]> {
   await ensureSeededInSupabase();
   if (isSupabaseConfigured()) {
@@ -1547,7 +1547,7 @@ export async function getCompanyWorkspace(companyId: string) {
       getCompanyIntegrations(companyId),
       listTopicsByCompany(companyId),
       listPhotosByCompany(companyId),
-      listPostsHistory(companyId, 30),
+      listPostsHistory(companyId, 250),
       listAuditLogs(companyId, 30),
     ]);
 
