@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import sharp from "sharp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,12 +40,31 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const contentType = upstream.headers.get("content-type") || "image/png";
-    const buf = await upstream.arrayBuffer();
-    return new NextResponse(buf, {
+    const rawType = (upstream.headers.get("content-type") || "image/png").toLowerCase();
+    const rawBuffer = Buffer.from(await upstream.arrayBuffer());
+
+    // TikTok Photo Mode aceita estritamente JPEG ou WebP (rejeita PNG).
+    if (rawType.includes("jpeg") || rawType.includes("jpg") || rawType.includes("webp")) {
+      return new NextResponse(new Uint8Array(rawBuffer), {
+        status: 200,
+        headers: {
+          "Content-Type": rawType.includes("webp") ? "image/webp" : "image/jpeg",
+          "Content-Disposition": `inline; filename="${rawType.includes("webp") ? "post.webp" : "post.jpg"}"`,
+          "Cache-Control": "public, max-age=86400",
+        },
+      });
+    }
+
+    const jpegBuffer = await sharp(rawBuffer)
+      .flatten({ background: "#ffffff" })
+      .jpeg({ quality: 92 })
+      .toBuffer();
+
+    return new NextResponse(new Uint8Array(jpegBuffer), {
       status: 200,
       headers: {
-        "Content-Type": contentType,
+        "Content-Type": "image/jpeg",
+        "Content-Disposition": 'inline; filename="post.jpg"',
         "Cache-Control": "public, max-age=86400",
       },
     });

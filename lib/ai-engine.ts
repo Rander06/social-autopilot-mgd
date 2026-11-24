@@ -1515,6 +1515,41 @@ export async function publishToTikTok(params: {
   }
 
   const publishId = data.data?.publish_id || null;
+  if (publishId) {
+    // Aguarda 3s e consulta status real do processamento no TikTok
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    try {
+      const statusRes = await fetch(
+        "https://open.tiktokapis.com/v2/post/publish/status/fetch/",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${params.tiktokAccessToken.trim()}`,
+            "Content-Type": "application/json; charset=UTF-8",
+          },
+          body: JSON.stringify({ publish_id: publishId }),
+          signal: AbortSignal.timeout(8000),
+        }
+      );
+      const statusData = (await statusRes.json()) as {
+        data?: { status?: string; fail_reason?: string };
+      };
+      if (statusData.data?.status === "FAILED") {
+        appendLog(
+          params.logs,
+          `TikTok API falhou após envio (${publishId}): ${statusData.data.fail_reason || "FAILED"}`
+        );
+        return null;
+      }
+      appendLog(
+        params.logs,
+        `TikTok API concluído (${statusData.data?.status || "PROCESSING"}): publish_id=${publishId}.`
+      );
+      return publishId;
+    } catch {
+      // Se a consulta rápida falhar, mantém o publish_id retornado
+    }
+  }
   appendLog(
     params.logs,
     `TikTok API concluído: publish_id=${publishId || "enviado"}.`
