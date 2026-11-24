@@ -16,6 +16,7 @@ import {
   CompanyStatus,
   Plan,
   PostHistoryItem,
+  PublishTargets,
   Topic,
   TopicPhoto,
   UserAccount,
@@ -985,7 +986,7 @@ export function toPublicIntegrations(
     using_global_r2_fallback: !hasCustomR2 && hasGlobalR2,
     has_tiktok_token: Boolean(decryptSecret(integ.tiktok_token_enc)),
     tiktok_open_id: integ.tiktok_open_id || "",
-    tiktok_enabled: Boolean(integ.tiktok_enabled),
+    tiktok_enabled: Boolean(decryptSecret(integ.tiktok_token_enc)),
     allow_image_ai_fallback: Boolean(integ.allow_image_ai_fallback),
   };
 }
@@ -1246,7 +1247,7 @@ export async function getCompanySecrets(companyId: string) {
     tiktok_refresh_token: decryptSecret(integ.tiktok_refresh_token_enc),
     tiktok_expires_at: integ.tiktok_expires_at || null,
     tiktok_open_id: integ.tiktok_open_id?.trim() || null,
-    tiktok_enabled: Boolean(integ.tiktok_enabled),
+    tiktok_enabled: Boolean(decryptSecret(integ.tiktok_token_enc)),
     allow_image_ai_fallback: Boolean(integ.allow_image_ai_fallback),
   };
 }
@@ -1334,11 +1335,84 @@ export function parseScheduleTimes(
   return valid.length > 0 ? valid : ["10:00"];
 }
 
+export function normalizePublishTargets(
+  raw?: Partial<PublishTargets> | null,
+  legacyStories?: boolean
+): PublishTargets {
+  if (raw && typeof raw === "object") {
+    const next: PublishTargets = {
+      ig_feed: raw.ig_feed ?? true,
+      ig_stories: raw.ig_stories ?? Boolean(legacyStories),
+      fb_feed: raw.fb_feed ?? true,
+      fb_stories: raw.fb_stories ?? Boolean(legacyStories),
+      tiktok_feed: raw.tiktok_feed ?? true,
+    };
+    if (
+      !next.ig_feed &&
+      !next.ig_stories &&
+      !next.fb_feed &&
+      !next.fb_stories &&
+      !next.tiktok_feed
+    ) {
+      next.ig_feed = true;
+    }
+    return next;
+  }
+  return {
+    ig_feed: true,
+    ig_stories: Boolean(legacyStories),
+    fb_feed: true,
+    fb_stories: Boolean(legacyStories),
+    tiktok_feed: true,
+  };
+}
+
+function serializePublishTargets(t: PublishTargets): string {
+  const keys: Array<keyof PublishTargets> = [
+    "ig_feed",
+    "ig_stories",
+    "fb_feed",
+    "fb_stories",
+    "tiktok_feed",
+  ];
+  return keys.filter((k) => t[k]).join(",");
+}
+
+function parseSerializedTargets(raw: string): PublishTargets {
+  const set = new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+  return normalizePublishTargets({
+    ig_feed: set.has("ig_feed"),
+    ig_stories: set.has("ig_stories"),
+    fb_feed: set.has("fb_feed"),
+    fb_stories: set.has("fb_stories"),
+    tiktok_feed: set.has("tiktok_feed"),
+  });
+}
+
 function unpackTopicRow(t: Topic): Topic {
   let cleanNiche = t.niche_template || "custom";
   let mode = t.ai_photo_mode;
   let imgPref = t.preferred_image_ai ?? null;
   let publishToStories = Boolean(t.publish_to_stories);
+  let parsedTargets: PublishTargets | null = t.publish_targets
+    ? normalizePublishTargets(t.publish_targets, publishToStories)
+    : null;
+
+  const targetsMarker = "__targets:";
+  const tIdx = cleanNiche.indexOf(targetsMarker);
+  if (tIdx >= 0) {
+    const rawTargets = cleanNiche.slice(tIdx + targetsMarker.length).split("__")[0];
+    cleanNiche =
+      (cleanNiche.slice(0, tIdx) +
+        cleanNiche.slice(tIdx + targetsMarker.length + rawTargets.length)) ||
+      "custom";
+    parsedTargets = parseSerializedTargets(rawTargets);
+  }
 
   const storiesMarker = "__stories:1";
   if (cleanNiche.includes(storiesMarker)) {
@@ -1363,13 +1437,23 @@ function unpackTopicRow(t: Topic): Topic {
     cleanNiche = cleanNiche.slice(0, idx) || "custom";
   }
 
+  const finalTargets =
+    parsedTargets || normalizePublishTargets(null, publishToStories);
+  const hasStories = finalTargets.ig_stories || finalTargets.fb_stories;
+  const hasFeed = finalTargets.ig_feed || finalTargets.fb_feed;
+  const derivedRatio = !hasFeed && (hasStories || finalTargets.tiktok_feed)
+    ? "9:16"
+    : "1:1";
+
   const schedule_times = parseScheduleTimes(t.schedule_time, t.schedule_times);
   return {
     ...t,
     niche_template: cleanNiche,
     ai_photo_mode: mode,
     preferred_image_ai: imgPref,
-    publish_to_stories: publishToStories,
+    publish_to_stories: hasStories,
+    publish_targets: finalTargets,
+    aspect_ratio: derivedRatio,
     schedule_times,
     schedule_time: schedule_times[0],
   };
@@ -1683,6 +1767,7 @@ export async function saveCompanyIntegrations(
   };
 
   const rawTk = decryptSecret(next.tiktok_token_enc);
+  next.tiktok_enabled = Boolean(rawTk);
   const rawRefresh = decryptSecret(next.tiktok_refresh_token_enc);
   if (rawRefresh || next.tiktok_expires_at) {
     next.tiktok_token_enc = encryptSecret(
@@ -1790,10 +1875,17 @@ export async function upsertTopic(
     input.preferred_image_ai !== undefined
       ? input.preferred_image_ai
       : existing?.preferred_image_ai ?? null;
+  const publishTargets = normalizePublishTargets(
+    input.publish_targets ?? existing?.publish_targets,
+    input.publish_to_stories ?? existing?.publish_to_stories
+  );
   const publishToStories =
-    input.publish_to_stories !== undefined
-      ? Boolean(input.publish_to_stories)
-      : Boolean(existing?.publish_to_stories);
+    publishTargets.ig_stories || publishTargets.fb_stories;
+  const hasFeed = publishTargets.ig_feed || publishTargets.fb_feed;
+  const derivedRatio =
+    !hasFeed && (publishToStories || publishTargets.tiktok_feed)
+      ? "9:16"
+      : "1:1";
 
   const topic: Topic = {
     id: existing?.id || generateId("top"),
@@ -1812,7 +1904,7 @@ export async function upsertTopic(
       8,
       Math.max(1, Number(input.slides_count ?? existing?.slides_count ?? 1))
     ),
-    aspect_ratio: input.aspect_ratio || existing?.aspect_ratio || "1:1",
+    aspect_ratio: derivedRatio,
     approval_mode: input.approval_mode || existing?.approval_mode || "AUTO",
     ai_photo_mode: input.ai_photo_mode || existing?.ai_photo_mode || "NONE",
     ai_photo_prompt:
@@ -1821,6 +1913,7 @@ export async function upsertTopic(
         : existing?.ai_photo_prompt || null,
     preferred_image_ai: preferredImageAI,
     publish_to_stories: publishToStories,
+    publish_targets: publishTargets,
     schedule_days:
       input.schedule_days ?? existing?.schedule_days ?? [1, 3, 5],
     schedule_time: serializedTime,
@@ -1831,8 +1924,16 @@ export async function upsertTopic(
   };
 
   if (isSupabaseConfigured()) {
-    const dbTopic: Record<string, unknown> = { ...topic };
+    const packedNiche = `${topic.niche_template || "custom"}__targets:${serializePublishTargets(
+      publishTargets
+    )}`;
+    const dbTopic: Record<string, unknown> = {
+      ...topic,
+      niche_template: packedNiche,
+    };
     delete dbTopic.schedule_times;
+    delete dbTopic.publish_targets;
+    delete dbTopic.publish_to_stories;
     try {
       await sbRequest("topics?on_conflict=id", {
         method: "POST",
@@ -1848,9 +1949,11 @@ export async function upsertTopic(
         msg.includes("preferred_image_ai") ||
         msg.includes("publish_to_stories")
       ) {
-        const legacyNiche = `${topic.niche_template || "custom"}__mode:${topic.ai_photo_mode}${
+        const legacyNiche = `${topic.niche_template || "custom"}__targets:${serializePublishTargets(
+          publishTargets
+        )}__mode:${topic.ai_photo_mode}${
           topic.preferred_image_ai ? `__img:${topic.preferred_image_ai}` : ""
-        }${topic.publish_to_stories ? "__stories:1" : ""}`;
+        }`;
         const legacyTopic: Record<string, unknown> = {
           ...dbTopic,
           niche_template: legacyNiche,

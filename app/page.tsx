@@ -24,6 +24,7 @@ import {
   Plan,
   PostFormat,
   PostHistoryItem,
+  PublishTargets,
   Topic,
   TopicPhoto,
   UserRole,
@@ -91,6 +92,8 @@ interface StudioPreviewState {
   slidesCount: number;
   imageUrl: string;
   imageUrls: string[];
+  storyImageUrls?: string[];
+  publishTargets?: PublishTargets;
   post: GeneratedContentPayload;
   logs: string[];
 }
@@ -197,6 +200,426 @@ function parseScheduleTimesList(
     new Set(raw.filter((s) => /^\d{2}:\d{2}$/.test(s)))
   ).sort();
   return valid.length > 0 ? valid : ["10:00"];
+}
+
+function defaultPublishTargets(
+  t?: Partial<Topic> | null,
+  tiktokEnabled = false
+): PublishTargets {
+  if (t?.publish_targets) {
+    const pt = t.publish_targets;
+    const anySelected =
+      pt.ig_feed ||
+      pt.ig_stories ||
+      pt.fb_feed ||
+      pt.fb_stories ||
+      pt.tiktok_feed;
+    return {
+      ig_feed: anySelected ? Boolean(pt.ig_feed) : true,
+      ig_stories: Boolean(pt.ig_stories),
+      fb_feed: Boolean(pt.fb_feed),
+      fb_stories: Boolean(pt.fb_stories),
+      tiktok_feed: Boolean(pt.tiktok_feed),
+    };
+  }
+  const stories = Boolean(t?.publish_to_stories);
+  const onlyVertical = t?.aspect_ratio === "9:16" && !stories;
+  return {
+    ig_feed: !onlyVertical,
+    ig_stories: stories || onlyVertical,
+    fb_feed: !onlyVertical,
+    fb_stories: stories,
+    tiktok_feed: Boolean(tiktokEnabled && (stories || onlyVertical)),
+  };
+}
+
+function deriveRatioFromTargets(targets: PublishTargets): AspectRatio {
+  const hasFeed = targets.ig_feed || targets.fb_feed;
+  const hasVertical =
+    targets.ig_stories || targets.fb_stories || targets.tiktok_feed;
+  return !hasFeed && hasVertical ? "9:16" : "1:1";
+}
+
+function formatTargetsSummary(targets?: PublishTargets): string {
+  if (!targets) return "IG Feed • FB Feed";
+  const items: string[] = [];
+  if (targets.ig_feed) items.push("IG Feed");
+  if (targets.ig_stories) items.push("IG Story");
+  if (targets.fb_feed) items.push("FB Feed");
+  if (targets.fb_stories) items.push("FB Story");
+  if (targets.tiktok_feed) items.push("TikTok");
+  return items.length > 0 ? items.join(" • ") : "IG Feed";
+}
+
+function PublishTargetsSelector({
+  value,
+  onChange,
+  availableNetworks,
+  onOpenIntegrations,
+  label = "Redes Sociais & Locais de Publicação (Dimensões Automáticas)",
+}: {
+  value: PublishTargets;
+  onChange: (next: PublishTargets) => void;
+  availableNetworks: {
+    instagram: boolean;
+    facebook: boolean;
+    tiktok: boolean;
+  };
+  onOpenIntegrations?: () => void;
+  label?: string;
+}) {
+  const sanitizeForAvailable = (candidate: PublishTargets): PublishTargets => ({
+    ig_feed: availableNetworks.instagram ? Boolean(candidate.ig_feed) : false,
+    ig_stories: availableNetworks.instagram
+      ? Boolean(candidate.ig_stories)
+      : false,
+    fb_feed: availableNetworks.facebook ? Boolean(candidate.fb_feed) : false,
+    fb_stories: availableNetworks.facebook
+      ? Boolean(candidate.fb_stories)
+      : false,
+    tiktok_feed: availableNetworks.tiktok
+      ? Boolean(candidate.tiktok_feed)
+      : false,
+  });
+
+  const togglePlacement = (key: keyof PublishTargets) => {
+    onChange(sanitizeForAvailable({ ...value, [key]: !value[key] }));
+  };
+
+  const igActive =
+    availableNetworks.instagram && (value.ig_feed || value.ig_stories);
+  const fbActive =
+    availableNetworks.facebook && (value.fb_feed || value.fb_stories);
+  const ttActive = availableNetworks.tiktok && value.tiktok_feed;
+
+  const hasFeed =
+    (availableNetworks.instagram && value.ig_feed) ||
+    (availableNetworks.facebook && value.fb_feed);
+  const hasVertical =
+    (availableNetworks.instagram && value.ig_stories) ||
+    (availableNetworks.facebook && value.fb_stories) ||
+    (availableNetworks.tiktok && value.tiktok_feed);
+
+  const visibleCount =
+    (availableNetworks.instagram ? 1 : 0) +
+    (availableNetworks.facebook ? 1 : 0) +
+    (availableNetworks.tiktok ? 1 : 0);
+
+  return (
+    <div className="space-y-3 rounded-xl border border-indigo-200 bg-indigo-50/40 p-3.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-extrabold uppercase tracking-wider text-indigo-950">
+          {label}
+        </span>
+        {visibleCount > 0 && (
+          <span className="rounded-full bg-white px-2.5 py-0.5 text-[10px] font-extrabold text-indigo-700 ring-1 ring-indigo-200">
+            {hasFeed && hasVertical
+              ? "1080×1080 (Feed) + 1080×1920 (Stories/TikTok)"
+              : hasVertical
+              ? "1080×1920 (9:16 Vertical Nativo)"
+              : "1080×1080 (1:1 Feed Padrão)"}
+          </span>
+        )}
+      </div>
+
+      {visibleCount === 0 ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-xs text-amber-900">
+          <p className="font-bold">
+            Nenhuma rede social com token ativo encontrada em Integrações.
+          </p>
+          <p className="mt-0.5 text-[11px] text-amber-800">
+            Assim que você conectar o token do Instagram, Facebook ou TikTok na
+            aba Integrações, a rede aparecerá automaticamente aqui para você
+            ativar ou desativar por post.
+          </p>
+          {onOpenIntegrations && (
+            <button
+              type="button"
+              onClick={onOpenIntegrations}
+              className="mt-2 rounded-lg bg-amber-700 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-amber-800"
+            >
+              Ir para Integrações →
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-2.5">
+          {/* INSTAGRAM (só exibe se tiver token Meta + IG_USER_ID) */}
+          {availableNetworks.instagram && (
+            <div
+              className={`overflow-hidden rounded-xl border p-3 transition ${
+                igActive
+                  ? "border-indigo-300 bg-white shadow-xs"
+                  : "border-slate-200 bg-white/70 opacity-80"
+              }`}
+            >
+              <label className="flex cursor-pointer items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                <span className="flex items-center gap-2 text-xs font-extrabold text-slate-900">
+                  <input
+                    type="checkbox"
+                    checked={igActive}
+                    onChange={() => {
+                      if (igActive) {
+                        onChange(
+                          sanitizeForAvailable({
+                            ...value,
+                            ig_feed: false,
+                            ig_stories: false,
+                          })
+                        );
+                      } else {
+                        onChange(
+                          sanitizeForAvailable({
+                            ...value,
+                            ig_feed: true,
+                          })
+                        );
+                      }
+                    }}
+                    className="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600"
+                  />
+                  Instagram
+                </span>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    igActive
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-slate-200 text-slate-600"
+                  }`}
+                >
+                  {igActive ? "Ativado" : "Desativado"}
+                </span>
+              </label>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <label
+                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                    value.ig_feed
+                      ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
+                      : "border-slate-200 bg-slate-50/60 text-slate-600"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={value.ig_feed}
+                    onChange={() => togglePlacement("ig_feed")}
+                    className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
+                  />
+                  <span>Post / Feed</span>
+                  <span className="font-mono text-[10px] font-bold text-slate-500">
+                    (1080×1080)
+                  </span>
+                </label>
+
+                <label
+                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                    value.ig_stories
+                      ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
+                      : "border-slate-200 bg-slate-50/60 text-slate-600"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={value.ig_stories}
+                    onChange={() => togglePlacement("ig_stories")}
+                    className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
+                  />
+                  <span>Story</span>
+                  <span className="font-mono text-[10px] font-bold text-indigo-600">
+                    (1080×1920)
+                  </span>
+                </label>
+
+                <div
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-200/80 bg-slate-50/50 px-2.5 py-1.5 text-xs text-slate-400"
+                  title="Reels exige arquivo de vídeo MP4; disponível em breve"
+                >
+                  <input
+                    type="checkbox"
+                    disabled
+                    checked={false}
+                    className="h-3.5 w-3.5 shrink-0 rounded border-slate-200"
+                  />
+                  <span>Reel (Vídeo)</span>
+                  <span className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[9px] font-bold text-slate-500">
+                    Em breve
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* FACEBOOK (só exibe se tiver token Meta + FB_PAGE_ID) */}
+          {availableNetworks.facebook && (
+            <div
+              className={`overflow-hidden rounded-xl border p-3 transition ${
+                fbActive
+                  ? "border-indigo-300 bg-white shadow-xs"
+                  : "border-slate-200 bg-white/70 opacity-80"
+              }`}
+            >
+              <label className="flex cursor-pointer items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                <span className="flex items-center gap-2 text-xs font-extrabold text-slate-900">
+                  <input
+                    type="checkbox"
+                    checked={fbActive}
+                    onChange={() => {
+                      if (fbActive) {
+                        onChange(
+                          sanitizeForAvailable({
+                            ...value,
+                            fb_feed: false,
+                            fb_stories: false,
+                          })
+                        );
+                      } else {
+                        onChange(
+                          sanitizeForAvailable({
+                            ...value,
+                            fb_feed: true,
+                          })
+                        );
+                      }
+                    }}
+                    className="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600"
+                  />
+                  Facebook
+                </span>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    fbActive
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-slate-200 text-slate-600"
+                  }`}
+                >
+                  {fbActive ? "Ativado" : "Desativado"}
+                </span>
+              </label>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <label
+                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                    value.fb_feed
+                      ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
+                      : "border-slate-200 bg-slate-50/60 text-slate-600"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={value.fb_feed}
+                    onChange={() => togglePlacement("fb_feed")}
+                    className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
+                  />
+                  <span>Post / Feed</span>
+                  <span className="font-mono text-[10px] font-bold text-slate-500">
+                    (1080×1080)
+                  </span>
+                </label>
+
+                <label
+                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                    value.fb_stories
+                      ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
+                      : "border-slate-200 bg-slate-50/60 text-slate-600"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={value.fb_stories}
+                    onChange={() => togglePlacement("fb_stories")}
+                    className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
+                  />
+                  <span>Story</span>
+                  <span className="font-mono text-[10px] font-bold text-indigo-600">
+                    (1080×1920)
+                  </span>
+                </label>
+              </div>
+            </div>
+          )}
+
+          {/* TIKTOK (só exibe se tiver token TikTok ativo em Integrações) */}
+          {availableNetworks.tiktok && (
+            <div
+              className={`overflow-hidden rounded-xl border p-3 transition ${
+                ttActive
+                  ? "border-indigo-300 bg-white shadow-xs"
+                  : "border-slate-200 bg-white/70 opacity-80"
+              }`}
+            >
+              <label className="flex cursor-pointer items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                <span className="flex items-center gap-2 text-xs font-extrabold text-slate-900">
+                  <input
+                    type="checkbox"
+                    checked={ttActive}
+                    onChange={() => togglePlacement("tiktok_feed")}
+                    className="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600"
+                  />
+                  TikTok
+                </span>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    ttActive
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-slate-200 text-slate-600"
+                  }`}
+                >
+                  {ttActive ? "Ativado" : "Desativado"}
+                </span>
+              </label>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <label
+                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                    value.tiktok_feed
+                      ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
+                      : "border-slate-200 bg-slate-50/60 text-slate-600"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={value.tiktok_feed}
+                    onChange={() => togglePlacement("tiktok_feed")}
+                    className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
+                  />
+                  <span>Post / Photo Mode</span>
+                  <span className="font-mono text-[10px] font-bold text-indigo-600">
+                    (1080×1920)
+                  </span>
+                </label>
+                <span className="text-[10px] text-slate-500">
+                  Imagem única ou carrossel vertical (9:16).
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {visibleCount > 0 && (
+        <p className="text-[11px] leading-relaxed text-indigo-950/80">
+          {hasFeed && hasVertical ? (
+            <>
+              <strong>1 único post, 2 dimensões exatas sem custo extra:</strong>{" "}
+              a IA gera a arte base em <strong>1080×1080 (1:1)</strong> para o
+              Feed e monta automaticamente a versão{" "}
+              <strong>1080×1920 (9:16)</strong> para Stories/TikTok estendendo a
+              cor real do fundo da própria arte (sem faixas desfocadas e sem
+              cortar textos).
+            </>
+          ) : hasVertical ? (
+            <>
+              <strong>Modo Vertical Nativo:</strong> como apenas Stories/TikTok
+              estão ativados, a arte será gerada diretamente em{" "}
+              <strong>1080×1920 (9:16)</strong> em tela cheia.
+            </>
+          ) : (
+            <>
+              <strong>Modo Feed Padrão:</strong> a arte será gerada em{" "}
+              <strong>1080×1080 (1:1)</strong> para os Feeds ativados.
+            </>
+          )}
+        </p>
+      )}
+    </div>
+  );
 }
 
 function ImageModelGuide({
@@ -357,6 +780,14 @@ export default function SaasAppPage() {
   const [topicDays, setTopicDays] = useState<number[]>([1, 3, 5]);
   const [topicTimes, setTopicTimes] = useState<string[]>(["10:00"]);
   const [topicPublishToStories, setTopicPublishToStories] = useState(false);
+  const [topicPublishTargets, setTopicPublishTargets] =
+    useState<PublishTargets>({
+      ig_feed: true,
+      ig_stories: false,
+      fb_feed: true,
+      fb_stories: false,
+      tiktok_feed: false,
+    });
   const [topicActive, setTopicActive] = useState(true);
   const [savingTopic, setSavingTopic] = useState(false);
   const [uploadingPhotoTopicId, setUploadingPhotoTopicId] = useState<
@@ -374,6 +805,14 @@ export default function SaasAppPage() {
   const [studioPhotoMode, setStudioPhotoMode] = useState<AIPhotoMode>("NONE");
   const [studioImageAi, setStudioImageAi] = useState<ImageAIProvider | "">("");
   const [studioPublishToStories, setStudioPublishToStories] = useState(false);
+  const [studioPublishTargets, setStudioPublishTargets] =
+    useState<PublishTargets>({
+      ig_feed: true,
+      ig_stories: false,
+      fb_feed: true,
+      fb_stories: false,
+      tiktok_feed: false,
+    });
   const [studioPhotoPrompt, setStudioPhotoPrompt] = useState("");
   const [studioPhotoBase64, setStudioPhotoBase64] = useState<string | null>(
     null
@@ -432,7 +871,7 @@ export default function SaasAppPage() {
     setIntegR2PublicUrl(ws.integrations.r2_public_url || "");
     setIntegR2AccessKey("");
     setIntegR2SecretKey("");
-    setIntegTiktokEnabled(ws.integrations.tiktok_enabled);
+    setIntegTiktokEnabled(Boolean(ws.integrations.has_tiktok_token));
     setIntegTiktokOpenId(ws.integrations.tiktok_open_id || "");
     setIntegGeminiKey("");
     setIntegOpenAiKey("");
@@ -443,24 +882,39 @@ export default function SaasAppPage() {
     const activeTopics = ws.topics.filter((t) => t.is_active);
     if (activeTopics.length > 0) {
       const first = activeTopics[0];
+      const targets = defaultPublishTargets(
+        first,
+        Boolean(ws.integrations.has_tiktok_token)
+      );
       setStudioTopicId(first.id);
       setStudioTitle(first.title);
       setStudioPrompt(first.prompt_instructions);
       setStudioPrice(first.offer_price || "");
       setStudioFormat(first.post_format);
       setStudioSlides(first.slides_count);
-      setStudioRatio(first.aspect_ratio);
+      setStudioPublishTargets(targets);
+      setStudioRatio(deriveRatioFromTargets(targets));
       setStudioPhotoMode(normalizeVisualMode(first.ai_photo_mode));
       setStudioImageAi(first.preferred_image_ai || "");
-      setStudioPublishToStories(Boolean(first.publish_to_stories));
+      setStudioPublishToStories(
+        Boolean(targets.ig_stories || targets.fb_stories)
+      );
       setStudioPhotoPrompt("");
     } else {
+      const targets: PublishTargets = {
+        ig_feed: true,
+        ig_stories: false,
+        fb_feed: true,
+        fb_stories: false,
+        tiktok_feed: false,
+      };
       setStudioTopicId("__free__");
       setStudioTitle("");
       setStudioPrompt("");
       setStudioPrice("");
       setStudioFormat("SINGLE");
       setStudioSlides(3);
+      setStudioPublishTargets(targets);
       setStudioRatio("1:1");
       setStudioPhotoMode("NONE");
       setStudioImageAi("");
@@ -763,7 +1217,9 @@ export default function SaasAppPage() {
         r2_account_id: integR2AccountId,
         r2_bucket_name: integR2Bucket,
         r2_public_url: integR2PublicUrl,
-        tiktok_enabled: integTiktokEnabled,
+        tiktok_enabled: Boolean(
+          integTiktokToken.trim() || workspace.integrations.has_tiktok_token
+        ),
         tiktok_open_id: integTiktokOpenId,
       };
       if (integGeminiKey.trim()) payload.gemini_api_key = integGeminiKey.trim();
@@ -833,6 +1289,13 @@ export default function SaasAppPage() {
   }
 
   function startNewTopic() {
+    const defaultTargets: PublishTargets = {
+      ig_feed: true,
+      ig_stories: false,
+      fb_feed: true,
+      fb_stories: false,
+      tiktok_feed: false,
+    };
     setEditingTopicId(null);
     setTopicTitle("");
     setTopicTemplateId("custom");
@@ -841,6 +1304,7 @@ export default function SaasAppPage() {
     setTopicBenefitsText("");
     setTopicFormat("SINGLE");
     setTopicSlides(3);
+    setTopicPublishTargets(defaultTargets);
     setTopicRatio("1:1");
     setTopicApproval("AUTO");
     setTopicPhotoMode("NONE");
@@ -853,6 +1317,10 @@ export default function SaasAppPage() {
   }
 
   function loadTopicIntoEditor(t: Topic) {
+    const targets = defaultPublishTargets(
+      t,
+      workspace?.integrations.tiktok_enabled
+    );
     setEditingTopicId(t.id);
     setTopicTitle(t.title);
     setTopicTemplateId(t.niche_template || "custom");
@@ -861,14 +1329,17 @@ export default function SaasAppPage() {
     setTopicBenefitsText((t.benefits_json || []).join("\n"));
     setTopicFormat(t.post_format);
     setTopicSlides(t.slides_count || 3);
-    setTopicRatio(t.aspect_ratio || "1:1");
+    setTopicPublishTargets(targets);
+    setTopicRatio(deriveRatioFromTargets(targets));
     setTopicApproval(t.approval_mode || "AUTO");
     setTopicPhotoMode(normalizeVisualMode(t.ai_photo_mode));
     setTopicImageAi(t.preferred_image_ai || "");
     setTopicPhotoPrompt(t.ai_photo_prompt || "");
     setTopicDays(t.schedule_days || [1, 3, 5]);
     setTopicTimes(parseScheduleTimesList(t.schedule_time, t.schedule_times));
-    setTopicPublishToStories(Boolean(t.publish_to_stories));
+    setTopicPublishToStories(
+      Boolean(targets.ig_stories || targets.fb_stories)
+    );
     setTopicActive(t.is_active);
   }
 
@@ -909,12 +1380,15 @@ export default function SaasAppPage() {
             benefits_json: benefits,
             post_format: topicFormat,
             slides_count: topicFormat === "CAROUSEL" ? topicSlides : 1,
-            aspect_ratio: topicRatio,
+            aspect_ratio: deriveRatioFromTargets(topicPublishTargets),
             approval_mode: topicApproval,
             ai_photo_mode: topicPhotoMode,
             ai_photo_prompt: topicPhotoPrompt,
             preferred_image_ai: topicImageAi || null,
-            publish_to_stories: topicPublishToStories,
+            publish_to_stories: Boolean(
+              topicPublishTargets.ig_stories || topicPublishTargets.fb_stories
+            ),
+            publish_targets: topicPublishTargets,
             schedule_days: topicDays,
             schedule_time: topicTimes.join(","),
             schedule_times: topicTimes,
@@ -1008,24 +1482,40 @@ export default function SaasAppPage() {
     setStudioTopicId(topicId);
     setStudioPreview(null);
     if (topicId === "__free__") {
+      const defaultTargets: PublishTargets = {
+        ig_feed: true,
+        ig_stories: false,
+        fb_feed: true,
+        fb_stories: false,
+        tiktok_feed: false,
+      };
       setStudioTitle("Campanha Especial");
       setStudioPrompt("");
       setStudioPrice("");
       setStudioImageAi("");
+      setStudioPublishTargets(defaultTargets);
+      setStudioRatio("1:1");
       setStudioPublishToStories(false);
       return;
     }
     const found = workspace?.topics.find((t) => t.id === topicId);
     if (!found) return;
+    const targets = defaultPublishTargets(
+      found,
+      workspace?.integrations.tiktok_enabled
+    );
     setStudioTitle(found.title);
     setStudioPrompt(found.prompt_instructions);
     setStudioPrice(found.offer_price || "");
     setStudioFormat(found.post_format);
     setStudioSlides(found.slides_count);
-    setStudioRatio(found.aspect_ratio);
+    setStudioPublishTargets(targets);
+    setStudioRatio(deriveRatioFromTargets(targets));
     setStudioPhotoMode(normalizeVisualMode(found.ai_photo_mode));
     setStudioImageAi(found.preferred_image_ai || "");
-    setStudioPublishToStories(Boolean(found.publish_to_stories));
+    setStudioPublishToStories(
+      Boolean(targets.ig_stories || targets.fb_stories)
+    );
     setStudioPhotoPrompt("");
   }
 
@@ -1065,11 +1555,14 @@ export default function SaasAppPage() {
         offerPrice: studioPrice,
         format: studioFormat,
         slidesCount: studioFormat === "CAROUSEL" ? studioSlides : 1,
-        aspectRatio: studioRatio,
+        aspectRatio: deriveRatioFromTargets(studioPublishTargets),
         aiPhotoMode: options.aiPhotoModeOverride || studioPhotoMode,
         preferredImageAI: studioImageAi || null,
         allowImageFallback: Boolean(options.allowImageFallback),
-        publishToStories: studioPublishToStories,
+        publishToStories: Boolean(
+          studioPublishTargets.ig_stories || studioPublishTargets.fb_stories
+        ),
+        publishTargets: studioPublishTargets,
         manualPhotoBase64: studioPhotoBase64,
         manualPhotoContentType: studioPhotoType,
         previewOnly: options.previewOnly,
@@ -1089,6 +1582,12 @@ export default function SaasAppPage() {
           studioPreview.imageUrls.length > 0
         ) {
           payload.existingImageUrls = studioPreview.imageUrls;
+          if (
+            Array.isArray(studioPreview.storyImageUrls) &&
+            studioPreview.storyImageUrls.length > 0
+          ) {
+            payload.existingStoryImageUrls = studioPreview.storyImageUrls;
+          }
         }
         if (studioPreview.draftPostId) {
           payload.draftPostId = studioPreview.draftPostId;
@@ -1141,6 +1640,7 @@ export default function SaasAppPage() {
               ? "Arte atualizada e salva como rascunho (sem publicar ainda)!"
               : "Prévia gerada! Revise ou edite qualquer texto abaixo antes de salvar ou publicar.",
         });
+        scrollToStudioPreview();
       } else {
         setStudioPreview(data as StudioPreviewState);
         await loadState(workspace.company.id);
@@ -1164,10 +1664,31 @@ export default function SaasAppPage() {
     }
   }
 
+  function scrollToStudioPreview() {
+    if (typeof window === "undefined") return;
+    setTimeout(() => {
+      const el = document.getElementById("studio-preview-section");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}${window.location.search}#studio-preview-section`
+        );
+      } else {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    }, 80);
+  }
+
   function handleOpenDraftInStudio(post: PostHistoryItem) {
     const matchedTopic = post.topic_id
       ? workspace?.topics.find((t) => t.id === post.topic_id)
       : undefined;
+    const targets = defaultPublishTargets(
+      matchedTopic || { aspect_ratio: post.aspect_ratio },
+      workspace?.integrations.tiktok_enabled
+    );
 
     setStudioTopicId(matchedTopic ? matchedTopic.id : "__free__");
     setStudioTitle(matchedTopic?.title || post.headline || "");
@@ -1175,8 +1696,14 @@ export default function SaasAppPage() {
     setStudioPrice(matchedTopic?.offer_price || "");
     setStudioFormat(post.format);
     setStudioSlides(post.slides_count || post.image_urls_json.length || 3);
-    setStudioRatio(post.aspect_ratio || "1:1");
-    setStudioPhotoMode(matchedTopic?.ai_photo_mode || "NONE");
+    setStudioPublishTargets(targets);
+    setStudioRatio(post.aspect_ratio || deriveRatioFromTargets(targets));
+    setStudioPublishToStories(
+      Boolean(targets.ig_stories || targets.fb_stories)
+    );
+    setStudioPhotoMode(
+      normalizeVisualMode(matchedTopic?.ai_photo_mode || "NONE")
+    );
     setStudioPhotoPrompt(
       matchedTopic?.ai_photo_prompt || AI_PHOTO_PROMPT_EXAMPLES[0].prompt
     );
@@ -1195,6 +1722,8 @@ export default function SaasAppPage() {
       slidesCount: post.slides_count || post.image_urls_json.length || 1,
       imageUrl: post.image_urls_json[0] || "",
       imageUrls: post.image_urls_json || [],
+      storyImageUrls: post.story_image_urls_json || [],
+      publishTargets: targets,
       post: {
         ...post.content_json,
         beneficios: post.content_json?.beneficios || [],
@@ -1211,9 +1740,7 @@ export default function SaasAppPage() {
         ? "Rascunho aberto no Estúdio! Edite os textos/legenda, regenere a arte se quiser e clique em Aprovar e Publicar Agora."
         : "Post carregado no Estúdio para visualização ou reaproveitamento como novo post.",
     });
-    if (typeof window !== "undefined") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
+    scrollToStudioPreview();
   }
 
   function handleCancelStudioEdit() {
@@ -1342,7 +1869,14 @@ export default function SaasAppPage() {
           postId,
           editedContent: cleanEdited,
           imageUrls: customPreview?.imageUrls,
-          publishToStories: customPreview ? studioPublishToStories : undefined,
+          storyImageUrls: customPreview?.storyImageUrls,
+          publishToStories: customPreview
+            ? Boolean(
+                studioPublishTargets.ig_stories ||
+                  studioPublishTargets.fb_stories
+              )
+            : undefined,
+          publishTargets: customPreview ? studioPublishTargets : undefined,
         }),
       });
       const data = await res.json();
@@ -1468,8 +2002,8 @@ export default function SaasAppPage() {
   // ==================== TELA DE LOGIN / CADASTRO / RECUPERAÇÃO ====================
   if (!user || !workspace) {
     return (
-      <main className="flex min-h-screen items-center justify-center px-4 py-12">
-        <div className="w-full max-w-md rounded-3xl border border-white/80 bg-white/90 p-8 shadow-2xl shadow-indigo-500/10 backdrop-blur-xl">
+      <main className="flex min-h-screen items-center justify-center px-4 py-8 sm:py-12">
+        <div className="w-full max-w-md rounded-3xl border border-white/80 bg-white/90 p-5 sm:p-8 shadow-2xl shadow-indigo-500/10 backdrop-blur-xl">
           <div className="flex items-center gap-3">
             <img
               src="/logo-pilotflow.jpg"
@@ -1652,7 +2186,7 @@ export default function SaasAppPage() {
                 placeholder="Nome da Empresa (ex: Loja Vitrine)"
                 className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500 focus:bg-white"
               />
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <input
                   type="text"
                   required
@@ -1889,7 +2423,7 @@ export default function SaasAppPage() {
                 <select
                   value={workspace.company.id}
                   onChange={(e) => handleSwitchCompany(e.target.value)}
-                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500"
+                  className="max-w-full truncate rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500 sm:max-w-xs"
                   title="Trocar empresa ativa (Impersonate)"
                 >
                   {adminSnapshot.companies.map((c) => (
@@ -2138,7 +2672,7 @@ export default function SaasAppPage() {
                     onChange={(e) => setAdmCompWhatsapp(e.target.value)}
                     className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
                   />
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <select
                       value={admCompPlanId}
                       onChange={(e) => setAdmCompPlanId(e.target.value)}
@@ -2343,11 +2877,11 @@ export default function SaasAppPage() {
                       key={a.id}
                       className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-4 py-2.5 text-xs"
                     >
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <span className="rounded bg-indigo-100 px-2 py-0.5 font-mono text-[11px] font-bold text-indigo-800">
                           {a.action}
                         </span>{" "}
-                        <span className="ml-2 text-slate-600">
+                        <span className="ml-2 break-all text-slate-600">
                           {JSON.stringify(a.details_json)}
                         </span>
                       </div>
@@ -2515,8 +3049,8 @@ export default function SaasAppPage() {
                         ? "Padrão"
                         : "Pendente"}{" "}
                       • TikTok:{" "}
-                      {workspace.integrations.tiktok_enabled
-                        ? "Ativado"
+                      {workspace.integrations.has_tiktok_token
+                        ? "Conectado"
                         : "Pronto p/ conectar"}
                     </p>
                   </div>
@@ -2583,7 +3117,7 @@ export default function SaasAppPage() {
                                 </span>
                               </div>
                             )}
-                            <div className="flex-1 space-y-1">
+                            <div className="min-w-0 flex-1 space-y-1">
                               <div className="flex flex-wrap items-center gap-1.5">
                                 <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
                                   {d.format === "CAROUSEL"
@@ -2595,10 +3129,10 @@ export default function SaasAppPage() {
                                   {new Date(d.created_at).toLocaleString("pt-BR")}
                                 </span>
                               </div>
-                              <p className="text-sm font-extrabold text-slate-900 group-hover:text-indigo-700">
+                              <p className="break-words text-sm font-extrabold text-slate-900 group-hover:text-indigo-700">
                                 {d.headline}
                               </p>
-                              <p className="line-clamp-2 text-xs text-slate-600">
+                              <p className="line-clamp-2 break-words text-xs text-slate-600">
                                 {d.content_json.legenda}
                               </p>
                             </div>
@@ -2695,7 +3229,7 @@ export default function SaasAppPage() {
                                     {t.post_format === "CAROUSEL"
                                       ? `Carrossel ${t.slides_count}x`
                                       : "Imagem"}{" "}
-                                    • {t.aspect_ratio}
+                                    • {formatTargetsSummary(t.publish_targets)}
                                   </p>
                                 </div>
                               ))
@@ -2740,10 +3274,10 @@ export default function SaasAppPage() {
                             : "border-slate-200 bg-white"
                         }`}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h3 className="text-sm font-extrabold text-slate-900">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="break-words text-sm font-extrabold text-slate-900">
                                 {t.title}
                               </h3>
                               <span
@@ -2776,7 +3310,7 @@ export default function SaasAppPage() {
                               {t.post_format === "CAROUSEL"
                                 ? `Carrossel (${t.slides_count} slides)`
                                 : "Imagem Única"}{" "}
-                              • {t.aspect_ratio}
+                              • {formatTargetsSummary(t.publish_targets)}
                             </p>
                             <p className="mt-1 text-[11px] text-slate-500">
                               Modo:{" "}
@@ -2874,7 +3408,7 @@ export default function SaasAppPage() {
                     <select
                       value={topicTemplateId}
                       onChange={(e) => applyNicheTemplate(e.target.value)}
-                      className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-800 outline-none"
+                      className="max-w-full truncate rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-800 outline-none sm:w-auto"
                     >
                       <option value="custom">
                         Carregar Exemplo de Prompt...
@@ -3019,8 +3553,8 @@ export default function SaasAppPage() {
                     </div>
                   </div>
 
-                  {/* Formato, Proporção e Modo */}
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+                  {/* Formato e Automação */}
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     <div>
                       <label className="block text-xs font-bold text-slate-600">
                         Formato
@@ -3057,23 +3591,6 @@ export default function SaasAppPage() {
 
                     <div>
                       <label className="block text-xs font-bold text-slate-600">
-                        Proporção
-                      </label>
-                      <select
-                        value={topicRatio}
-                        onChange={(e) =>
-                          setTopicRatio(e.target.value as AspectRatio)
-                        }
-                        className="mt-1 w-full rounded-xl border border-slate-200 px-2.5 py-2 text-xs font-bold"
-                      >
-                        <option value="1:1">1080×1080 (1:1)</option>
-                        <option value="4:5">1080×1350 (4:5 Feed)</option>
-                        <option value="9:16">1080×1920 (9:16 Stories/TikTok)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-600">
                         Automação
                       </label>
                       <select
@@ -3089,6 +3606,30 @@ export default function SaasAppPage() {
                     </div>
                   </div>
 
+                  {/* Seletor de Redes Sociais e Posicionamentos */}
+                  <PublishTargetsSelector
+                    value={topicPublishTargets}
+                    onChange={(next) => {
+                      setTopicPublishTargets(next);
+                      setTopicRatio(deriveRatioFromTargets(next));
+                      setTopicPublishToStories(
+                        Boolean(next.ig_stories || next.fb_stories)
+                      );
+                    }}
+                    availableNetworks={{
+                      instagram: Boolean(
+                        workspace.integrations.has_meta_token &&
+                          workspace.integrations.ig_user_id
+                      ),
+                      facebook: Boolean(
+                        workspace.integrations.has_meta_token &&
+                          workspace.integrations.fb_page_id
+                      ),
+                      tiktok: Boolean(workspace.integrations.has_tiktok_token),
+                    }}
+                    onOpenIntegrations={() => setClientTab("integrations")}
+                  />
+
                   {/* Estilo Visual da Arte */}
                   <div className="rounded-xl border border-cyan-200 bg-cyan-50/50 p-4 space-y-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3100,7 +3641,7 @@ export default function SaasAppPage() {
                         onChange={(e) =>
                           setTopicPhotoMode(e.target.value as AIPhotoMode)
                         }
-                        className="rounded-lg border border-cyan-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-800"
+                        className="w-full max-w-full truncate rounded-lg border border-cyan-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-800 sm:w-auto"
                       >
                         <option value="RAW_ART">
                           1 - Arte Pronta Enviada (Publicar imagem limpa sem textos)
@@ -3126,26 +3667,14 @@ export default function SaasAppPage() {
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="space-y-2">
-                      <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
-                        <input
-                          type="checkbox"
-                          checked={topicActive}
-                          onChange={(e) => setTopicActive(e.target.checked)}
-                        />
-                        Assunto ativo no agendador automático
-                      </label>
-                      <label className="flex items-center gap-2 text-xs font-bold text-indigo-700">
-                        <input
-                          type="checkbox"
-                          checked={topicPublishToStories}
-                          onChange={(e) =>
-                            setTopicPublishToStories(e.target.checked)
-                          }
-                        />
-                        Também publicar nos Stories (Instagram e Facebook)
-                      </label>
-                    </div>
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={topicActive}
+                        onChange={(e) => setTopicActive(e.target.checked)}
+                      />
+                      Assunto ativo no agendador automático
+                    </label>
                     <button
                       type="submit"
                       disabled={savingTopic}
@@ -3201,27 +3730,13 @@ export default function SaasAppPage() {
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                     <input
                       value={studioPrice}
                       onChange={(e) => setStudioPrice(e.target.value)}
                       placeholder="Preço (ex: 12x R$149,90)"
                       className="rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-500"
                     />
-                    <select
-                      value={studioRatio}
-                      onChange={(e) =>
-                        setStudioRatio(e.target.value as AspectRatio)
-                      }
-                      className="rounded-xl border border-slate-200 px-2.5 py-2 text-xs font-bold"
-                    >
-                      <option value="1:1">1080×1080 (1:1)</option>
-                      <option value="4:5">1080×1350 (4:5 Feed)</option>
-                      <option value="9:16">1080×1920 (9:16 Vertical)</option>
-                    </select>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
                     <select
                       value={studioFormat}
                       onChange={(e) =>
@@ -3241,18 +3756,43 @@ export default function SaasAppPage() {
                         onChange={(e) =>
                           setStudioSlides(Number(e.target.value))
                         }
+                        title="Quantidade de slides (2 a 8)"
                         className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold"
                       />
                     )}
                   </div>
 
+                  {/* Seletor de Redes Sociais e Posicionamentos */}
+                  <PublishTargetsSelector
+                    value={studioPublishTargets}
+                    onChange={(next) => {
+                      setStudioPublishTargets(next);
+                      setStudioRatio(deriveRatioFromTargets(next));
+                      setStudioPublishToStories(
+                        Boolean(next.ig_stories || next.fb_stories)
+                      );
+                    }}
+                    availableNetworks={{
+                      instagram: Boolean(
+                        workspace.integrations.has_meta_token &&
+                          workspace.integrations.ig_user_id
+                      ),
+                      facebook: Boolean(
+                        workspace.integrations.has_meta_token &&
+                          workspace.integrations.fb_page_id
+                      ),
+                      tiktok: Boolean(workspace.integrations.has_tiktok_token),
+                    }}
+                    onOpenIntegrations={() => setClientTab("integrations")}
+                  />
+
                   {/* Modo de Geração + Imagem Opcional (R2) */}
                   <div className="space-y-2.5 rounded-xl border border-slate-200 bg-slate-50 p-3.5">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-xs font-bold text-slate-700">
                         Modo de Criação da Imagem
                       </span>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         {studioPhotoBase64 && (
                           <button
                             type="button"
@@ -3295,7 +3835,7 @@ export default function SaasAppPage() {
                       onChange={(e) =>
                         setStudioPhotoMode(e.target.value as AIPhotoMode)
                       }
-                      className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold"
+                      className="w-full max-w-full truncate rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold"
                     >
                       <option value="RAW_ART">
                         1 - Arte Pronta Enviada (Publicar imagem limpa sem textos)
@@ -3363,17 +3903,6 @@ export default function SaasAppPage() {
                     </div>
                   )}
 
-                  <label className="flex items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2.5 text-xs font-bold text-indigo-800">
-                    <input
-                      type="checkbox"
-                      checked={studioPublishToStories}
-                      onChange={(e) =>
-                        setStudioPublishToStories(e.target.checked)
-                      }
-                    />
-                    Também publicar nos Stories (Instagram e Facebook)
-                  </label>
-
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <button
                       type="button"
@@ -3409,7 +3938,10 @@ export default function SaasAppPage() {
                 </div>
 
                 {/* Preview Editável + Logs */}
-                <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-7">
+                <div
+                  id="studio-preview-section"
+                  className="scroll-mt-24 space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-7"
+                >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="text-base font-extrabold text-slate-900">
                       Pré-visualização &amp; Edição Antes de Postar
@@ -3430,32 +3962,122 @@ export default function SaasAppPage() {
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        {studioPreview.imageUrls.map((url, idx) => (
-                          <a
-                            key={`${url}-${idx}`}
-                            href={url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-50"
-                            title="Clique para abrir imagem em tamanho original"
-                          >
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={url}
-                              alt={`Arte ${idx + 1}`}
-                              className="w-full object-cover"
-                            />
-                            <span className="absolute bottom-2 right-2 rounded-lg bg-slate-900/80 px-2 py-1 text-[10px] font-bold text-white opacity-90 group-hover:opacity-100">
-                              Slide {idx + 1} • Abrir em HD ↗
-                            </span>
-                          </a>
-                        ))}
-                      </div>
+                      {(() => {
+                        const activeTargets =
+                          studioPreview.publishTargets || studioPublishTargets;
+                        const hasFeedTarget =
+                          activeTargets.ig_feed || activeTargets.fb_feed;
+                        const hasVerticalTarget =
+                          activeTargets.ig_stories ||
+                          activeTargets.fb_stories ||
+                          activeTargets.tiktok_feed;
+                        const isNativeVerticalOnly =
+                          !hasFeedTarget &&
+                          studioPreview.aspectRatio === "9:16";
+                        const feedUrls = isNativeVerticalOnly
+                          ? []
+                          : studioPreview.imageUrls || [];
+                        const verticalUrls =
+                          Array.isArray(studioPreview.storyImageUrls) &&
+                          studioPreview.storyImageUrls.length > 0
+                            ? studioPreview.storyImageUrls
+                            : isNativeVerticalOnly
+                            ? studioPreview.imageUrls || []
+                            : [];
+
+                        const feedNetworks = [
+                          activeTargets.ig_feed ? "Instagram Feed" : null,
+                          activeTargets.fb_feed ? "Facebook Feed" : null,
+                        ].filter(Boolean);
+                        const verticalNetworks = [
+                          activeTargets.ig_stories ? "Instagram Story" : null,
+                          activeTargets.fb_stories ? "Facebook Story" : null,
+                          activeTargets.tiktok_feed
+                            ? "TikTok Photo Mode"
+                            : null,
+                        ].filter(Boolean);
+
+                        return (
+                          <div className="space-y-4">
+                            {feedUrls.length > 0 && (
+                              <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50/70 p-3.5">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="text-xs font-extrabold text-slate-900">
+                                    Prévia Feed • 1080×1080 (1:1)
+                                  </span>
+                                  <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-bold text-indigo-800">
+                                    {feedNetworks.length > 0
+                                      ? feedNetworks.join(" + ")
+                                      : "Feed 1:1"}
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                  {feedUrls.map((url, idx) => (
+                                    <a
+                                      key={`feed-${url}-${idx}`}
+                                      href={url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs"
+                                      title="Clique para abrir imagem 1080×1080 em tamanho original"
+                                    >
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img
+                                        src={url}
+                                        alt={`Arte Feed ${idx + 1}`}
+                                        className="aspect-square w-full object-cover"
+                                      />
+                                      <span className="absolute bottom-2 right-2 rounded-lg bg-slate-900/80 px-2 py-1 text-[10px] font-bold text-white opacity-90 group-hover:opacity-100">
+                                        Slide {idx + 1} (1080×1080) • HD ↗
+                                      </span>
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {hasVerticalTarget && verticalUrls.length > 0 && (
+                              <div className="space-y-2 rounded-2xl border border-indigo-200 bg-indigo-50/40 p-3.5">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="text-xs font-extrabold text-indigo-950">
+                                    Prévia Stories &amp; TikTok • 1080×1920
+                                    (9:16 Vertical)
+                                  </span>
+                                  <span className="rounded-full bg-indigo-600 px-2.5 py-0.5 text-[10px] font-bold text-white">
+                                    {verticalNetworks.join(" + ")}
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                                  {verticalUrls.map((url, idx) => (
+                                    <a
+                                      key={`vert-${url}-${idx}`}
+                                      href={url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="group relative overflow-hidden rounded-2xl border border-indigo-200 bg-white shadow-xs"
+                                      title="Clique para abrir imagem 1080×1920 em tamanho original"
+                                    >
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img
+                                        src={url}
+                                        alt={`Arte Vertical ${idx + 1}`}
+                                        className="aspect-[9/16] w-full object-cover"
+                                      />
+                                      <span className="absolute bottom-2 right-2 rounded-lg bg-indigo-950/85 px-2 py-1 text-[10px] font-bold text-white opacity-90 group-hover:opacity-100">
+                                        Slide {idx + 1} (1080×1920) ↗
+                                      </span>
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {studioPreview.post.original_photo_url &&
                         studioPreview.post.enhanced_photo_url && (
-                          <div className="grid grid-cols-2 gap-3 rounded-xl border border-cyan-200 bg-cyan-50/50 p-3">
+                          <div className="grid grid-cols-1 gap-3 rounded-xl border border-cyan-200 bg-cyan-50/50 p-3 sm:grid-cols-2">
                             <div>
                               <p className="mb-1 text-[11px] font-bold text-slate-600">
                                 Foto Original
@@ -3799,12 +4421,12 @@ export default function SaasAppPage() {
                   )}
 
                   {studioPublishLogs.length > 0 && (
-                    <div className="rounded-xl bg-slate-900 p-4 font-mono text-[11px] text-slate-200">
+                    <div className="overflow-x-auto break-words rounded-xl bg-slate-900 p-4 font-mono text-[11px] text-slate-200">
                       <p className="mb-1.5 font-bold text-cyan-400">
                         LOGS DE EXECUÇÃO &amp; META API
                       </p>
                       {studioPublishLogs.map((l, i) => (
-                        <p key={i} className="leading-relaxed">
+                        <p key={i} className="break-words leading-relaxed">
                           {l}
                         </p>
                       ))}
@@ -3962,14 +4584,14 @@ export default function SaasAppPage() {
                     Prévia ao Vivo das Cores Luminosas
                   </p>
                   <div
-                    className="mt-4 flex aspect-square flex-col justify-between overflow-hidden rounded-2xl border border-slate-200 p-5 shadow-inner"
+                    className="mt-4 flex aspect-square flex-col justify-between overflow-hidden rounded-2xl border border-slate-200 p-3.5 shadow-inner sm:p-5"
                     style={{
                       backgroundColor: brandForm.bg_color,
                       color: brandForm.text_color,
                     }}
                   >
                     <div
-                      className="rounded-2xl p-5 text-white"
+                      className="rounded-2xl p-3.5 text-white sm:p-5"
                       style={{
                         backgroundImage: `linear-gradient(135deg, ${brandForm.primary_color} 0%, ${brandForm.secondary_color} 100%)`,
                       }}
@@ -3980,7 +4602,7 @@ export default function SaasAppPage() {
                       >
                         OFERTA EM DESTAQUE
                       </span>
-                      <p className="mt-3 text-xl font-extrabold leading-tight">
+                      <p className="mt-2.5 text-base font-extrabold leading-tight sm:mt-3 sm:text-xl">
                         Sua Headline Publicitária Aparece Aqui
                       </p>
                       <p className="mt-1 text-xs opacity-90">
@@ -3988,14 +4610,14 @@ export default function SaasAppPage() {
                       </p>
                     </div>
 
-                    <div className="rounded-xl border border-slate-200/70 bg-white p-4 text-xs shadow-xs">
+                    <div className="rounded-xl border border-slate-200/70 bg-white p-3 text-xs shadow-xs sm:p-4">
                       <p className="font-bold">Diferenciais da sua empresa</p>
                       <p className="mt-1 text-slate-500">
                         Cards luminosos com ícones nítidos e foto do produto.
                       </p>
                     </div>
 
-                    <div className="flex items-center justify-between rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200/80 bg-white p-3 shadow-xs sm:p-3.5">
                       <div>
                         <p className="text-xs font-extrabold">
                           {brandForm.footer_name}
@@ -4025,7 +4647,7 @@ export default function SaasAppPage() {
                   onSubmit={handleSaveIntegrations}
                   className="space-y-5 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-7"
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="text-base font-extrabold text-slate-900">
                       Chaves Próprias da Empresa (Criptografia AES-256)
                     </h2>
@@ -4264,7 +4886,7 @@ export default function SaasAppPage() {
                         className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
                       />
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <input
                         value={integIgUserId}
                         onChange={(e) => setIntegIgUserId(e.target.value)}
@@ -4378,7 +5000,7 @@ export default function SaasAppPage() {
                           }`}
                         >
                           {workspace.integrations.has_tiktok_token
-                            ? `Conectado (${
+                            ? `Ativo • Conectado (${
                                 workspace.integrations.tiktok_open_id
                                   ? workspace.integrations.tiktok_open_id.slice(
                                       0,
@@ -4389,16 +5011,6 @@ export default function SaasAppPage() {
                             : "Desconectado"}
                         </span>
                       </div>
-                      <label className="flex items-center gap-1.5 text-xs font-bold">
-                        <input
-                          type="checkbox"
-                          checked={integTiktokEnabled}
-                          onChange={(e) =>
-                            setIntegTiktokEnabled(e.target.checked)
-                          }
-                        />
-                        Ativar
-                      </label>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
@@ -4458,11 +5070,11 @@ export default function SaasAppPage() {
                 </form>
 
                 {/* Tutorial Guiado para o Cliente */}
-                <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-5">
+                <div className="space-y-4 overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6 lg:col-span-5">
                   <h2 className="text-base font-extrabold text-slate-900">
                     Tutorial Rápido — Passo a Passo de Cada Campo
                   </h2>
-                  <div className="space-y-3 text-xs leading-relaxed text-slate-600">
+                  <div className="space-y-3 break-words text-xs leading-relaxed text-slate-600">
                     <div className="rounded-xl bg-slate-50 p-3.5">
                       <p className="font-extrabold text-indigo-700">
                         1. Google Gemini (GEMINI_API_KEY)
@@ -4676,8 +5288,9 @@ export default function SaasAppPage() {
                         </li>
                         <li>
                           Você voltará automaticamente para esta tela com o
-                          status <strong>Conectado</strong> e a opção{" "}
-                          <strong>Ativar</strong> marcada.
+                          status <strong>Ativo • Conectado</strong> e o TikTok
+                          aparecerá liberado em{" "}
+                          <strong>Redes Sociais &amp; Locais de Publicação</strong>.
                         </li>
                         <li>
                           <strong>Renovação automática:</strong> o sistema
@@ -4714,7 +5327,7 @@ export default function SaasAppPage() {
                         key={p.id}
                         className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/60 p-4"
                       >
-                        <div className="flex gap-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
                           {p.image_urls_json[0] && (
                             <button
                               type="button"
@@ -4735,8 +5348,8 @@ export default function SaasAppPage() {
                               )}
                             </button>
                           )}
-                          <div className="flex-1 space-y-1 text-xs">
-                            <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1 space-y-1 text-xs">
+                            <div className="flex flex-wrap items-center justify-between gap-1.5">
                               <span
                                 className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
                                   p.status === "PENDING_APPROVAL"
@@ -4754,16 +5367,17 @@ export default function SaasAppPage() {
                                 {new Date(p.created_at).toLocaleString("pt-BR")}
                               </span>
                             </div>
-                            <p className="text-sm font-extrabold text-slate-900">
+                            <p className="break-words text-sm font-extrabold text-slate-900">
                               {p.headline}
                             </p>
                             <p className="text-[11px] text-slate-600">
                               IA: {p.ai_provider_used} • {p.format} ({p.slides_count}x{" "}
                               {p.aspect_ratio})
                             </p>
-                            <p className="font-mono text-[10px] text-indigo-700">
+                            <p className="break-all font-mono text-[10px] text-indigo-700">
                               IG: {p.ig_post_id || "—"} | FB:{" "}
-                              {p.fb_post_id || "—"}
+                              {p.fb_post_id || "—"} | TikTok:{" "}
+                              {p.tiktok_post_id || "—"}
                             </p>
                           </div>
                         </div>

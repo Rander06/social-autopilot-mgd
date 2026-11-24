@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   AICreditError,
+  buildVertical916FromFeedUrl,
   cleanCreativePrompt,
   enhanceProductPhotoWithAI,
   generateContentWithMultiAI,
@@ -20,6 +21,7 @@ import {
   getLastTopicHeadlines,
   listTopicsByCompany,
   markTopicPhotoUsed,
+  normalizePublishTargets,
   pickNextTopicForCompany,
   pickNextTopicPhoto,
   recordGeneratedPost,
@@ -31,6 +33,7 @@ import {
   AspectRatio,
   GeneratedContentPayload,
   PostFormat,
+  PublishTargets,
   Topic,
 } from "@/lib/types";
 
@@ -78,11 +81,13 @@ async function runPostPipeline(params: {
   preferredImageAI?: "GEMINI" | "OPENAI" | "OPENAI_MINI" | null;
   allowImageFallback?: boolean;
   publishToStories?: boolean;
+  publishTargets?: Partial<PublishTargets> | null;
   manualPhotoUrl?: string | null;
   manualPhotoBase64?: string | null;
   manualPhotoContentType?: string | null;
   editedContent?: GeneratedContentPayload | null;
   existingImageUrls?: string[] | null;
+  existingStoryImageUrls?: string[] | null;
   previewOnly?: boolean;
   saveAsDraft?: boolean;
   forcePublish?: boolean;
@@ -107,8 +112,17 @@ async function runPostPipeline(params: {
     format === "CAROUSEL"
       ? Math.min(8, Math.max(2, params.slidesCount || topic?.slides_count || 3))
       : 1;
+  const publishTargets = normalizePublishTargets(
+    params.publishTargets || topic?.publish_targets,
+    params.publishToStories ?? topic?.publish_to_stories
+  );
+  const needsFeed = publishTargets.ig_feed || publishTargets.fb_feed;
+  const needsVertical =
+    publishTargets.ig_stories ||
+    publishTargets.fb_stories ||
+    publishTargets.tiktok_feed;
   const aspectRatio: AspectRatio =
-    params.aspectRatio || topic?.aspect_ratio || "1:1";
+    !needsFeed && needsVertical ? "9:16" : "1:1";
 
   if (format === "CAROUSEL" && !quota.plan.allow_carousel) {
     throw new Error(
@@ -461,6 +475,33 @@ async function runPostPipeline(params: {
   }
   log(`Upload no R2 concluído (${imageUrls.length} imagem(ns)).`);
 
+  let storyImageUrls: string[] = [];
+  if (
+    !params.previewOnly &&
+    params.existingStoryImageUrls &&
+    params.existingStoryImageUrls.length > 0
+  ) {
+    storyImageUrls = [...params.existingStoryImageUrls];
+  } else if (needsVertical) {
+    if (aspectRatio === "9:16") {
+      storyImageUrls = [...imageUrls];
+    } else {
+      storyImageUrls = await Promise.all(
+        imageUrls.map((u) =>
+          buildVertical916FromFeedUrl({
+            companyId: params.companyId,
+            feedImageUrl: u,
+            r2Config: secrets.r2_config,
+            logs,
+          })
+        )
+      );
+      log(
+        `Versão vertical 1080×1920 (9:16) preparada para Stories/TikTok (${storyImageUrls.length} imagem(ns)).`
+      );
+    }
+  }
+
   if (params.previewOnly) {
     let activeDraftId = params.draftPostId || null;
 
@@ -515,6 +556,8 @@ async function runPostPipeline(params: {
       slidesCount: imageUrls.length,
       imageUrl: imageUrls[0],
       imageUrls,
+      storyImageUrls,
+      publishTargets,
       post: content,
       logs,
     };
@@ -560,6 +603,8 @@ async function runPostPipeline(params: {
       postRecord: savedDraft,
       imageUrl: imageUrls[0],
       imageUrls,
+      storyImageUrls,
+      publishTargets,
       post: content,
       logs,
     };
@@ -573,7 +618,9 @@ async function runPostPipeline(params: {
   )
     .trim()
     .replace(/\/+$/, "");
-  const tiktokImageUrls = imageUrls.map(
+  const verticalOrFeedForTikTok =
+    storyImageUrls.length > 0 ? storyImageUrls : imageUrls;
+  const tiktokImageUrls = verticalOrFeedForTikTok.map(
     (u) => `${siteBaseUrl}/api/media/proxy?url=${encodeURIComponent(u)}`
   );
 
@@ -583,16 +630,16 @@ async function runPostPipeline(params: {
       fbPageId: secrets.fb_page_id,
       metaAccessToken: secrets.meta_access_token,
       imageUrls,
+      storyImageUrls,
       caption: fullCaption,
+      publishTargets,
       publishToStories:
-        params.publishToStories !== undefined
-          ? Boolean(params.publishToStories)
-          : Boolean(topic?.publish_to_stories),
+        publishTargets.ig_stories || publishTargets.fb_stories,
       logs,
     }),
     publishToTikTok({
       tiktokAccessToken: freshTikTokToken,
-      enabled: secrets.tiktok_enabled,
+      enabled: Boolean(secrets.tiktok_enabled && publishTargets.tiktok_feed),
       imageUrls: tiktokImageUrls,
       caption: fullCaption,
       logs,
@@ -636,6 +683,8 @@ async function runPostPipeline(params: {
     mode: format === "CAROUSEL" ? "carrossel" : "imagem",
     imageUrl: imageUrls[0],
     imageUrls,
+    storyImageUrls,
+    publishTargets,
     instagramPostId,
     facebookPostId,
     tiktokPostId,
@@ -725,8 +774,8 @@ export async function GET(request: NextRequest) {
         tipoParam === "carrossel"
           ? "CAROUSEL"
           : tipoParam === "imagem"
-          ? "SINGLE"
-          : undefined,
+            ? "SINGLE"
+            : undefined,
       forcePublish: true,
       userId: session?.userId,
     });
@@ -794,17 +843,17 @@ export async function POST(request: NextRequest) {
         typeof body.slidesCount === "number" ? body.slidesCount : undefined,
       aspectRatio:
         body.aspectRatio === "1:1" ||
-        body.aspectRatio === "4:5" ||
-        body.aspectRatio === "9:16"
+          body.aspectRatio === "4:5" ||
+          body.aspectRatio === "9:16"
           ? body.aspectRatio
           : undefined,
       aiPhotoMode:
         body.aiPhotoMode === "ENHANCE" ||
-        body.aiPhotoMode === "ORIGINAL_FRAME" ||
-        body.aiPhotoMode === "EDITORIAL_MOCKUP" ||
-        body.aiPhotoMode === "AI_FULL_CREATIVE" ||
-        body.aiPhotoMode === "RAW_ART" ||
-        body.aiPhotoMode === "NONE"
+          body.aiPhotoMode === "ORIGINAL_FRAME" ||
+          body.aiPhotoMode === "EDITORIAL_MOCKUP" ||
+          body.aiPhotoMode === "AI_FULL_CREATIVE" ||
+          body.aiPhotoMode === "RAW_ART" ||
+          body.aiPhotoMode === "NONE"
           ? body.aiPhotoMode
           : undefined,
       aiPhotoPrompt:
@@ -813,8 +862,8 @@ export async function POST(request: NextRequest) {
           : undefined,
       preferredImageAI:
         body.preferredImageAI === "GEMINI" ||
-        body.preferredImageAI === "OPENAI" ||
-        body.preferredImageAI === "OPENAI_MINI"
+          body.preferredImageAI === "OPENAI" ||
+          body.preferredImageAI === "OPENAI_MINI"
           ? body.preferredImageAI
           : null,
       allowImageFallback: Boolean(body.allowImageFallback),
@@ -822,6 +871,10 @@ export async function POST(request: NextRequest) {
         typeof body.publishToStories === "boolean"
           ? body.publishToStories
           : undefined,
+      publishTargets:
+        body.publishTargets && typeof body.publishTargets === "object"
+          ? (body.publishTargets as Partial<PublishTargets>)
+          : null,
       manualPhotoUrl:
         typeof body.manualPhotoUrl === "string"
           ? body.manualPhotoUrl
@@ -840,8 +893,13 @@ export async function POST(request: NextRequest) {
           : null,
       existingImageUrls: Array.isArray(body.existingImageUrls)
         ? body.existingImageUrls.filter(
-            (u): u is string => typeof u === "string" && u.trim().length > 0
-          )
+          (u): u is string => typeof u === "string" && u.trim().length > 0
+        )
+        : null,
+      existingStoryImageUrls: Array.isArray(body.existingStoryImageUrls)
+        ? body.existingStoryImageUrls.filter(
+          (u): u is string => typeof u === "string" && u.trim().length > 0
+        )
         : null,
       previewOnly: Boolean(body.previewOnly),
       saveAsDraft: Boolean(body.saveAsDraft),

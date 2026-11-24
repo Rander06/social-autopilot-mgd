@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import {
+  buildVertical916FromFeedUrl,
   inspectMetaTokenValidity,
   publishToMetaChannels,
   publishToTikTok,
@@ -28,6 +29,7 @@ import {
   incrementCompanyPostUsage,
   listPostsHistory,
   listTopicsByCompany,
+  normalizePublishTargets,
   recordGeneratedPost,
   refreshTikTokTokenIfNeeded,
   registerNewAccount,
@@ -46,6 +48,7 @@ import {
   AspectRatio,
   GeneratedContentPayload,
   PostFormat,
+  PublishTargets,
   UserAccount,
 } from "@/lib/types";
 
@@ -481,6 +484,11 @@ export async function POST(request: NextRequest) {
               ? topicPayload.preferred_image_ai
               : null,
           publish_to_stories: Boolean(topicPayload.publish_to_stories),
+          publish_targets:
+            topicPayload.publish_targets &&
+            typeof topicPayload.publish_targets === "object"
+              ? (topicPayload.publish_targets as PublishTargets)
+              : undefined,
           schedule_days: Array.isArray(topicPayload.schedule_days)
             ? (topicPayload.schedule_days as number[])
             : [1, 3, 5],
@@ -596,14 +604,45 @@ export async function POST(request: NextRequest) {
       const logs = [...(draft.logs_json || [])];
       const fullCaption = `${finalContent.legenda.trim()}\n\n${(finalContent.hashtags || "").trim()}`.trim();
 
-      let publishToStories =
+      let matchedTopic = null;
+      if (draft.topic_id) {
+        const topics = await listTopicsByCompany(targetCompanyId);
+        matchedTopic = topics.find((t) => t.id === draft.topic_id) || null;
+      }
+      const publishTargets = normalizePublishTargets(
+        body.publishTargets && typeof body.publishTargets === "object"
+          ? (body.publishTargets as Partial<PublishTargets>)
+          : matchedTopic?.publish_targets,
         typeof body.publishToStories === "boolean"
           ? body.publishToStories
-          : false;
-      if (typeof body.publishToStories !== "boolean" && draft.topic_id) {
-        const topics = await listTopicsByCompany(targetCompanyId);
-        const matchedTopic = topics.find((t) => t.id === draft.topic_id);
-        publishToStories = Boolean(matchedTopic?.publish_to_stories);
+          : matchedTopic?.publish_to_stories
+      );
+      const needsVertical =
+        publishTargets.ig_stories ||
+        publishTargets.fb_stories ||
+        publishTargets.tiktok_feed;
+
+      const bodyStoryUrls = Array.isArray(body.storyImageUrls)
+        ? body.storyImageUrls.filter(
+            (u): u is string => typeof u === "string" && u.trim().length > 0
+          )
+        : [];
+      let finalStoryUrls = bodyStoryUrls;
+      if (finalStoryUrls.length === 0 && needsVertical) {
+        if (draft.aspect_ratio === "9:16") {
+          finalStoryUrls = [...finalImageUrls];
+        } else {
+          finalStoryUrls = await Promise.all(
+            finalImageUrls.map((u) =>
+              buildVertical916FromFeedUrl({
+                companyId: targetCompanyId,
+                feedImageUrl: u,
+                r2Config: secrets.r2_config,
+                logs,
+              })
+            )
+          );
+        }
       }
 
       const freshTikTokToken = await refreshTikTokTokenIfNeeded(targetCompanyId);
@@ -612,7 +651,9 @@ export async function POST(request: NextRequest) {
       )
         .trim()
         .replace(/\/+$/, "");
-      const tiktokImageUrls = finalImageUrls.map(
+      const verticalOrFeedForTikTok =
+        finalStoryUrls.length > 0 ? finalStoryUrls : finalImageUrls;
+      const tiktokImageUrls = verticalOrFeedForTikTok.map(
         (u) => `${siteBaseUrl}/api/media/proxy?url=${encodeURIComponent(u)}`
       );
 
@@ -623,13 +664,18 @@ export async function POST(request: NextRequest) {
             fbPageId: secrets.fb_page_id,
             metaAccessToken: secrets.meta_access_token,
             imageUrls: finalImageUrls,
+            storyImageUrls: finalStoryUrls,
             caption: fullCaption,
-            publishToStories,
+            publishTargets,
+            publishToStories:
+              publishTargets.ig_stories || publishTargets.fb_stories,
             logs,
           }),
           publishToTikTok({
             tiktokAccessToken: freshTikTokToken,
-            enabled: secrets.tiktok_enabled,
+            enabled: Boolean(
+              secrets.tiktok_enabled && publishTargets.tiktok_feed
+            ),
             imageUrls: tiktokImageUrls,
             caption: fullCaption,
             logs,

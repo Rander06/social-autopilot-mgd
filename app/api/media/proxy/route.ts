@@ -40,24 +40,35 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const rawType = (upstream.headers.get("content-type") || "image/png").toLowerCase();
     const rawBuffer = Buffer.from(await upstream.arrayBuffer());
 
-    // TikTok Photo Mode aceita estritamente JPEG ou WebP (rejeita PNG).
-    if (rawType.includes("jpeg") || rawType.includes("jpg") || rawType.includes("webp")) {
-      return new NextResponse(new Uint8Array(rawBuffer), {
-        status: 200,
-        headers: {
-          "Content-Type": rawType.includes("webp") ? "image/webp" : "image/jpeg",
-          "Content-Disposition": `inline; filename="${rawType.includes("webp") ? "post.webp" : "post.jpg"}"`,
-          "Cache-Control": "public, max-age=86400",
-        },
+    // Normaliza toda imagem para JPEG dentro dos limites do TikTok Photo Mode
+    // (máx. 1080x1920, mín. 720px no maior lado, sem transparência e EXIF corrigido).
+    const image = sharp(rawBuffer).rotate();
+    const meta = await image.metadata();
+    const w = meta.width || 1080;
+    const h = meta.height || 1080;
+
+    let pipeline = image;
+    if (w > 1080 || h > 1920) {
+      pipeline = pipeline.resize({
+        width: 1080,
+        height: 1920,
+        fit: "inside",
+        withoutEnlargement: true,
+      });
+    } else if (w < 720 && h < 720) {
+      pipeline = pipeline.resize({
+        width: 1080,
+        height: 1080,
+        fit: "inside",
+        withoutEnlargement: false,
       });
     }
 
-    const jpegBuffer = await sharp(rawBuffer)
+    const jpegBuffer = await pipeline
       .flatten({ background: "#ffffff" })
-      .jpeg({ quality: 92 })
+      .jpeg({ quality: 90 })
       .toBuffer();
 
     return new NextResponse(new Uint8Array(jpegBuffer), {

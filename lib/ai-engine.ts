@@ -4,6 +4,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { GoogleGenAI, Type } from "@google/genai";
+import sharp from "sharp";
 import {
   AIProvider,
   AIPhotoMode,
@@ -11,6 +12,7 @@ import {
   GeneratedContentPayload,
   ImageAIProvider,
   PostFormat,
+  PublishTargets,
 } from "./types";
 
 export function cleanCreativePrompt(raw?: string | null): string {
@@ -1129,16 +1131,141 @@ export async function inspectMetaTokenValidity(metaToken: string): Promise<{
   }
 }
 
+export async function buildVertical916FromFeedUrl(params: {
+  companyId: string;
+  feedImageUrl: string;
+  r2Config?: R2StorageConfig;
+  logs?: string[];
+}): Promise<string> {
+  try {
+    const res = await fetch(params.feedImageUrl, {
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!res.ok) return params.feedImageUrl;
+    const rawBuf = Buffer.from(await res.arrayBuffer());
+    const rotated = sharp(rawBuf).rotate().flatten({ background: "#F5EFE6" });
+    const meta = await rotated.metadata();
+    const w = meta.width || 1080;
+    const h = meta.height || 1080;
+
+    // Se já for vertical (~9:16), apenas padroniza em 1080x1920 JPEG
+    if (h / w >= 1.5) {
+      const verticalBuf = await rotated
+        .resize(1080, 1920, { fit: "cover" })
+        .jpeg({ quality: 92 })
+        .toBuffer();
+      return await uploadBufferToR2(
+        verticalBuf,
+        `companies/${params.companyId}/stories-916/${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2, 6)}.jpg`,
+        "image/jpeg",
+        params.r2Config
+      );
+    }
+
+    // Redimensiona a arte central para largura 1080px mantendo proporção original
+    const resizedBuf = await rotated
+      .resize({ width: 1080, height: 1440, fit: "inside" })
+      .jpeg({ quality: 94 })
+      .toBuffer();
+    const resizedMeta = await sharp(resizedBuf).metadata();
+    const rw = resizedMeta.width || 1080;
+    const rh = resizedMeta.height || 1080;
+    const stripH = Math.min(10, Math.max(2, Math.floor(rh * 0.02)));
+
+    // Extrai a cor média real da borda superior e da borda inferior da própria arte (sem blur)
+    const [topStats, botStats] = await Promise.all([
+      sharp(resizedBuf)
+        .extract({ left: 0, top: 0, width: rw, height: stripH })
+        .stats(),
+      sharp(resizedBuf)
+        .extract({ left: 0, top: rh - stripH, width: rw, height: stripH })
+        .stats(),
+    ]);
+
+    const toHex = (n: number) =>
+      Math.max(0, Math.min(255, Math.round(n)))
+        .toString(16)
+        .padStart(2, "0");
+    const topHex = `#${toHex(topStats.channels[0]?.mean ?? 245)}${toHex(
+      topStats.channels[1]?.mean ?? 239
+    )}${toHex(topStats.channels[2]?.mean ?? 230)}`;
+    const botHex = `#${toHex(botStats.channels[0]?.mean ?? 184)}${toHex(
+      botStats.channels[1]?.mean ?? 74
+    )}${toHex(botStats.channels[2]?.mean ?? 39)}`;
+
+    const topOffset = Math.max(0, Math.round((1920 - rh) / 2));
+    const botStartPct = Math.round(((topOffset + rh) / 1920) * 100);
+    const topEndPct = Math.round((topOffset / 1920) * 100);
+
+    const bgSvg = Buffer.from(
+      `<svg width="1080" height="1920" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${topHex}" />
+            <stop offset="${topEndPct}%" stop-color="${topHex}" />
+            <stop offset="${botStartPct}%" stop-color="${botHex}" />
+            <stop offset="100%" stop-color="${botHex}" />
+          </linearGradient>
+        </defs>
+        <rect width="1080" height="1920" fill="url(#bg)" />
+      </svg>`
+    );
+
+    const outBuf = await sharp(bgSvg)
+      .composite([
+        {
+          input: resizedBuf,
+          top: topOffset,
+          left: Math.max(0, Math.round((1080 - rw) / 2)),
+        },
+      ])
+      .jpeg({ quality: 92 })
+      .toBuffer();
+
+    const url = await uploadBufferToR2(
+      outBuf,
+      `companies/${params.companyId}/stories-916/${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 6)}.jpg`,
+      "image/jpeg",
+      params.r2Config
+    );
+    return url;
+  } catch (err) {
+    if (params.logs) {
+      appendLog(
+        params.logs,
+        `Adaptação 9:16 aviso: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    return params.feedImageUrl;
+  }
+}
+
 export async function publishToMetaChannels(params: {
   igUserId?: string | null;
   fbPageId?: string | null;
   metaAccessToken?: string | null;
   imageUrls: string[];
+  storyImageUrls?: string[];
   caption: string;
   publishToStories?: boolean;
+  publishTargets?: PublishTargets;
   logs: string[];
 }): Promise<{ instagramPostId: string | null; facebookPostId: string | null }> {
   const token = params.metaAccessToken?.trim();
+  const t = params.publishTargets;
+  const doIgFeed = t ? t.ig_feed : true;
+  const doFbFeed = t ? t.fb_feed : true;
+  const doIgStories = t ? t.ig_stories : Boolean(params.publishToStories);
+  const doFbStories = t ? t.fb_stories : Boolean(params.publishToStories);
+
+  if (!doIgFeed && !doFbFeed && !doIgStories && !doFbStories) {
+    return { instagramPostId: null, facebookPostId: null };
+  }
+
   if (!token) {
     throw new Error(
       "META_ACCESS_TOKEN não configurado nas Integrações desta empresa."
@@ -1152,8 +1279,8 @@ export async function publishToMetaChannels(params: {
   let facebookPostId: string | null = null;
   let fbPageToken: string | null = null;
 
-  // 1. INSTAGRAM BUSINESS
-  if (params.igUserId?.trim()) {
+  // 1. INSTAGRAM BUSINESS (FEED)
+  if (doIgFeed && params.igUserId?.trim()) {
     const igId = params.igUserId.trim();
     if (params.imageUrls.length === 1) {
       appendLog(params.logs, "Meta IG: Criando container de imagem única...");
@@ -1292,12 +1419,12 @@ export async function publishToMetaChannels(params: {
         `Meta IG Carrossel: Publicado com sucesso (ID ${instagramPostId}).`
       );
     }
-  } else {
+  } else if (doIgFeed) {
     appendLog(params.logs, "Meta IG: IG_USER_ID não informado, pulando.");
   }
 
   // 2. PÁGINA DO FACEBOOK (Obtendo Page Access Token automaticamente)
-  if (params.fbPageId?.trim()) {
+  if ((doFbFeed || doFbStories) && params.fbPageId?.trim()) {
     const fbId = params.fbPageId.trim();
     appendLog(params.logs, "Meta FB: Obtendo Page Access Token da Página...");
     const pageTokenRes = await fetch(
@@ -1319,7 +1446,9 @@ export async function publishToMetaChannels(params: {
     }
     fbPageToken = pageTokenData.access_token;
 
-    if (params.imageUrls.length === 1) {
+    if (!doFbFeed) {
+      // Apenas Stories do Facebook selecionados; pula post no Feed da Página
+    } else if (params.imageUrls.length === 1) {
       const fbRes = await fetch(`${META_GRAPH_BASE_URL}/${fbId}/photos`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1438,11 +1567,11 @@ export async function publishToMetaChannels(params: {
     appendLog(params.logs, "Meta FB: FB_PAGE_ID não informado, pulando.");
   }
 
-  if (params.publishToStories && params.imageUrls[0]) {
-    const storyImgUrl = params.imageUrls[0];
+  const storyImgUrl = params.storyImageUrls?.[0] || params.imageUrls[0];
+  if ((doIgStories || doFbStories) && storyImgUrl) {
     await Promise.all([
       (async () => {
-        if (!params.igUserId?.trim()) return;
+        if (!doIgStories || !params.igUserId?.trim()) return;
         const igId = params.igUserId.trim();
         try {
           appendLog(params.logs, "Meta IG Stories: Criando Story...");
@@ -1504,7 +1633,7 @@ export async function publishToMetaChannels(params: {
         }
       })(),
       (async () => {
-        if (!params.fbPageId?.trim() || !fbPageToken) return;
+        if (!doFbStories || !params.fbPageId?.trim() || !fbPageToken) return;
         const fbId = params.fbPageId.trim();
         try {
           appendLog(params.logs, "Meta FB Stories: Criando Story na Página...");

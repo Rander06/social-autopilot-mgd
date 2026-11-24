@@ -9,8 +9,8 @@ export const metadata: Metadata = {
 
 export default function TermosPage() {
   return (
-    <main className="mx-auto max-w-3xl px-4 py-12 text-slate-800">
-      <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm space-y-6">
+    <main className="mx-auto max-w-3xl px-4 py-8 sm:py-12 text-slate-800">
+      <div className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-8 shadow-sm space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-3">
             <img

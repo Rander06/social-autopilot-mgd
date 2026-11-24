@@ -3,6 +3,14 @@ export type ImageAIProvider = "GEMINI" | "OPENAI" | "OPENAI_MINI";
 export type AspectRatio = "1:1" | "4:5" | "9:16";
 export type PostFormat = "SINGLE" | "CAROUSEL";
 export type ApprovalMode = "AUTO" | "DRAFT";
+
+export interface PublishTargets {
+  ig_feed: boolean;
+  ig_stories: boolean;
+  fb_feed: boolean;
+  fb_stories: boolean;
+  tiktok_feed: boolean;
+}
 export type AIPhotoMode =
   | "NONE"
   | "ENHANCE"
@@ -131,6 +139,7 @@ export interface Topic {
   ai_photo_prompt?: string | null;
   preferred_image_ai?: ImageAIProvider | null;
   publish_to_stories?: boolean;
+  publish_targets?: PublishTargets;
   schedule_days: number[];
   schedule_time: string;
   schedule_times?: string[];
@@ -184,6 +193,7 @@ export interface PostHistoryItem {
   headline: string;
   content_json: GeneratedContentPayload;
   image_urls_json: string[];
+  story_image_urls_json?: string[];
   ig_post_id?: string | null;
   fb_post_id?: string | null;
   tiktok_post_id?: string | null;
