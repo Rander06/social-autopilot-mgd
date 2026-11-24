@@ -564,17 +564,8 @@ async function runPostPipeline(params: {
     };
   }
 
-  // 5. Publicar na Meta Graph API v21.0 + TikTok (se ativado)
+  // 5. Publicar em paralelo na Meta Graph API v21.0 + TikTok (se ativado)
   const fullCaption = `${content.legenda.trim()}\n\n${content.hashtags.trim()}`;
-  const { instagramPostId, facebookPostId } = await publishToMetaChannels({
-    igUserId: secrets.ig_user_id,
-    fbPageId: secrets.fb_page_id,
-    metaAccessToken: secrets.meta_access_token,
-    imageUrls,
-    caption: fullCaption,
-    logs,
-  });
-
   const freshTikTokToken = await refreshTikTokTokenIfNeeded(params.companyId);
   const siteBaseUrl = (
     process.env.NEXT_PUBLIC_SITE_URL || "https://social.pilotflow.com.br"
@@ -585,13 +576,23 @@ async function runPostPipeline(params: {
     (u) => `${siteBaseUrl}/api/media/proxy?url=${encodeURIComponent(u)}`
   );
 
-  const tiktokPostId = await publishToTikTok({
-    tiktokAccessToken: freshTikTokToken,
-    enabled: secrets.tiktok_enabled,
-    imageUrls: tiktokImageUrls,
-    caption: fullCaption,
-    logs,
-  });
+  const [{ instagramPostId, facebookPostId }, tiktokPostId] = await Promise.all([
+    publishToMetaChannels({
+      igUserId: secrets.ig_user_id,
+      fbPageId: secrets.fb_page_id,
+      metaAccessToken: secrets.meta_access_token,
+      imageUrls,
+      caption: fullCaption,
+      logs,
+    }),
+    publishToTikTok({
+      tiktokAccessToken: freshTikTokToken,
+      enabled: secrets.tiktok_enabled,
+      imageUrls: tiktokImageUrls,
+      caption: fullCaption,
+      logs,
+    }),
+  ]);
 
   const savedPost = await recordGeneratedPost({
     company_id: params.companyId,

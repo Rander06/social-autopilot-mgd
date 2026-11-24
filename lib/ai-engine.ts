@@ -1516,8 +1516,8 @@ export async function publishToTikTok(params: {
 
   const publishId = data.data?.publish_id || null;
   if (publishId) {
-    // Aguarda 3s e consulta status real do processamento no TikTok
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    // Aguarda 1s e consulta status inicial do processamento no TikTok
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     try {
       const statusRes = await fetch(
         "https://open.tiktokapis.com/v2/post/publish/status/fetch/",
