@@ -77,6 +77,7 @@ async function runPostPipeline(params: {
   aiPhotoPrompt?: string | null;
   preferredImageAI?: "GEMINI" | "OPENAI" | "OPENAI_MINI" | null;
   allowImageFallback?: boolean;
+  publishToStories?: boolean;
   manualPhotoUrl?: string | null;
   manualPhotoBase64?: string | null;
   manualPhotoContentType?: string | null;
@@ -583,6 +584,10 @@ async function runPostPipeline(params: {
       metaAccessToken: secrets.meta_access_token,
       imageUrls,
       caption: fullCaption,
+      publishToStories:
+        params.publishToStories !== undefined
+          ? Boolean(params.publishToStories)
+          : Boolean(topic?.publish_to_stories),
       logs,
     }),
     publishToTikTok({
@@ -813,6 +818,10 @@ export async function POST(request: NextRequest) {
           ? body.preferredImageAI
           : null,
       allowImageFallback: Boolean(body.allowImageFallback),
+      publishToStories:
+        typeof body.publishToStories === "boolean"
+          ? body.publishToStories
+          : undefined,
       manualPhotoUrl:
         typeof body.manualPhotoUrl === "string"
           ? body.manualPhotoUrl

@@ -1338,6 +1338,13 @@ function unpackTopicRow(t: Topic): Topic {
   let cleanNiche = t.niche_template || "custom";
   let mode = t.ai_photo_mode;
   let imgPref = t.preferred_image_ai ?? null;
+  let publishToStories = Boolean(t.publish_to_stories);
+
+  const storiesMarker = "__stories:1";
+  if (cleanNiche.includes(storiesMarker)) {
+    publishToStories = true;
+    cleanNiche = cleanNiche.replace(storiesMarker, "") || "custom";
+  }
 
   const imgMarker = "__img:";
   const imgIdx = cleanNiche.indexOf(imgMarker);
@@ -1362,6 +1369,7 @@ function unpackTopicRow(t: Topic): Topic {
     niche_template: cleanNiche,
     ai_photo_mode: mode,
     preferred_image_ai: imgPref,
+    publish_to_stories: publishToStories,
     schedule_times,
     schedule_time: schedule_times[0],
   };
@@ -1782,6 +1790,10 @@ export async function upsertTopic(
     input.preferred_image_ai !== undefined
       ? input.preferred_image_ai
       : existing?.preferred_image_ai ?? null;
+  const publishToStories =
+    input.publish_to_stories !== undefined
+      ? Boolean(input.publish_to_stories)
+      : Boolean(existing?.publish_to_stories);
 
   const topic: Topic = {
     id: existing?.id || generateId("top"),
@@ -1808,6 +1820,7 @@ export async function upsertTopic(
         ? input.ai_photo_prompt
         : existing?.ai_photo_prompt || null,
     preferred_image_ai: preferredImageAI,
+    publish_to_stories: publishToStories,
     schedule_days:
       input.schedule_days ?? existing?.schedule_days ?? [1, 3, 5],
     schedule_time: serializedTime,
@@ -1832,17 +1845,19 @@ export async function upsertTopic(
         msg.includes("23514") ||
         msg.includes("PGRST204") ||
         msg.includes("ai_photo_mode") ||
-        msg.includes("preferred_image_ai")
+        msg.includes("preferred_image_ai") ||
+        msg.includes("publish_to_stories")
       ) {
         const legacyNiche = `${topic.niche_template || "custom"}__mode:${topic.ai_photo_mode}${
           topic.preferred_image_ai ? `__img:${topic.preferred_image_ai}` : ""
-        }`;
+        }${topic.publish_to_stories ? "__stories:1" : ""}`;
         const legacyTopic: Record<string, unknown> = {
           ...dbTopic,
           niche_template: legacyNiche,
           ai_photo_mode: "ORIGINAL_FRAME" as const,
         };
         delete legacyTopic.preferred_image_ai;
+        delete legacyTopic.publish_to_stories;
         await sbRequest("topics?on_conflict=id", {
           method: "POST",
           headers: { Prefer: "resolution=merge-duplicates" },

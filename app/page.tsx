@@ -356,6 +356,7 @@ export default function SaasAppPage() {
   const [topicImageAi, setTopicImageAi] = useState<ImageAIProvider | "">("");
   const [topicDays, setTopicDays] = useState<number[]>([1, 3, 5]);
   const [topicTimes, setTopicTimes] = useState<string[]>(["10:00"]);
+  const [topicPublishToStories, setTopicPublishToStories] = useState(false);
   const [topicActive, setTopicActive] = useState(true);
   const [savingTopic, setSavingTopic] = useState(false);
   const [uploadingPhotoTopicId, setUploadingPhotoTopicId] = useState<
@@ -372,6 +373,7 @@ export default function SaasAppPage() {
   const [studioRatio, setStudioRatio] = useState<AspectRatio>("1:1");
   const [studioPhotoMode, setStudioPhotoMode] = useState<AIPhotoMode>("NONE");
   const [studioImageAi, setStudioImageAi] = useState<ImageAIProvider | "">("");
+  const [studioPublishToStories, setStudioPublishToStories] = useState(false);
   const [studioPhotoPrompt, setStudioPhotoPrompt] = useState("");
   const [studioPhotoBase64, setStudioPhotoBase64] = useState<string | null>(
     null
@@ -450,6 +452,7 @@ export default function SaasAppPage() {
       setStudioRatio(first.aspect_ratio);
       setStudioPhotoMode(normalizeVisualMode(first.ai_photo_mode));
       setStudioImageAi(first.preferred_image_ai || "");
+      setStudioPublishToStories(Boolean(first.publish_to_stories));
       setStudioPhotoPrompt("");
     } else {
       setStudioTopicId("__free__");
@@ -461,6 +464,7 @@ export default function SaasAppPage() {
       setStudioRatio("1:1");
       setStudioPhotoMode("NONE");
       setStudioImageAi("");
+      setStudioPublishToStories(false);
       setStudioPhotoPrompt("");
     }
   }, []);
@@ -844,6 +848,7 @@ export default function SaasAppPage() {
     setTopicPhotoPrompt(AI_PHOTO_PROMPT_EXAMPLES[0].prompt);
     setTopicDays([1, 3, 5]);
     setTopicTimes(["10:00"]);
+    setTopicPublishToStories(false);
     setTopicActive(true);
   }
 
@@ -863,6 +868,7 @@ export default function SaasAppPage() {
     setTopicPhotoPrompt(t.ai_photo_prompt || "");
     setTopicDays(t.schedule_days || [1, 3, 5]);
     setTopicTimes(parseScheduleTimesList(t.schedule_time, t.schedule_times));
+    setTopicPublishToStories(Boolean(t.publish_to_stories));
     setTopicActive(t.is_active);
   }
 
@@ -908,6 +914,7 @@ export default function SaasAppPage() {
             ai_photo_mode: topicPhotoMode,
             ai_photo_prompt: topicPhotoPrompt,
             preferred_image_ai: topicImageAi || null,
+            publish_to_stories: topicPublishToStories,
             schedule_days: topicDays,
             schedule_time: topicTimes.join(","),
             schedule_times: topicTimes,
@@ -1005,6 +1012,7 @@ export default function SaasAppPage() {
       setStudioPrompt("");
       setStudioPrice("");
       setStudioImageAi("");
+      setStudioPublishToStories(false);
       return;
     }
     const found = workspace?.topics.find((t) => t.id === topicId);
@@ -1017,6 +1025,7 @@ export default function SaasAppPage() {
     setStudioRatio(found.aspect_ratio);
     setStudioPhotoMode(normalizeVisualMode(found.ai_photo_mode));
     setStudioImageAi(found.preferred_image_ai || "");
+    setStudioPublishToStories(Boolean(found.publish_to_stories));
     setStudioPhotoPrompt("");
   }
 
@@ -1060,6 +1069,7 @@ export default function SaasAppPage() {
         aiPhotoMode: options.aiPhotoModeOverride || studioPhotoMode,
         preferredImageAI: studioImageAi || null,
         allowImageFallback: Boolean(options.allowImageFallback),
+        publishToStories: studioPublishToStories,
         manualPhotoBase64: studioPhotoBase64,
         manualPhotoContentType: studioPhotoType,
         previewOnly: options.previewOnly,
@@ -3114,15 +3124,27 @@ export default function SaasAppPage() {
                     )}
                   </div>
 
-                  <div className="flex items-center justify-between">
-                    <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={topicActive}
-                        onChange={(e) => setTopicActive(e.target.checked)}
-                      />
-                      Assunto ativo no agendador automático
-                    </label>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={topicActive}
+                          onChange={(e) => setTopicActive(e.target.checked)}
+                        />
+                        Assunto ativo no agendador automático
+                      </label>
+                      <label className="flex items-center gap-2 text-xs font-bold text-indigo-700">
+                        <input
+                          type="checkbox"
+                          checked={topicPublishToStories}
+                          onChange={(e) =>
+                            setTopicPublishToStories(e.target.checked)
+                          }
+                        />
+                        Também publicar nos Stories (Instagram e Facebook)
+                      </label>
+                    </div>
                     <button
                       type="submit"
                       disabled={savingTopic}
@@ -3340,6 +3362,17 @@ export default function SaasAppPage() {
                     </div>
                   )}
 
+                  <label className="flex items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2.5 text-xs font-bold text-indigo-800">
+                    <input
+                      type="checkbox"
+                      checked={studioPublishToStories}
+                      onChange={(e) =>
+                        setStudioPublishToStories(e.target.checked)
+                      }
+                    />
+                    Também publicar nos Stories (Instagram e Facebook)
+                  </label>
+
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <button
                       type="button"
@@ -3452,7 +3485,7 @@ export default function SaasAppPage() {
                           Editar Textos Gerados ({studioPreview.providerUsed})
                         </p>
 
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                           <div>
                             <label className="block text-[11px] font-bold text-slate-600">
                               Badge Superior (Tema Visual)
@@ -3591,7 +3624,7 @@ export default function SaasAppPage() {
                                     <p className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-600">
                                       Slide {sIdx + 1}
                                     </p>
-                                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                                       <input
                                         value={sl.badge}
                                         placeholder={`Tag Slide ${sIdx + 1}`}
@@ -4268,7 +4301,7 @@ export default function SaasAppPage() {
                           : "Não Configurado"}
                       </span>
                     </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <input
                         value={integR2AccountId}
                         onChange={(e) => setIntegR2AccountId(e.target.value)}
@@ -4288,7 +4321,7 @@ export default function SaasAppPage() {
                       placeholder="R2_PUBLIC_URL (ex: https://pub-xxxx.r2.dev)"
                       className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
                     />
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <div>
                         <label className="block text-[11px] font-bold text-slate-700">
                           R2_ACCESS_KEY_ID{" "}

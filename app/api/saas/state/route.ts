@@ -478,6 +478,7 @@ export async function POST(request: NextRequest) {
             topicPayload.preferred_image_ai === "OPENAI_MINI"
               ? topicPayload.preferred_image_ai
               : null,
+          publish_to_stories: Boolean(topicPayload.publish_to_stories),
           schedule_days: Array.isArray(topicPayload.schedule_days)
             ? (topicPayload.schedule_days as number[])
             : [1, 3, 5],

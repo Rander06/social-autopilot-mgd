@@ -130,6 +130,7 @@ export interface Topic {
   ai_photo_mode: AIPhotoMode;
   ai_photo_prompt?: string | null;
   preferred_image_ai?: ImageAIProvider | null;
+  publish_to_stories?: boolean;
   schedule_days: number[];
   schedule_time: string;
   schedule_times?: string[];
