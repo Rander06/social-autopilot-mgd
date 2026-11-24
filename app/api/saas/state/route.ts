@@ -27,7 +27,9 @@ import {
   getSuperAdminSnapshot,
   incrementCompanyPostUsage,
   listPostsHistory,
+  listTopicsByCompany,
   recordGeneratedPost,
+  refreshTikTokTokenIfNeeded,
   registerNewAccount,
   resetPasswordWithRecoveryAccessToken,
   resetUserPasswordByAdminOrSecret,
@@ -594,22 +596,45 @@ export async function POST(request: NextRequest) {
       const logs = [...(draft.logs_json || [])];
       const fullCaption = `${finalContent.legenda.trim()}\n\n${(finalContent.hashtags || "").trim()}`.trim();
 
-      const { instagramPostId, facebookPostId } = await publishToMetaChannels({
-        igUserId: secrets.ig_user_id,
-        fbPageId: secrets.fb_page_id,
-        metaAccessToken: secrets.meta_access_token,
-        imageUrls: finalImageUrls,
-        caption: fullCaption,
-        logs,
-      });
+      let publishToStories =
+        typeof body.publishToStories === "boolean"
+          ? body.publishToStories
+          : false;
+      if (typeof body.publishToStories !== "boolean" && draft.topic_id) {
+        const topics = await listTopicsByCompany(targetCompanyId);
+        const matchedTopic = topics.find((t) => t.id === draft.topic_id);
+        publishToStories = Boolean(matchedTopic?.publish_to_stories);
+      }
 
-      const tiktokPostId = await publishToTikTok({
-        tiktokAccessToken: secrets.tiktok_access_token,
-        enabled: secrets.tiktok_enabled,
-        imageUrls: finalImageUrls,
-        caption: fullCaption,
-        logs,
-      });
+      const freshTikTokToken = await refreshTikTokTokenIfNeeded(targetCompanyId);
+      const siteBaseUrl = (
+        process.env.NEXT_PUBLIC_SITE_URL || "https://social.pilotflow.com.br"
+      )
+        .trim()
+        .replace(/\/+$/, "");
+      const tiktokImageUrls = finalImageUrls.map(
+        (u) => `${siteBaseUrl}/api/media/proxy?url=${encodeURIComponent(u)}`
+      );
+
+      const [{ instagramPostId, facebookPostId }, tiktokPostId] =
+        await Promise.all([
+          publishToMetaChannels({
+            igUserId: secrets.ig_user_id,
+            fbPageId: secrets.fb_page_id,
+            metaAccessToken: secrets.meta_access_token,
+            imageUrls: finalImageUrls,
+            caption: fullCaption,
+            publishToStories,
+            logs,
+          }),
+          publishToTikTok({
+            tiktokAccessToken: freshTikTokToken,
+            enabled: secrets.tiktok_enabled,
+            imageUrls: tiktokImageUrls,
+            caption: fullCaption,
+            logs,
+          }),
+        ]);
 
       const updated = await updatePostRecord(draft.id, {
         status: "PUBLISHED",

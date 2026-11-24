@@ -1342,6 +1342,7 @@ export default function SaasAppPage() {
           postId,
           editedContent: cleanEdited,
           imageUrls: customPreview?.imageUrls,
+          publishToStories: customPreview ? studioPublishToStories : undefined,
         }),
       });
       const data = await res.json();
