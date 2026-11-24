@@ -1717,7 +1717,50 @@ export async function publishToTikTok(params: {
     "TikTok Photo API v2: Enviando publicação de imagens..."
   );
 
-  const postWithPrivacy = async (privacyLevel: "PUBLIC_TO_EVERYONE" | "SELF_ONLY") => {
+  let preferredPrivacy:
+    | "PUBLIC_TO_EVERYONE"
+    | "FOLLOWER_OF_CREATOR"
+    | "MUTUAL_FOLLOW_FRIENDS"
+    | "SELF_ONLY" = "PUBLIC_TO_EVERYONE";
+
+  try {
+    const creatorRes = await fetch(
+      "https://open.tiktokapis.com/v2/post/publish/creator_info/query/",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${params.tiktokAccessToken.trim()}`,
+          "Content-Type": "application/json; charset=UTF-8",
+        },
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+    const creatorData = (await creatorRes.json()) as {
+      data?: { privacy_level_options?: string[]; creator_username?: string };
+    };
+    const opts = creatorData.data?.privacy_level_options || [];
+    if (opts.length > 0) {
+      if (opts.includes("PUBLIC_TO_EVERYONE")) {
+        preferredPrivacy = "PUBLIC_TO_EVERYONE";
+      } else if (opts.includes("FOLLOWER_OF_CREATOR")) {
+        preferredPrivacy = "FOLLOWER_OF_CREATOR";
+      } else if (opts.includes("MUTUAL_FOLLOW_FRIENDS")) {
+        preferredPrivacy = "MUTUAL_FOLLOW_FRIENDS";
+      } else {
+        preferredPrivacy = "SELF_ONLY";
+      }
+    }
+  } catch {
+    // Segue com PUBLIC_TO_EVERYONE como tentativa padrão
+  }
+
+  const postWithPrivacy = async (
+    privacyLevel:
+      | "PUBLIC_TO_EVERYONE"
+      | "FOLLOWER_OF_CREATOR"
+      | "MUTUAL_FOLLOW_FRIENDS"
+      | "SELF_ONLY"
+  ) => {
     const res = await fetch(
       "https://open.tiktokapis.com/v2/post/publish/content/init/",
       {
@@ -1750,17 +1793,18 @@ export async function publishToTikTok(params: {
     return { res, data };
   };
 
-  let { res, data } = await postWithPrivacy("PUBLIC_TO_EVERYONE");
+  let { res, data } = await postWithPrivacy(preferredPrivacy);
 
   if (
     (!res.ok || data.error?.code !== "ok") &&
+    preferredPrivacy !== "SELF_ONLY" &&
     /unaudited|integration guidelines|private_accounts|privacy_level/i.test(
       `${data.error?.code || ""} ${data.error?.message || ""}`
     )
   ) {
     appendLog(
       params.logs,
-      "TikTok Sandbox/não auditado: reenviando com privacidade SELF_ONLY (privado)..."
+      "TikTok App ainda não auditado para post público: reenviando com privacidade SELF_ONLY (privado)..."
     );
     ({ res, data } = await postWithPrivacy("SELF_ONLY"));
   }

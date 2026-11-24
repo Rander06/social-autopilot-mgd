@@ -445,6 +445,54 @@ export async function POST(request: NextRequest) {
 
       report.cloudflare_r2 = await testR2Connection(secrets.r2_config);
 
+      if (secrets.tiktok_access_token) {
+        try {
+          const freshTk =
+            (await refreshTikTokTokenIfNeeded(targetCompanyId)) ||
+            secrets.tiktok_access_token;
+          const tkRes = await fetch(
+            "https://open.tiktokapis.com/v2/post/publish/creator_info/query/",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${freshTk}`,
+                "Content-Type": "application/json; charset=UTF-8",
+              },
+              signal: AbortSignal.timeout(8000),
+            }
+          );
+          const tkData = (await tkRes.json()) as {
+            data?: {
+              creator_username?: string;
+              creator_nickname?: string;
+              privacy_level_options?: string[];
+            };
+            error?: { code?: string; message?: string };
+          };
+          report.tiktok = {
+            valid: tkRes.ok && tkData.error?.code === "ok",
+            username: tkData.data?.creator_username || null,
+            nickname: tkData.data?.creator_nickname || null,
+            privacy_level_options: tkData.data?.privacy_level_options || [],
+            message:
+              tkRes.ok && tkData.error?.code === "ok"
+                ? `Conta TikTok @${tkData.data?.creator_username || "conectada"} ativa.`
+                : tkData.error?.message || `Erro HTTP ${tkRes.status} no TikTok.`,
+          };
+        } catch (err) {
+          report.tiktok = {
+            valid: false,
+            message:
+              err instanceof Error ? err.message : "Erro ao validar TikTok.",
+          };
+        }
+      } else {
+        report.tiktok = {
+          valid: false,
+          warning: "Token TikTok não conectado.",
+        };
+      }
+
       return NextResponse.json({ report });
     }
 
