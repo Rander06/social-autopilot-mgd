@@ -308,49 +308,26 @@ async function runPostPipeline(params: {
       Boolean(params.allowImageFallback) ||
       (!params.forcePublish && Boolean(secrets.allow_image_ai_fallback));
 
-    // Mantém diferenciais completos e claros (até 4 itens de 5–8 palavras) para evitar quadros minúsculos ou textos genéricos
-    const benefitItems = (content.beneficios || [])
-      .map((b) =>
-        b
-          .replace(/^[-•*]\s*/, "")
-          .trim()
-          .split(/\s+/)
-          .slice(0, 8)
-          .join(" ")
-      )
-      .filter(Boolean)
-      .slice(0, 4);
-
     const CREATIVE_LAYOUT_DIRECTIONS = [
+      {
+        id: "FULL_WIDTH_BANDS",
+        description:
+          "Layout publicitário com fotografia luminosa panorâmica no topo e faixas horizontais largas de ponta a ponta abaixo, com ícones nítidos à esquerda de cada faixa (1 linha por diferencial para escrita perfeita e fonte uniforme).",
+      },
       {
         id: "EDITORIAL_SPLIT",
         description:
-          "COMPOSICÃO EDITORIAL DIVIDIDA (SPLIT): Coluna esquerda em fundo sólido/gradiente elegante e limpo com toda a tipografia bem alinhada à esquerda (tag superior, título grande, subtítulo explicativo, lista vertical com ícones de check dos diferenciais, valor e CTA à direita/centro); metade direita exibindo fotografia luminosa e real do ambiente ou tela do sistema.",
+          "Layout editorial limpo em 2 colunas: coluna esquerda sólida/degradê com título, lista vertical espaçada em faixas largas e CTA à direita; metade direita com fotografia luminosa real do ambiente.",
       },
       {
-        id: "MOCKUP_SHOWCASE",
+        id: "DARK_ELEGANT_POSTER",
         description:
-          "COMPOSICÃO COM MOCKUP DE CELULAR/NOTEBOOK: Fundo fotográfico sutilmente desfocado do tema; destaque central/lateral com mockup moderno de smartphone e notebook exibindo um sistema limpo; tipografia nítida com título no topo (com respiro de 90px), caixa de Dor vs. Solução, faixas horizontais largas para os diferenciais, selo de oferta e CTA.",
+          "Layout noturno sofisticado com fotografia aconchegante ao entardecer, degradê escuro de alto contraste e faixas horizontais bem espaçadas com tipografia limpa em branco e dourado.",
       },
       {
-        id: "DARK_PREMIUM_GLASS",
+        id: "CLEAN_HERO_CARD",
         description:
-          "COMPOSICÃO NOTURNA PREMIUM & VIDRO FOSCO (GLASSMORPHISM): Fotografia ao entardecer com iluminação aconchegante e overlay escuro degradê de alto contraste; tipografia em branco/dourado com título bem enquadrado no topo, cartões translúcidos em vidro fosco bem espaçados (1 linha por item, sem caixinhas apertadas), destaque do valor em verde-esmeralda/dourado e CTA.",
-      },
-      {
-        id: "BEFORE_AFTER_COMPARE",
-        description:
-          "COMPOSICÃO ALTA CONVERSÃO DOR VS. SOLUÇÃO: Topo claro e arejado com foto panorâmica em moldura arredondada; abaixo, faixa destacada contrastando o problema/solução, seguida por lista limpa em linhas largas com ícones modernos para cada diferencial, faixa de pagamento/valor e botão CTA.",
-      },
-      {
-        id: "MAGAZINE_HERO_CARD",
-        description:
-          "COMPOSICÃO REVISTA COM CARD INFERIOR ESPAÇOSO: Metade superior com foto lifestyle luminosa e título + subtítulo com folga de 90px da borda superior; metade inferior com card amplo de fundo claro e bordas arredondadas contendo a lista vertical nítida dos diferenciais (1 por linha em fonte legível), selo de destaque e CTA.",
-      },
-      {
-        id: "CLEAN_INFOGRAPHIC_GRID",
-        description:
-          "COMPOSICÃO SAAS MODERNA & PÍLULAS LARGAS: Visual limpo de agência em tons claros ou pastel suave com foto em destaque arredondado no canto superior direito; tipografia editorial forte à esquerda; pílulas horizontais largas empilhadas para os diferenciais (nunca 4 quadradinhos pequenos lado a lado), selo de destaque e CTA.",
+          "Layout de agência com foto luminosa ocupando a parte superior e um cartão amplo e limpo na metade inferior exibindo os tópicos em linhas largas bem espaçadas e botão CTA.",
       },
     ];
 
@@ -363,38 +340,19 @@ async function runPostPipeline(params: {
 
     const userHasCustomLayout = hasVisualDirectives(cleanedVisualPrompt);
     const layoutDirectiveBlock = userHasCustomLayout
-      ? `ESTILO VISUAL: Siga as preferências visuais do briefing combinadas com composição renovada estilo "${chosenLayout.id}" (${chosenLayout.description}) para evitar repetir o mesmo layout dos posts anteriores.`
-      : `DIREÇÃO DE ARTE OBRIGATÓRIA DESTA GERAÇÃO (${chosenLayout.id}): ${chosenLayout.description} (NÃO repita 4 quadradinhos iguais lado a lado sobre uma piscina padrão).`;
+      ? `Estilo visual: respeite as instruções do briefing mantendo composição limpa (${chosenLayout.id}).`
+      : `Estilo visual (${chosenLayout.id}): ${chosenLayout.description}`;
 
     let aiResults: Array<string | null> = [];
     try {
       if (slidesCount === 1) {
-        const priceBadgeText = offerPrice
-          ? `Por apenas ${offerPrice}`
-          : content.subtitulo_arte;
-        const singleStructuredPrompt = `Contexto do produto/serviço e cenário: ${basePrompt.slice(
-          0,
-          500
-        )}
+        const singleStructuredPrompt = `${basePrompt}
 
 ${layoutDirectiveBlock}
 
-TEXTOS EXATOS QUE DEVEM CONSTAR NA ARTE (COPIE LETRA POR LETRA E ACENTO POR ACENTO, COM ORTOGRAFIA 100% PERFEITA):
-- Tag Superior: "${content.tema_visual}"
-- Título Principal (centralizado ou alinhado conforme layout, com margem livre de pelo menos 9% / ~90px acima das letras para nunca cortar o topo): "${content.headline_arte}"
-- Subtítulo Explicativo: "${content.subtitulo_arte}"
-- Chamada Dor vs. Solução: "${content.dor_vs_solucao}"
-${
-  benefitItems.length > 0
-    ? `- Lista de Diferenciais (exiba estes ${benefitItems.length} itens em faixas largas ou lista vertical limpa com 1 item por linha e fonte grande legível — nunca amontoe em quadradinhos pequenos):\n${benefitItems
-        .map((b, idx) => `  ${idx + 1}. "${b}"`)
-        .join("\n")}`
-    : ""
-}
-${offerPrice ? `- Oferta / Valor: "${priceBadgeText}"\n` : ""}- Selo de Destaque: "${content.destaque_selo}"
-- Botão CTA: "${brand.cta_default}"
-
-IMPORTANTE: Renderize APENAS os textos entre aspas acima (sem inventar palavras extras fora das aspas) e mantenha pelo menos 9% de margem livre no topo, base e laterais para não cortar nenhuma letra.`;
+Âncora principal da arte:
+- Título em destaque: "${content.headline_arte}"
+${offerPrice ? `- Valor em destaque: "Por apenas ${offerPrice}"\n` : ""}- Botão CTA: "${brand.cta_default}"`;
 
         const singleUrl = await generateFullCreativeWithAI({
           companyId: params.companyId,
@@ -418,20 +376,15 @@ IMPORTANTE: Renderize APENAS os textos entre aspas acima (sem inventar palavras 
         const slide1Title = firstSlide?.title || content.headline_arte;
         const slide1Body = (firstSlide?.body || content.subtitulo_arte)
           .split(/\s+/)
-          .slice(0, 9)
+          .slice(0, 12)
           .join(" ");
-        const slide1Prompt = `Contexto visual do anúncio: ${basePrompt.slice(
-          0,
-          350
-        )}
+        const slide1Prompt = `${basePrompt.slice(0, 450)}
 
 DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE 1/${slidesCount} — CAPA):
-Escreva SOMENTE estes textos curtos na capa (copie letra por letra com ortografia perfeita e mantenha margem livre de pelo menos 90px no topo e laterais para nunca cortar nenhuma letra):
 - Tag Superior: "${firstSlide?.badge || content.tema_visual}"
-- Título Principal (bem enquadrado com respiro acima e nas laterais): "${slide1Title}"
+- Título Principal: "${slide1Title}"
 - Subtítulo Curto: "${slide1Body}"
-- Indicador no Canto Inferior Direito: "Arraste → 1/${slidesCount}"
-Design full-bleed ocupando todo o fundo, mas com margem interna segura para todos os textos.`;
+- Indicador no Canto Inferior Direito: "Arraste → 1/${slidesCount}"`;
 
         const slide1Url = await generateFullCreativeWithAI({
           companyId: params.companyId,
