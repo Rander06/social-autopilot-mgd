@@ -63,6 +63,7 @@ export interface BrandSettings {
   subtitle_default: string;
   cta_default: string;
   logo_url?: string | null;
+  logo_dark_url?: string | null;
   primary_color: string;
   secondary_color: string;
   accent_color: string;

@@ -317,6 +317,8 @@ async function runPostPipeline(params: {
           preferredImageAI: effectiveImageAI,
           allowFallback: shouldAllowFallback,
           referencePhotoUrl: photoToRender,
+          brandLogoUrl: brand.logo_url,
+          brandLogoDarkUrl: brand.logo_dark_url,
           keys: {
             gemini: secrets.gemini_api_key,
             openai: secrets.openai_api_key,
@@ -336,6 +338,8 @@ async function runPostPipeline(params: {
           preferredImageAI: effectiveImageAI,
           allowFallback: shouldAllowFallback,
           referencePhotoUrl: photoToRender,
+          brandLogoUrl: brand.logo_url,
+          brandLogoDarkUrl: brand.logo_dark_url,
           keys: {
             gemini: secrets.gemini_api_key,
             openai: secrets.openai_api_key,
@@ -358,8 +362,12 @@ async function runPostPipeline(params: {
                 highlight: offerPrice || content.destaque_selo,
               };
               const offerHighlight = offerPrice || sl.highlight || content.destaque_selo;
+              const footerSigRule =
+                brand.logo_url || brand.logo_dark_url
+                  ? `deixe o canto inferior esquerdo livre para a logomarca oficial PNG`
+                  : `assinatura tipográfica limpa "${brand.footer_name}"`;
               const slidePrompt = isLastSlide
-                ? `Slide ${idx + 1} de ${slidesCount} (FECHAMENTO DO CARROSSEL). Use a imagem de referência (Slide 1) como guia visual OBRIGATÓRIO: mantenha EXATAMENTE a mesma paleta de cores, fundo, tipografia, iluminação e estilo gráfico do Slide 1 (sem mudar de tema e sem bordas brancas externas). Conteúdo deste slide final (${sl.badge}): título grande "${sl.title}", texto nítido "${sl.body}", destaque em pílula/selo "${offerHighlight}", CTA "${brand.cta_default}" e assinatura "${brand.footer_name}". No canto inferior direito mostre apenas "${idx + 1}/${slidesCount}" (sem seta de continuar).`
+                ? `Slide ${idx + 1} de ${slidesCount} (FECHAMENTO DO CARROSSEL). Use a imagem de referência (Slide 1) como guia visual OBRIGATÓRIO: mantenha EXATAMENTE a mesma paleta de cores, fundo, tipografia, iluminação e estilo gráfico do Slide 1 (sem mudar de tema e sem bordas brancas externas). Conteúdo deste slide final (${sl.badge}): título grande "${sl.title}", texto nítido "${sl.body}", destaque em pílula/selo "${offerHighlight}", CTA "${brand.cta_default}" e ${footerSigRule}. No canto inferior direito mostre apenas "${idx + 1}/${slidesCount}" (sem seta de continuar).`
                 : `Slide ${idx + 1} de ${slidesCount} (CONTINUAÇÃO DO CARROSSEL). Use a imagem de referência (Slide 1) como guia visual OBRIGATÓRIO: mantenha EXATAMENTE a mesma paleta de cores, fundo, tipografia, iluminação e estilo gráfico do Slide 1 (sem mudar de tema e sem bordas brancas externas), dando continuidade visual da esquerda para a direita. Conteúdo deste slide (${sl.badge}): título grande "${sl.title}", texto explicativo nítido "${sl.body}". No canto inferior direito adicione o indicador "Arraste →" (${idx + 1}/${slidesCount}) convidando a rolar para o próximo slide.`;
 
               return generateFullCreativeWithAI({
@@ -369,6 +377,8 @@ async function runPostPipeline(params: {
                 preferredImageAI: effectiveImageAI,
                 allowFallback: shouldAllowFallback,
                 referencePhotoUrl: slide1Url,
+                brandLogoUrl: brand.logo_url,
+                brandLogoDarkUrl: brand.logo_dark_url,
                 keys: {
                   gemini: secrets.gemini_api_key,
                   openai: secrets.openai_api_key,

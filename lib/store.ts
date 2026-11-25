@@ -1143,6 +1143,36 @@ export async function getCompanyById(companyId: string): Promise<Company | null>
   return companies.find((c) => c.id === companyId) || null;
 }
 
+const DARK_LOGO_MARKER = "||dark:";
+
+function unpackBrandRow(b: BrandSettings): BrandSettings {
+  const raw = b.logo_url || "";
+  if (raw.includes(DARK_LOGO_MARKER)) {
+    const [lightPart, darkPart] = raw.split(DARK_LOGO_MARKER);
+    return {
+      ...b,
+      logo_url: lightPart.trim() || null,
+      logo_dark_url: darkPart?.trim() || null,
+    };
+  }
+  return {
+    ...b,
+    logo_url: raw.trim() || null,
+    logo_dark_url: b.logo_dark_url || null,
+  };
+}
+
+function packBrandLogoField(
+  lightUrl?: string | null,
+  darkUrl?: string | null
+): string | null {
+  const l = (lightUrl || "").trim();
+  const d = (darkUrl || "").trim();
+  if (!l && !d) return null;
+  if (d) return `${l}${DARK_LOGO_MARKER}${d}`;
+  return l;
+}
+
 export async function getBrandSettings(
   companyId: string
 ): Promise<BrandSettings> {
@@ -1152,13 +1182,13 @@ export async function getBrandSettings(
       const rows = await sbRequest<BrandSettings[]>(
         `brand_settings?company_id=eq.${encodeURIComponent(companyId)}&limit=1`
       );
-      if (rows[0]) return rows[0];
+      if (rows[0]) return unpackBrandRow(rows[0]);
     } catch {
       // Fallback
     }
   }
   const found = getMemDb().brands.find((b) => b.company_id === companyId);
-  if (found) return found;
+  if (found) return unpackBrandRow(found);
 
   const preset = LUMINOUS_THEME_PRESETS[0];
   return {
@@ -1168,6 +1198,7 @@ export async function getBrandSettings(
     subtitle_default: "",
     cta_default: 'COMENTE "EU QUERO"',
     logo_url: null,
+    logo_dark_url: null,
     primary_color: preset.primary_color,
     secondary_color: preset.secondary_color,
     accent_color: preset.accent_color,
@@ -1637,10 +1668,16 @@ export async function saveBrandSettings(
   };
 
   if (isSupabaseConfigured()) {
+    const dbRow: Record<string, unknown> = {
+      ...next,
+      logo_url: packBrandLogoField(next.logo_url, next.logo_dark_url),
+      updated_at: new Date().toISOString(),
+    };
+    delete dbRow.logo_dark_url;
     await sbRequest("brand_settings?on_conflict=company_id", {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates" },
-      body: JSON.stringify({ ...next, updated_at: new Date().toISOString() }),
+      body: JSON.stringify(dbRow),
     });
   } else {
     const mem = getMemDb();

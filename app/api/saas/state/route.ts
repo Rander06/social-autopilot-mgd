@@ -296,6 +296,57 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ brand });
     }
 
+    if (action === "upload_brand_logo") {
+      if (typeof body.fileBase64 !== "string" || !body.fileBase64.trim()) {
+        return NextResponse.json(
+          { error: "Envie um arquivo de imagem válido para a logomarca." },
+          { status: 400 }
+        );
+      }
+      const base64Clean = body.fileBase64.replace(/^data:[^;]+;base64,/, "");
+      const rawBuf = Buffer.from(base64Clean, "base64");
+      const sharpMod = (await import("sharp")).default;
+
+      let processedBuf: Buffer;
+      try {
+        // Preserva canal alfa (fundo transparente), remove bordas vazias e padroniza até 800x800 PNG
+        let pipeline = sharpMod(rawBuf).rotate();
+        try {
+          pipeline = sharpMod(await pipeline.trim().png().toBuffer());
+        } catch {
+          pipeline = sharpMod(rawBuf).rotate();
+        }
+        processedBuf = await pipeline
+          .resize({
+            width: 800,
+            height: 800,
+            fit: "inside",
+            withoutEnlargement: true,
+          })
+          .png({ compressionLevel: 9 })
+          .toBuffer();
+      } catch {
+        processedBuf = rawBuf;
+      }
+
+      const variant = body.variant === "dark" ? "dark" : "light";
+      const secrets = await getCompanySecrets(targetCompanyId);
+      const logoUrl = await uploadBufferToR2(
+        processedBuf,
+        `companies/${targetCompanyId}/brand/logo-${variant}-${Date.now()}.png`,
+        "image/png",
+        secrets.r2_config
+      );
+      const brand = await saveBrandSettings(
+        targetCompanyId,
+        variant === "dark"
+          ? { logo_dark_url: logoUrl }
+          : { logo_url: logoUrl },
+        session.userId
+      );
+      return NextResponse.json({ brand, logoUrl, variant });
+    }
+
     if (action === "save_integrations") {
       const integInput = (body.integrations || {}) as Record<string, unknown>;
       let metaExpiresAt: string | null | undefined = undefined;

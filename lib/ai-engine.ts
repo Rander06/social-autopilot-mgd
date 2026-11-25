@@ -807,6 +807,131 @@ function isCreditOrQuotaError(msg: string): boolean {
   );
 }
 
+export async function applyBrandLogoToImageBuffer(
+  imageBuf: Buffer,
+  brandLogoLightUrl?: string | null,
+  brandLogoDarkUrl?: string | null
+): Promise<Buffer> {
+  const lightUrl = brandLogoLightUrl?.trim() || null;
+  const darkUrl = brandLogoDarkUrl?.trim() || null;
+  if (!lightUrl && !darkUrl) return imageBuf;
+
+  try {
+    const baseImage = sharp(imageBuf);
+    const baseMeta = await baseImage.metadata();
+    const canvasW = baseMeta.width || 1024;
+    const canvasH = baseMeta.height || 1024;
+    const isVertical = canvasH / canvasW >= 1.35;
+
+    const maxLogoW = Math.max(120, Math.round(canvasW * 0.21));
+    const maxLogoH = Math.max(48, Math.round(canvasW * 0.085));
+    const marginX = Math.max(28, Math.round(canvasW * 0.042));
+    const marginBottom = isVertical
+      ? Math.max(80, Math.round(canvasH * 0.085))
+      : Math.max(28, Math.round(canvasH * 0.04));
+
+    // Mede a luminosidade real da região do canto inferior esquerdo da arte
+    let isDarkBackground = false;
+    try {
+      const sampleLeft = Math.min(marginX, canvasW - 20);
+      const sampleTop = Math.max(0, canvasH - maxLogoH - marginBottom);
+      const sampleW = Math.min(maxLogoW, canvasW - sampleLeft);
+      const sampleH = Math.min(maxLogoH, canvasH - sampleTop);
+      const regionStats = await sharp(imageBuf)
+        .extract({
+          left: sampleLeft,
+          top: sampleTop,
+          width: Math.max(10, sampleW),
+          height: Math.max(10, sampleH),
+        })
+        .stats();
+      const rMean = regionStats.channels[0]?.mean ?? 200;
+      const gMean = regionStats.channels[1]?.mean ?? 200;
+      const bMean = regionStats.channels[2]?.mean ?? 200;
+      const luminance = 0.299 * rMean + 0.587 * gMean + 0.114 * bMean;
+      isDarkBackground = luminance < 135;
+    } catch {
+      isDarkBackground = false;
+    }
+
+    // Escolhe a logo ideal para o fundo detectado (Fundo Escuro -> darkUrl; Fundo Claro -> lightUrl)
+    const chosenUrl = isDarkBackground
+      ? darkUrl || lightUrl
+      : lightUrl || darkUrl;
+    if (!chosenUrl) return imageBuf;
+
+    // Se o fundo da arte é escuro mas o cliente só enviou a logo de fundo claro (ou vice-versa), aplica uma pílula suave de contraste
+    const needsContrastPill =
+      (isDarkBackground && !darkUrl && Boolean(lightUrl)) ||
+      (!isDarkBackground && !lightUrl && Boolean(darkUrl));
+
+    const logoRes = await fetch(chosenUrl, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!logoRes.ok) return imageBuf;
+    const rawLogoBuf = Buffer.from(await logoRes.arrayBuffer());
+
+    let trimmedLogoBuf = rawLogoBuf;
+    try {
+      trimmedLogoBuf = await sharp(rawLogoBuf).trim().png().toBuffer();
+    } catch {
+      trimmedLogoBuf = rawLogoBuf;
+    }
+
+    const resizedLogoBuf = await sharp(trimmedLogoBuf)
+      .resize({
+        width: maxLogoW,
+        height: maxLogoH,
+        fit: "inside",
+        withoutEnlargement: false,
+      })
+      .png()
+      .toBuffer();
+
+    const logoMeta = await sharp(resizedLogoBuf).metadata();
+    const lw = logoMeta.width || maxLogoW;
+    const lh = logoMeta.height || maxLogoH;
+
+    const left = Math.min(marginX, Math.max(0, canvasW - lw));
+    const top = Math.min(
+      Math.max(marginX, canvasH - lh - marginBottom),
+      Math.max(0, canvasH - lh)
+    );
+
+    const layers: Array<{ input: Buffer; left: number; top: number }> = [];
+
+    if (needsContrastPill) {
+      const padX = 14;
+      const padY = 10;
+      const pillW = Math.min(canvasW, lw + padX * 2);
+      const pillH = Math.min(canvasH, lh + padY * 2);
+      const pillFill = isDarkBackground
+        ? "rgba(255,255,255,0.92)"
+        : "rgba(15,23,42,0.88)";
+      const pillSvg = Buffer.from(
+        `<svg width="${pillW}" height="${pillH}" xmlns="http://www.w3.org/2000/svg">
+          <rect width="${pillW}" height="${pillH}" rx="14" ry="14" fill="${pillFill}" />
+        </svg>`
+      );
+      layers.push({
+        input: pillSvg,
+        left: Math.max(0, left - padX),
+        top: Math.max(0, top - padY),
+      });
+    }
+
+    layers.push({
+      input: resizedLogoBuf,
+      left,
+      top,
+    });
+
+    return await sharp(imageBuf).composite(layers).png().toBuffer();
+  } catch {
+    return imageBuf;
+  }
+}
+
 export async function generateFullCreativeWithAI(params: {
   companyId: string;
   promptText: string;
@@ -814,12 +939,21 @@ export async function generateFullCreativeWithAI(params: {
   preferredImageAI: ImageAIProvider;
   allowFallback?: boolean;
   referencePhotoUrl?: string | null;
+  brandLogoUrl?: string | null;
+  brandLogoDarkUrl?: string | null;
   keys: { gemini?: string | null; openai?: string | null };
   r2Config?: R2StorageConfig;
   logs: string[];
 }): Promise<string | null> {
-  const cleanedPrompt = cleanCreativePrompt(params.promptText);
-  if (!cleanedPrompt) return null;
+  const baseCleanedPrompt = cleanCreativePrompt(params.promptText);
+  if (!baseCleanedPrompt) return null;
+
+  const hasOfficialLogo = Boolean(
+    params.brandLogoUrl?.trim() || params.brandLogoDarkUrl?.trim()
+  );
+  const cleanedPrompt = hasOfficialLogo
+    ? `${baseCleanedPrompt}\n\nREGRA OBRIGATÓRIA DE ZONA RESERVADA PARA LOGOMARCA (CANTO INFERIOR ESQUERDO): NÃO desenhe nenhum logotipo, ícone de marca ou assinatura de empresa na arte. Deixe o CANTO INFERIOR ESQUERDO (área de ~240x95px na base esquerda) 100% LIVRE de qualquer texto, título, selo, botão CTA ou elemento importante (mantenha apenas o fundo limpo/contínuo da arte nessa área), e posicione botões de CTA ou setas de carrossel no centro ou à direita, pois a logomarca oficial PNG sem fundo será aplicada no canto inferior esquerdo após a geração.`
+    : `${baseCleanedPrompt}\n\nREGRA DE ASSINATURA: Não invente símbolos ou ícones de logotipo falsos; se incluir assinatura da empresa no rodapé, escreva apenas o nome tipográfico limpo.`;
 
   let refBuf: Buffer | null = null;
   let refMime = "image/png";
@@ -928,8 +1062,15 @@ export async function generateFullCreativeWithAI(params: {
             data?: Array<{ b64_json?: string; url?: string }>;
             error?: { message?: string };
           };
-          const outBuf = res.ok ? await extractOpenAiBuffer(data) : null;
-          if (outBuf) {
+          const rawOutBuf = res.ok ? await extractOpenAiBuffer(data) : null;
+          if (rawOutBuf) {
+            const outBuf = hasOfficialLogo
+              ? await applyBrandLogoToImageBuffer(
+                  rawOutBuf,
+                  params.brandLogoUrl,
+                  params.brandLogoDarkUrl
+                )
+              : rawOutBuf;
             const url = await uploadBufferToR2(
               outBuf,
               `companies/${params.companyId}/ai-creatives/${Date.now()}-${Math.random()
@@ -1003,8 +1144,17 @@ export async function generateFullCreativeWithAI(params: {
           const resParts = res.candidates?.[0]?.content?.parts || [];
           const imgPart = resParts.find((p) => p.inlineData?.data);
           if (imgPart?.inlineData?.data) {
-            const outBuf = Buffer.from(imgPart.inlineData.data, "base64");
-            const outMime = imgPart.inlineData.mimeType || "image/png";
+            const rawOutBuf = Buffer.from(imgPart.inlineData.data, "base64");
+            const outBuf = hasOfficialLogo
+              ? await applyBrandLogoToImageBuffer(
+                  rawOutBuf,
+                  params.brandLogoUrl,
+                  params.brandLogoDarkUrl
+                )
+              : rawOutBuf;
+            const outMime = hasOfficialLogo
+              ? "image/png"
+              : imgPart.inlineData.mimeType || "image/png";
             const url = await uploadBufferToR2(
               outBuf,
               `companies/${params.companyId}/ai-creatives/${Date.now()}.png`,

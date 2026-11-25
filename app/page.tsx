@@ -148,9 +148,11 @@ function fileToBase64(file: File): Promise<{ base64: string; contentType: string
         }
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         const outputMime =
-          file.type === "image/png" && scale >= 1 ? "image/png" : "image/jpeg";
+          file.type === "image/png" || file.type === "image/webp"
+            ? "image/png"
+            : "image/jpeg";
         resolve({
-          base64: canvas.toDataURL(outputMime, 0.85),
+          base64: canvas.toDataURL(outputMime, 0.92),
           contentType: outputMime,
         });
       };
@@ -737,6 +739,9 @@ export default function SaasAppPage() {
   // Brand form
   const [brandForm, setBrandForm] = useState<BrandSettings | null>(null);
   const [savingBrand, setSavingBrand] = useState(false);
+  const [uploadingBrandLogo, setUploadingBrandLogo] = useState<
+    "light" | "dark" | null
+  >(null);
 
   // Integrations form
   const [integTextAi, setIntegTextAi] = useState<AIProvider>("GEMINI");
@@ -1205,6 +1210,90 @@ export default function SaasAppPage() {
       setGlobalNotice({
         type: "error",
         text: err instanceof Error ? err.message : "Erro ao salvar marca.",
+      });
+    } finally {
+      setSavingBrand(false);
+    }
+  }
+
+  async function handleUploadBrandLogo(
+    file: File,
+    variant: "light" | "dark" = "light"
+  ) {
+    if (!workspace || !brandForm) return;
+    setUploadingBrandLogo(variant);
+    setGlobalNotice(null);
+    try {
+      const { base64, contentType } = await fileToBase64(file);
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "upload_brand_logo",
+          companyId: workspace.company.id,
+          fileBase64: base64,
+          contentType,
+          variant,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setBrandForm(data.brand);
+      setWorkspace({ ...workspace, brand: data.brand });
+      setGlobalNotice({
+        type: "success",
+        text:
+          variant === "dark"
+            ? "Logomarca para Fundo Escuro (PNG sem fundo) salva com sucesso!"
+            : "Logomarca para Fundo Claro (PNG sem fundo) salva com sucesso!",
+      });
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text:
+          err instanceof Error
+            ? err.message
+            : "Erro ao enviar logomarca da empresa.",
+      });
+    } finally {
+      setUploadingBrandLogo(null);
+    }
+  }
+
+  async function handleRemoveBrandLogo(variant: "light" | "dark") {
+    if (!workspace || !brandForm) return;
+    setSavingBrand(true);
+    setGlobalNotice(null);
+    try {
+      const updatedBrand =
+        variant === "dark"
+          ? { ...brandForm, logo_dark_url: null }
+          : { ...brandForm, logo_url: null };
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "save_brand",
+          companyId: workspace.company.id,
+          brand: updatedBrand,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setBrandForm(data.brand);
+      setWorkspace({ ...workspace, brand: data.brand });
+      setGlobalNotice({
+        type: "success",
+        text:
+          variant === "dark"
+            ? "Logomarca de fundo escuro removida."
+            : "Logomarca de fundo claro removida.",
+      });
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text:
+          err instanceof Error ? err.message : "Erro ao remover logomarca.",
       });
     } finally {
       setSavingBrand(false);
@@ -4533,10 +4622,241 @@ export default function SaasAppPage() {
                     ))}
                   </div>
 
+                  {/* Logomarca Oficial da Empresa (PNG Sem Fundo — 2 Versões: Fundo Claro e Fundo Escuro) */}
+                  <div className="space-y-3 rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <span className="text-xs font-extrabold uppercase tracking-wider text-indigo-950">
+                          Logomarca Oficial da Empresa (PNG Sem Fundo)
+                        </span>
+                        <span
+                          className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            brandForm.logo_url || brandForm.logo_dark_url
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-slate-200 text-slate-600"
+                          }`}
+                        >
+                          {brandForm.logo_url && brandForm.logo_dark_url
+                            ? "2 Versões Ativas (Claro + Escuro)"
+                            : brandForm.logo_url || brandForm.logo_dark_url
+                            ? "1 Versão Ativa (+ Contraste Automático)"
+                            : "Usando Texto no Rodapé"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {/* CARD 1: LOGO PARA FUNDO CLARO */}
+                      <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-3.5 shadow-xs">
+                        <div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-extrabold text-slate-800">
+                              1. Logo p/ Fundo Claro
+                            </span>
+                            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-600">
+                              Letras Escuras
+                            </span>
+                          </div>
+                          <div className="mt-2 flex h-20 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/60 p-2">
+                            {brandForm.logo_url ? (
+                              /* eslint-disable-next-line @next/next/no-img-element */
+                              <img
+                                src={brandForm.logo_url}
+                                alt="Logo Fundo Claro"
+                                className="max-h-14 max-w-[190px] object-contain"
+                              />
+                            ) : (
+                              <span className="text-[11px] text-slate-400">
+                                Nenhuma logo enviada
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                          <label className="cursor-pointer rounded-lg bg-indigo-600 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-indigo-700">
+                            {uploadingBrandLogo === "light"
+                              ? "Enviando..."
+                              : brandForm.logo_url
+                              ? "Trocar PNG"
+                              : "+ Subir PNG (Fundo Claro)"}
+                            <input
+                              type="file"
+                              accept="image/png,image/webp,image/svg+xml"
+                              className="hidden"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) void handleUploadBrandLogo(f, "light");
+                              }}
+                            />
+                          </label>
+                          {brandForm.logo_url && (
+                            <>
+                              <a
+                                href={brandForm.logo_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                download="logo-fundo-claro.png"
+                                className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-100"
+                              >
+                                Baixar
+                              </a>
+                              <button
+                                type="button"
+                                disabled={
+                                  savingBrand || Boolean(uploadingBrandLogo)
+                                }
+                                onClick={() => handleRemoveBrandLogo("light")}
+                                className="ml-auto rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 text-[11px] font-bold text-rose-700 hover:bg-rose-100"
+                              >
+                                Remover
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* CARD 2: LOGO PARA FUNDO ESCURO */}
+                      <div className="flex flex-col justify-between rounded-xl border border-slate-800 bg-slate-900 p-3.5 text-white shadow-xs">
+                        <div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-extrabold text-white">
+                              2. Logo p/ Fundo Escuro
+                            </span>
+                            <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[9px] font-bold text-cyan-300">
+                              Letras Brancas / Claras
+                            </span>
+                          </div>
+                          <div className="mt-2 flex h-20 items-center justify-center rounded-lg border border-dashed border-slate-700 bg-slate-950/60 p-2">
+                            {brandForm.logo_dark_url ? (
+                              /* eslint-disable-next-line @next/next/no-img-element */
+                              <img
+                                src={brandForm.logo_dark_url}
+                                alt="Logo Fundo Escuro"
+                                className="max-h-14 max-w-[190px] object-contain"
+                              />
+                            ) : brandForm.logo_url ? (
+                              <div className="flex flex-col items-center gap-1">
+                                <div className="rounded-lg bg-white/95 px-2.5 py-1">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={brandForm.logo_url}
+                                    alt="Logo com etiqueta automática"
+                                    className="max-h-9 max-w-[150px] object-contain"
+                                  />
+                                </div>
+                                <span className="text-[9px] text-slate-400">
+                                  Etiqueta clara automática (ou suba a versão
+                                  branca abaixo)
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-slate-500">
+                                Nenhuma logo enviada
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                          <label className="cursor-pointer rounded-lg bg-cyan-500 px-2.5 py-1.5 text-[11px] font-bold text-slate-950 hover:bg-cyan-400">
+                            {uploadingBrandLogo === "dark"
+                              ? "Enviando..."
+                              : brandForm.logo_dark_url
+                              ? "Trocar PNG"
+                              : "+ Subir PNG (Fundo Escuro)"}
+                            <input
+                              type="file"
+                              accept="image/png,image/webp,image/svg+xml"
+                              className="hidden"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) void handleUploadBrandLogo(f, "dark");
+                              }}
+                            />
+                          </label>
+                          {brandForm.logo_dark_url && (
+                            <>
+                              <a
+                                href={brandForm.logo_dark_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                download="logo-fundo-escuro.png"
+                                className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-[11px] font-bold text-slate-200 hover:bg-slate-700"
+                              >
+                                Baixar
+                              </a>
+                              <button
+                                type="button"
+                                disabled={
+                                  savingBrand || Boolean(uploadingBrandLogo)
+                                }
+                                onClick={() => handleRemoveBrandLogo("dark")}
+                                className="ml-auto rounded-lg border border-rose-500/40 bg-rose-500/20 px-2 py-1.5 text-[11px] font-bold text-rose-200 hover:bg-rose-500/30"
+                              >
+                                Remover
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 rounded-xl border border-indigo-100 bg-white p-3 text-[11px] leading-relaxed text-slate-600">
+                      <p className="font-extrabold text-indigo-950">
+                        Parâmetros &amp; Tamanhos Recomendados (Site, Posts e
+                        Vídeos):
+                      </p>
+                      <ul className="list-disc space-y-1 pl-4">
+                        <li>
+                          <strong>Por que 2 versões separadas?</strong> O
+                          cliente cria e sobe a versão normal (para artes claras)
+                          e a versão com escrita branca/clara (para artes
+                          escuras). O sistema mede automaticamente o brilho do
+                          canto da arte gerada e escolhe a versão certa!
+                        </li>
+                        <li>
+                          <strong>Formato obrigatório:</strong>{" "}
+                          <code>PNG sem fundo (transparente)</code> ou{" "}
+                          <code>WebP transparente</code> • Peso máximo:{" "}
+                          <strong>2 MB</strong>.
+                        </li>
+                        <li>
+                          <strong>
+                            Logo Horizontal / Retangular (ideal p/ rodapé de
+                            posts e vídeos):
+                          </strong>{" "}
+                          recomendado <strong>600×200 px</strong> (mínimo{" "}
+                          <strong>250×100 px</strong> • máximo{" "}
+                          <strong>1200×400 px</strong>).
+                        </li>
+                        <li>
+                          <strong>Logo Quadrada / Ícone + Nome:</strong>{" "}
+                          recomendado <strong>512×512 px</strong> (mínimo{" "}
+                          <strong>250×250 px</strong> • máximo{" "}
+                          <strong>1080×1080 px</strong>).
+                        </li>
+                        <li>
+                          <strong>
+                            Zona Reservada Anti-Sobreposição na IA:
+                          </strong>{" "}
+                          a IA fica proibida de colocar qualquer escrita, botão
+                          ou logo inventada no{" "}
+                          <strong>canto inferior esquerdo</strong> (máx.{" "}
+                          <code>220×88 px</code>). Se o cliente enviar apenas 1
+                          versão e a arte vier da mesma cor, o sistema aplica
+                          uma etiqueta de contraste automática para a logo nunca
+                          ficar apagada.
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div>
                       <label className="block text-xs font-bold text-slate-600">
-                        Assinatura no Rodapé
+                        Nome da Empresa / Assinatura (Usado nas legendas e
+                        quando sem logo PNG)
                       </label>
                       <input
                         value={brandForm.footer_name}
@@ -4627,13 +4947,24 @@ export default function SaasAppPage() {
                     </div>
 
                     <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200/80 bg-white p-3 shadow-xs sm:p-3.5">
-                      <div>
-                        <p className="text-xs font-extrabold">
-                          {brandForm.footer_name}
-                        </p>
-                        <p className="text-[10px] text-slate-500">
-                          {brandForm.subtitle_default}
-                        </p>
+                      <div className="flex items-center gap-2.5">
+                        {brandForm.logo_url ? (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img
+                            src={brandForm.logo_url}
+                            alt={brandForm.footer_name}
+                            className="h-9 max-w-[140px] object-contain"
+                          />
+                        ) : (
+                          <div>
+                            <p className="text-xs font-extrabold">
+                              {brandForm.footer_name}
+                            </p>
+                            <p className="text-[10px] text-slate-500">
+                              {brandForm.subtitle_default}
+                            </p>
+                          </div>
+                        )}
                       </div>
                       <span
                         className="rounded-lg px-3 py-1.5 text-[10px] font-extrabold text-white"
