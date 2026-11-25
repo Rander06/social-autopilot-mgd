@@ -1740,7 +1740,8 @@ export default function SaasAppPage() {
         });
         scrollToStudioPreview();
       } else {
-        setStudioPreview(data as StudioPreviewState);
+        setStudioPreview(null);
+        setStudioReturnTab(null);
         await loadState(workspace.company.id);
         setGlobalNotice({
           type: "success",
@@ -1982,8 +1983,9 @@ export default function SaasAppPage() {
       if (Array.isArray(data.post?.logs_json)) {
         setStudioPublishLogs(data.post.logs_json);
       }
-      if (studioPreview?.draftPostId === postId) {
+      if (customPreview || studioPreview?.draftPostId === postId) {
         setStudioPreview(null);
+        setStudioReturnTab(null);
       }
       await loadState(workspace.company.id);
       setGlobalNotice({
