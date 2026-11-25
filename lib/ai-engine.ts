@@ -210,18 +210,18 @@ ${antiRepeatBlock}
 REGRAS ESTRITAS:
 0. Se as instruções acima citarem explicitamente um título entre aspas para o topo da arte (ex: "CONTROLE TUDO + ATENDIMENTO COM IA"), use EXATAMENTE esse título em "headline_arte".
 1. NUNCA use emojis nos textos das artes (tema_visual, headline_arte, subtitulo_arte, dor_vs_solucao, destaque_selo, beneficios, slides). Use emojis APENAS no campo "legenda".
-2. tema_visual: Frase curta (2 a 4 palavras) para badge no topo da arte.
-3. headline_arte: Máximo de 7 palavras, forte, publicitária e inédita.
-4. subtitulo_arte: Frase curta (até 12 palavras) reforçando o benefício ou preço (${params.offerPrice || ""}).
-5. dor_vs_solucao: Frase curta (até 14 palavras) atacando a dor do cliente e mostrando a solução.
-6. destaque_selo: Selo curto em caixa alta (ex: "QUALIDADE GARANTIDA" ou "0% COMISSÃO • 100% SEU").
-7. beneficios: Array com exatamente 4 a 6 itens curtos (3 a 6 palavras cada).
+2. tema_visual: Frase curta (2 a 3 palavras) para badge no topo da arte.
+3. headline_arte: Máximo de 6 palavras, forte, publicitária e inédita (ortografia 100% perfeita em português com todos os acentos corretos).
+4. subtitulo_arte: Frase curta (máximo 8 palavras) reforçando o benefício ou preço (${params.offerPrice || ""}).
+5. dor_vs_solucao: Frase curta (até 10 palavras) atacando a dor do cliente e mostrando a solução.
+6. destaque_selo: Selo curto em caixa alta de 2 a 4 palavras (ex: "PIX DIRETO NA CONTA" ou "0% COMISSÃO • 100% SEU").
+7. beneficios: Array com exatamente 4 itens MUITO CURTOS (apenas 2 a 4 palavras cada, ex: "Simulador de Orçamento", "Agenda Airbnb e Booking", "Contratos Digitais em PDF", "Atendimento IA 24h") escritos com ortografia e acentuação 100% perfeitas em português (NUNCA escreva frases longas aqui, pois serão renderizados em letras grandes nos cards da imagem).
 8. slides: Array com EXATAMENTE ${params.format === "CAROUSEL" ? params.slidesCount : 1
     } objetos, cada um contendo:
    - badge (ex: "PASSO 01", "DESTAQUE", "OFERTA")
-   - title (título curto do slide, máx. 7 palavras)
-   - body (explicação objetiva em 1 a 2 frases)
-   - highlight (opcional, dado ou preço curto)${
+   - title (título curto do slide, máx. 6 palavras)
+   - body (frase curta e direta, máx. 9 palavras, para ficar em fonte grande e nítida na arte)
+   - highlight (opcional, dado ou preço curto de até 4 palavras)${
      params.format === "CAROUSEL"
        ? `
    IMPORTANTE PARA CARROSSEL CONTÍNUO: Escreva os ${params.slidesCount} slides como uma HISTÓRIA EM SEQUÊNCIA para a pessoa ir arrastando e lendo:
@@ -951,9 +951,13 @@ export async function generateFullCreativeWithAI(params: {
   const hasOfficialLogo = Boolean(
     params.brandLogoUrl?.trim() || params.brandLogoDarkUrl?.trim()
   );
+  const orthographyGuard = `REGRAS ESTRITAS DE ORTOGRAFIA EM PORTUGUÊS-BR (ZERO ERROS DE ESCRITA):
+1. Escreva APENAS os textos curtos solicitados entre aspas no prompt, copiando EXATAMENTE letra por letra e acento por acento (Ç, Ã, Õ, Á, É, Í, Ó, Ú, Â, Ê).
+2. PROIBIDO adicionar subtítulos miúdos, frases explicativas pequenas ou linhas extras dentro dos cards/caixas: use SOMENTE letras GRANDES, grossas (Sans-Serif bold), espaçadas e de altíssimo contraste (máximo 2 a 4 palavras por card).
+3. NUNCA invente palavras extras fora das aspas.`;
   const cleanedPrompt = hasOfficialLogo
-    ? `${baseCleanedPrompt}\n\nREGRA OBRIGATÓRIA DE ZONA RESERVADA PARA LOGOMARCA (CANTO INFERIOR ESQUERDO): NÃO desenhe nenhum logotipo, ícone de marca ou assinatura de empresa na arte. Deixe o CANTO INFERIOR ESQUERDO (área de ~240x95px na base esquerda) 100% LIVRE de qualquer texto, título, selo, botão CTA ou elemento importante (mantenha apenas o fundo limpo/contínuo da arte nessa área), e posicione botões de CTA ou setas de carrossel no centro ou à direita, pois a logomarca oficial PNG sem fundo será aplicada no canto inferior esquerdo após a geração.`
-    : `${baseCleanedPrompt}\n\nREGRA DE ASSINATURA: Não invente símbolos ou ícones de logotipo falsos; se incluir assinatura da empresa no rodapé, escreva apenas o nome tipográfico limpo.`;
+    ? `${baseCleanedPrompt}\n\n${orthographyGuard}\n\nREGRA OBRIGATÓRIA DE ZONA RESERVADA PARA LOGOMARCA (CANTO INFERIOR ESQUERDO): NÃO desenhe nenhum logotipo, ícone de marca ou assinatura de empresa na arte. Deixe o CANTO INFERIOR ESQUERDO (área de ~240x95px na base esquerda) 100% LIVRE de qualquer texto, título, selo, botão CTA ou elemento importante (mantenha apenas o fundo limpo/contínuo da arte nessa área), e posicione botões de CTA ou setas de carrossel no centro ou à direita, pois a logomarca oficial PNG sem fundo será aplicada no canto inferior esquerdo após a geração.`
+    : `${baseCleanedPrompt}\n\n${orthographyGuard}\n\nREGRA DE ASSINATURA: Não invente símbolos ou ícones de logotipo falsos; se incluir assinatura da empresa no rodapé, escreva apenas o nome tipográfico limpo.`;
 
   let refBuf: Buffer | null = null;
   let refMime = "image/png";
@@ -1017,6 +1021,7 @@ export async function generateFullCreativeWithAI(params: {
 
       for (const openAiModel of openAiModels) {
         try {
+          const useHighQuality = params.preferredImageAI !== "OPENAI_MINI";
           let res: Response;
           if (refBuf) {
             appendLog(
@@ -1027,6 +1032,7 @@ export async function generateFullCreativeWithAI(params: {
             form.append("model", openAiModel);
             form.append("prompt", cleanedPrompt);
             form.append("size", gptSize);
+            if (useHighQuality) form.append("quality", "high");
             form.append(
               "image",
               new Blob([new Uint8Array(refBuf)], { type: refMime }),
@@ -1036,7 +1042,7 @@ export async function generateFullCreativeWithAI(params: {
               method: "POST",
               headers: { Authorization: `Bearer ${openAiKey}` },
               body: form,
-              signal: AbortSignal.timeout(45_000),
+              signal: AbortSignal.timeout(55_000),
             });
           } else {
             appendLog(
@@ -1053,8 +1059,9 @@ export async function generateFullCreativeWithAI(params: {
                 model: openAiModel,
                 prompt: cleanedPrompt,
                 size: gptSize,
+                ...(useHighQuality ? { quality: "high" } : {}),
               }),
-              signal: AbortSignal.timeout(45_000),
+              signal: AbortSignal.timeout(55_000),
             });
           }
 

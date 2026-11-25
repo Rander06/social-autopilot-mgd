@@ -307,12 +307,49 @@ async function runPostPipeline(params: {
       Boolean(params.allowImageFallback) ||
       (!params.forcePublish && Boolean(secrets.allow_image_ai_fallback));
 
+    // Formata os benefícios como pílulas curtas (máx 4 palavras cada) para que a fonte na arte fique grande e sem erros de ortografia
+    const shortBenefitLabels = (content.beneficios || [])
+      .map((b) =>
+        b
+          .replace(/^[-•*]\s*/, "")
+          .split(/[:(—–-]/)[0]
+          .trim()
+          .split(/\s+/)
+          .slice(0, 4)
+          .join(" ")
+      )
+      .filter(Boolean)
+      .slice(0, 4);
+
     let aiResults: Array<string | null> = [];
     try {
       if (slidesCount === 1) {
+        const priceBadgeText = offerPrice
+          ? `Por apenas ${offerPrice}`
+          : content.subtitulo_arte;
+        const singleStructuredPrompt = `Contexto visual do anúncio: ${basePrompt.slice(
+          0,
+          380
+        )}
+
+TEXTOS EXATOS E ÚNICOS QUE DEVEM SER ESCRITOS NA ARTE (COPIE LETRA POR LETRA E ACENTO POR ACENTO, EM FONTE GRANDE):
+- Título Principal no Topo: "${content.headline_arte}"
+- Destaque de Valor / Subtítulo: "${priceBadgeText}"
+${
+  shortBenefitLabels.length > 0
+    ? `- Cards / Selos de Benefícios (escreva APENAS estes ${shortBenefitLabels.length} títulos curtos em letras grandes, SEM adicionar frases pequenas ou subtítulos embaixo de cada card):\n${shortBenefitLabels
+        .map((b, idx) => `  ${idx + 1}. "${b}"`)
+        .join("\n")}`
+    : ""
+}
+- Selo de Destaque: "${content.destaque_selo}"
+- Botão CTA: "${brand.cta_default}"
+
+IMPORTANTE: NÃO escreva parágrafos longos do briefing dentro da imagem e NÃO coloque frases miúdas de 2 ou 3 linhas dentro dos cards. Escreva SOMENTE os textos curtos entre aspas acima com ortografia 100% perfeita em português do Brasil.`;
+
         const singleUrl = await generateFullCreativeWithAI({
           companyId: params.companyId,
-          promptText: basePrompt,
+          promptText: singleStructuredPrompt,
           aspectRatio,
           preferredImageAI: effectiveImageAI,
           allowFallback: shouldAllowFallback,
@@ -329,7 +366,23 @@ async function runPostPipeline(params: {
         aiResults = [singleUrl];
       } else {
         const firstSlide = content.slides[0];
-        const slide1Prompt = `${basePrompt}\n\nDIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE 1/${slidesCount} — CAPA): Crie a capa usando o gancho "${firstSlide?.title || content.headline_arte}"${firstSlide?.body ? ` e subtítulo curto "${firstSlide.body}"` : ""}. Adicione no canto inferior direito um indicador visual nítido "Arraste →" (${`1/${slidesCount}`}) e um leve elemento gráfico na borda direita sugerindo continuação para o próximo slide. Design full-bleed sem bordas brancas externas.`;
+        const slide1Title = firstSlide?.title || content.headline_arte;
+        const slide1Body = (firstSlide?.body || content.subtitulo_arte)
+          .split(/\s+/)
+          .slice(0, 9)
+          .join(" ");
+        const slide1Prompt = `Contexto visual do anúncio: ${basePrompt.slice(
+          0,
+          350
+        )}
+
+DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE 1/${slidesCount} — CAPA):
+Escreva SOMENTE estes textos curtos na capa (copie letra por letra com ortografia perfeita e letras grandes, sem textos miúdos extras):
+- Tag Superior: "${firstSlide?.badge || content.tema_visual}"
+- Título Principal Grande: "${slide1Title}"
+- Subtítulo Curto: "${slide1Body}"
+- Indicador no Canto Inferior Direito: "Arraste → 1/${slidesCount}"
+Design full-bleed sem bordas brancas externas, com leve elemento gráfico na borda direita sugerindo continuação para o próximo slide.`;
 
         const slide1Url = await generateFullCreativeWithAI({
           companyId: params.companyId,

@@ -4481,6 +4481,22 @@ export default function SaasAppPage() {
                           <button
                             type="button"
                             disabled={studioAction !== "idle" || Boolean(approvingPostId)}
+                            onClick={() =>
+                              handleRunStudio({
+                                previewOnly: true,
+                                useEditedContent: true,
+                              })
+                            }
+                            className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-extrabold text-white shadow-xs hover:bg-indigo-700 disabled:opacity-60"
+                          >
+                            {studioAction === "updating_art"
+                              ? "Recriando Arte com Textos..."
+                              : "Atualizar Arte com Textos Acima"}
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={studioAction !== "idle" || Boolean(approvingPostId)}
                             onClick={handleSaveDraftTextOnly}
                             className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
                           >
