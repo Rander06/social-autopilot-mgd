@@ -109,10 +109,23 @@ async function runPostPipeline(params: {
     throw new Error(quota.reason || "Empresa bloqueada ou cota atingida.");
   }
 
-  const brand = await getBrandSettings(params.companyId);
-  const secrets = await getCompanySecrets(params.companyId);
-
   const topic = params.topic || null;
+  const shouldPickQueuedPhoto =
+    !params.manualPhotoUrl?.trim() &&
+    !params.manualPhotoBase64 &&
+    !params.editedContent?.original_photo_url &&
+    Boolean(topic);
+
+  const [brand, secrets, prefetchedPhoto, prefetchedHeadlines] = await Promise.all([
+    getBrandSettings(params.companyId),
+    getCompanySecrets(params.companyId),
+    shouldPickQueuedPhoto && topic
+      ? pickNextTopicPhoto(params.companyId, topic.id)
+      : Promise.resolve(null),
+    !params.editedContent
+      ? getLastTopicHeadlines(params.companyId, topic?.id, 10)
+      : Promise.resolve([] as string[]),
+  ]);
   const format: PostFormat =
     params.format || topic?.post_format || "SINGLE";
   const slidesCount =
@@ -186,14 +199,12 @@ async function runPostPipeline(params: {
     log(`Foto original enviada ao R2: ${originalPhotoUrl}`);
   } else if (!originalPhotoUrl && params.editedContent?.original_photo_url) {
     originalPhotoUrl = params.editedContent.original_photo_url.trim();
-  } else if (!originalPhotoUrl && topic) {
-    queuedPhoto = await pickNextTopicPhoto(params.companyId, topic.id);
-    if (queuedPhoto) {
-      originalPhotoUrl = queuedPhoto.original_url;
-      log(
-        `Fila de fotos sem repetição selecionou foto ${queuedPhoto.id} (usada ${queuedPhoto.times_used}x).`
-      );
-    }
+  } else if (!originalPhotoUrl && prefetchedPhoto) {
+    queuedPhoto = prefetchedPhoto;
+    originalPhotoUrl = prefetchedPhoto.original_url;
+    log(
+      `Fila de fotos sem repetição selecionou foto ${prefetchedPhoto.id} (usada ${prefetchedPhoto.times_used}x).`
+    );
   }
 
   // 2. Ambientação / Melhoria de Foto com IA (se configurado e plano permitir)
@@ -236,11 +247,7 @@ async function runPostPipeline(params: {
     content = params.editedContent;
     log("Usando conteúdo editado manualmente pelo usuário no Estúdio.");
   } else {
-    previousHeadlines = await getLastTopicHeadlines(
-      params.companyId,
-      topic?.id,
-      10
-    );
+    previousHeadlines = prefetchedHeadlines;
     if (previousHeadlines.length > 0) {
       log(
         `Memória anti-repetição carregou ${previousHeadlines.length} títulos anteriores.`
@@ -547,6 +554,16 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE 1/${slidesCount} — CAPA):
   }
   log(`Upload no R2 concluído (${imageUrls.length} imagem(ns)).`);
 
+  const approvalMode =
+    !params.forcePublish && topic?.approval_mode === "DRAFT"
+      ? "DRAFT"
+      : "AUTO";
+
+  const tikTokTokenPromise =
+    !params.previewOnly && approvalMode !== "DRAFT"
+      ? refreshTikTokTokenIfNeeded(params.companyId)
+      : Promise.resolve(null);
+
   let storyImageUrls: string[] = [];
   if (
     !params.previewOnly &&
@@ -635,11 +652,6 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE 1/${slidesCount} — CAPA):
     };
   }
 
-  const approvalMode =
-    !params.forcePublish && topic?.approval_mode === "DRAFT"
-      ? "DRAFT"
-      : "AUTO";
-
   if (approvalMode === "DRAFT") {
     log(
       "Assunto configurado como Aprovação Manual: salvo como rascunho no Dashboard."
@@ -684,7 +696,7 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE 1/${slidesCount} — CAPA):
 
   // 5. Publicar em paralelo na Meta Graph API v21.0 + TikTok (se ativado)
   const fullCaption = `${content.legenda.trim()}\n\n${content.hashtags.trim()}`;
-  const freshTikTokToken = await refreshTikTokTokenIfNeeded(params.companyId);
+  const freshTikTokToken = await tikTokTokenPromise;
   const siteBaseUrl = (
     process.env.NEXT_PUBLIC_SITE_URL || "https://social.pilotflow.com.br"
   )

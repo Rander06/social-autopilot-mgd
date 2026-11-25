@@ -309,11 +309,8 @@ async function runGeminiText(
   const candidates = Array.from(
     new Set([
       ...(envModel ? [envModel] : []),
-      "gemini-3-flash-preview",
-      "gemini-3.5-flash-lite",
-      "gemini-3.1-flash-lite",
-      "gemini-flash-lite-latest",
-      "gemini-3.8-flash",
+      "gemini-2.5-flash-lite",
+      "gemini-2.5-flash",
     ])
   );
 
@@ -368,7 +365,7 @@ async function runGeminiText(
             temperature: 0.9,
           },
         }),
-        18_000,
+        10_000,
         `Gemini (${model})`
       );
       if (!response.text) throw new Error("Resposta vazia do Gemini.");
@@ -384,7 +381,7 @@ async function runGeminiText(
         }`
       );
       if (i < candidates.length - 1) {
-        await new Promise((r) => setTimeout(r, 600));
+        await new Promise((r) => setTimeout(r, 150));
       }
     }
   }
@@ -398,7 +395,7 @@ async function runOpenAIText(
   prompt: string,
   logs: string[]
 ): Promise<{ raw: Partial<GeneratedContentPayload>; model: string }> {
-  const models = ["gpt-4.1-mini", "gpt-5-mini", "gpt-4o-mini"];
+  const models = ["gpt-4.1-mini", "gpt-4o-mini"];
   let lastError: unknown;
 
   for (const model of models) {
@@ -427,7 +424,7 @@ async function runOpenAIText(
           "Content-Type": "application/json",
         },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.timeout(10_000),
       });
 
       const data = (await res.json()) as {
@@ -937,6 +934,20 @@ export async function applyBrandLogoToImageBuffer(
   }
 }
 
+async function encodeCreativeJpegBuffer(
+  imageBuf: Buffer
+): Promise<{ buffer: Buffer; ext: string; mime: string }> {
+  try {
+    const jpegBuf = await sharp(imageBuf)
+      .flatten({ background: "#0F172A" })
+      .jpeg({ quality: 92 })
+      .toBuffer();
+    return { buffer: jpegBuf, ext: "jpg", mime: "image/jpeg" };
+  } catch {
+    return { buffer: imageBuf, ext: "png", mime: "image/png" };
+  }
+}
+
 export async function generateFullCreativeWithAI(params: {
   companyId: string;
   promptText: string;
@@ -1070,19 +1081,20 @@ export async function generateFullCreativeWithAI(params: {
           };
           const rawOutBuf = res.ok ? await extractOpenAiBuffer(data) : null;
           if (rawOutBuf) {
-            const outBuf = hasOfficialLogo
+            const stampedBuf = hasOfficialLogo
               ? await applyBrandLogoToImageBuffer(
                   rawOutBuf,
                   params.brandLogoUrl,
                   params.brandLogoDarkUrl
                 )
               : rawOutBuf;
+            const { buffer: outBuf, ext, mime } = await encodeCreativeJpegBuffer(stampedBuf);
             const url = await uploadBufferToR2(
               outBuf,
               `companies/${params.companyId}/ai-creatives/${Date.now()}-${Math.random()
                 .toString(36)
-                .slice(2, 6)}.png`,
-              "image/png",
+                .slice(2, 6)}.${ext}`,
+              mime,
               params.r2Config
             );
             appendLog(
@@ -1151,20 +1163,18 @@ export async function generateFullCreativeWithAI(params: {
           const imgPart = resParts.find((p) => p.inlineData?.data);
           if (imgPart?.inlineData?.data) {
             const rawOutBuf = Buffer.from(imgPart.inlineData.data, "base64");
-            const outBuf = hasOfficialLogo
+            const stampedBuf = hasOfficialLogo
               ? await applyBrandLogoToImageBuffer(
                   rawOutBuf,
                   params.brandLogoUrl,
                   params.brandLogoDarkUrl
                 )
               : rawOutBuf;
-            const outMime = hasOfficialLogo
-              ? "image/png"
-              : imgPart.inlineData.mimeType || "image/png";
+            const { buffer: outBuf, ext, mime } = await encodeCreativeJpegBuffer(stampedBuf);
             const url = await uploadBufferToR2(
               outBuf,
-              `companies/${params.companyId}/ai-creatives/${Date.now()}.png`,
-              outMime,
+              `companies/${params.companyId}/ai-creatives/${Date.now()}.${ext}`,
+              mime,
               params.r2Config
             );
             appendLog(
@@ -1439,6 +1449,42 @@ export async function publishToMetaChannels(params: {
   };
   const storyImgUrl = params.storyImageUrls?.[0] || params.imageUrls[0];
 
+  const publishIgMediaWithRetry = async (
+    igId: string,
+    creationId: string
+  ): Promise<{ ok: boolean; id?: string; errorMessage: string }> => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await new Promise((r) => setTimeout(r, 2500));
+      const pubRes = await fetch(
+        `${META_GRAPH_BASE_URL}/${igId}/media_publish`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            creation_id: creationId,
+            access_token: token,
+          }),
+        }
+      );
+      const pubData = (await pubRes.json()) as {
+        id?: string;
+        error?: { message?: string; code?: number };
+      };
+      if (pubRes.ok && pubData.id) {
+        return { ok: true, id: pubData.id, errorMessage: "" };
+      }
+      const errMsg = pubData.error?.message || pubRes.statusText;
+      const shouldRetry =
+        attempt === 0 &&
+        (pubData.error?.code === 9007 ||
+          /9007|not ready|not available/i.test(errMsg));
+      if (!shouldRetry) {
+        return { ok: false, errorMessage: errMsg };
+      }
+    }
+    return { ok: false, errorMessage: "Meta IG media_publish timeout" };
+  };
+
   await Promise.all([
     // 1. INSTAGRAM BUSINESS (FEED)
     (async () => {
@@ -1477,33 +1523,15 @@ export async function publishToMetaChannels(params: {
 
           appendLog(
             params.logs,
-            `Meta IG: Container ${mediaData.id} criado. Aguardando 4s...`
+            `Meta IG: Container ${mediaData.id} criado. Publicando...`
           );
-          await new Promise((r) => setTimeout(r, 4000));
-
-          const pubRes = await fetch(
-            `${META_GRAPH_BASE_URL}/${igId}/media_publish`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                creation_id: mediaData.id,
-                access_token: token,
-              }),
-            }
-          );
-          const pubData = (await pubRes.json()) as {
-            id?: string;
-            error?: { message?: string };
-          };
-          if (!pubRes.ok || !pubData.id) {
+          const pubResult = await publishIgMediaWithRetry(igId, mediaData.id);
+          if (!pubResult.ok || !pubResult.id) {
             throw new Error(
-              `Meta IG /media_publish falhou: ${
-                pubData.error?.message || pubRes.statusText
-              }`
+              `Meta IG /media_publish falhou: ${pubResult.errorMessage}`
             );
           }
-          instagramPostId = pubData.id;
+          instagramPostId = pubResult.id;
           appendLog(
             params.logs,
             `Meta IG: Publicado com sucesso (ID ${instagramPostId}).`
@@ -1566,33 +1594,15 @@ export async function publishToMetaChannels(params: {
 
           appendLog(
             params.logs,
-            `Meta IG Carrossel: Container ${carData.id} criado. Aguardando 4s...`
+            `Meta IG Carrossel: Container ${carData.id} criado. Publicando...`
           );
-          await new Promise((r) => setTimeout(r, 4000));
-
-          const pubRes = await fetch(
-            `${META_GRAPH_BASE_URL}/${igId}/media_publish`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                creation_id: carData.id,
-                access_token: token,
-              }),
-            }
-          );
-          const pubData = (await pubRes.json()) as {
-            id?: string;
-            error?: { message?: string };
-          };
-          if (!pubRes.ok || !pubData.id) {
+          const pubResult = await publishIgMediaWithRetry(igId, carData.id);
+          if (!pubResult.ok || !pubResult.id) {
             throw new Error(
-              `Meta IG /media_publish carrossel falhou: ${
-                pubData.error?.message || pubRes.statusText
-              }`
+              `Meta IG /media_publish carrossel falhou: ${pubResult.errorMessage}`
             );
           }
-          instagramPostId = pubData.id;
+          instagramPostId = pubResult.id;
           appendLog(
             params.logs,
             `Meta IG Carrossel: Publicado com sucesso (ID ${instagramPostId}).`
@@ -1632,33 +1642,16 @@ export async function publishToMetaChannels(params: {
           );
           return;
         }
-        await new Promise((r) => setTimeout(r, 4000));
-        const stPubRes = await fetch(
-          `${META_GRAPH_BASE_URL}/${igId}/media_publish`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              creation_id: stMediaData.id,
-              access_token: token,
-            }),
-          }
-        );
-        const stPubData = (await stPubRes.json()) as {
-          id?: string;
-          error?: { message?: string };
-        };
-        if (stPubRes.ok && stPubData.id) {
+        const stPubResult = await publishIgMediaWithRetry(igId, stMediaData.id);
+        if (stPubResult.ok && stPubResult.id) {
           appendLog(
             params.logs,
-            `Meta IG Stories: Publicado com sucesso (ID ${stPubData.id}).`
+            `Meta IG Stories: Publicado com sucesso (ID ${stPubResult.id}).`
           );
         } else {
           appendLog(
             params.logs,
-            `Meta IG Stories aviso: ${
-              stPubData.error?.message || stPubRes.statusText
-            }`
+            `Meta IG Stories aviso: ${stPubResult.errorMessage}`
           );
         }
       } catch (err) {
