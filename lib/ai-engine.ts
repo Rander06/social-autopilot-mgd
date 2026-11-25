@@ -951,10 +951,11 @@ export async function generateFullCreativeWithAI(params: {
   const hasOfficialLogo = Boolean(
     params.brandLogoUrl?.trim() || params.brandLogoDarkUrl?.trim()
   );
-  const orthographyGuard = `REGRAS ESTRITAS DE ORTOGRAFIA EM PORTUGUÊS-BR (ZERO ERROS DE ESCRITA):
+  const orthographyGuard = `REGRAS ESTRITAS DE ORTOGRAFIA E ENQUADRAMENTO EM PORTUGUÊS-BR:
 1. Escreva APENAS os textos curtos solicitados entre aspas no prompt, copiando EXATAMENTE letra por letra e acento por acento (Ç, Ã, Õ, Á, É, Í, Ó, Ú, Â, Ê).
-2. PROIBIDO adicionar subtítulos miúdos, frases explicativas pequenas ou linhas extras dentro dos cards/caixas: use SOMENTE letras GRANDES, grossas (Sans-Serif bold), espaçadas e de altíssimo contraste (máximo 2 a 4 palavras por card).
-3. NUNCA invente palavras extras fora das aspas.`;
+2. MARGEM DE SEGURANÇA OBRIGATÓRIA NO TOPO E LATERAIS (NUNCA CORTE TEXTOS): deixe uma margem de respiro livre de pelo menos 9% (~90px) entre a borda superior/laterais da imagem e o início de qualquer texto. NUNCA encoste nem corte o topo das letras do título principal na borda superior (deixe o fundo/cenário visível acima do título) e dimensione o título com folga lateral.
+3. PROIBIDO adicionar subtítulos miúdos ou frases explicativas pequenas dentro dos cards/caixas: use tipografia nítida e bem dimensionada (máximo 2 a 4 palavras por card, cabendo inteiramente dentro de cada card com folga).
+4. NUNCA invente palavras extras fora das aspas.`;
   const cleanedPrompt = hasOfficialLogo
     ? `${baseCleanedPrompt}\n\n${orthographyGuard}\n\nREGRA OBRIGATÓRIA DE ZONA RESERVADA PARA LOGOMARCA (CANTO INFERIOR ESQUERDO): NÃO desenhe nenhum logotipo, ícone de marca ou assinatura de empresa na arte. Deixe o CANTO INFERIOR ESQUERDO (área de ~240x95px na base esquerda) 100% LIVRE de qualquer texto, título, selo, botão CTA ou elemento importante (mantenha apenas o fundo limpo/contínuo da arte nessa área), e posicione botões de CTA ou setas de carrossel no centro ou à direita, pois a logomarca oficial PNG sem fundo será aplicada no canto inferior esquerdo após a geração.`
     : `${baseCleanedPrompt}\n\n${orthographyGuard}\n\nREGRA DE ASSINATURA: Não invente símbolos ou ícones de logotipo falsos; se incluir assinatura da empresa no rodapé, escreva apenas o nome tipográfico limpo.`;

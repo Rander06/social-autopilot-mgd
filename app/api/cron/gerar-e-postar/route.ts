@@ -332,12 +332,12 @@ async function runPostPipeline(params: {
           380
         )}
 
-TEXTOS EXATOS E ÚNICOS QUE DEVEM SER ESCRITOS NA ARTE (COPIE LETRA POR LETRA E ACENTO POR ACENTO, EM FONTE GRANDE):
-- Título Principal no Topo: "${content.headline_arte}"
+TEXTOS EXATOS E ÚNICOS QUE DEVEM SER ESCRITOS NA ARTE (COPIE LETRA POR LETRA E ACENTO POR ACENTO, COM MARGEM DE RESPIRO NO TOPO E LATERAIS PARA NÃO CORTAR NENHUMA LETRA):
+- Título Principal (centralizado abaixo do topo, com margem livre de pelo menos 90px acima das letras para nunca cortar o topo do texto): "${content.headline_arte}"
 - Destaque de Valor / Subtítulo: "${priceBadgeText}"
 ${
   shortBenefitLabels.length > 0
-    ? `- Cards / Selos de Benefícios (escreva APENAS estes ${shortBenefitLabels.length} títulos curtos em letras grandes, SEM adicionar frases pequenas ou subtítulos embaixo de cada card):\n${shortBenefitLabels
+    ? `- Cards / Selos de Benefícios (escreva APENAS estes ${shortBenefitLabels.length} títulos curtos e bem enquadrados dentro dos cards, SEM adicionar frases pequenas embaixo de cada card):\n${shortBenefitLabels
         .map((b, idx) => `  ${idx + 1}. "${b}"`)
         .join("\n")}`
     : ""
@@ -345,7 +345,7 @@ ${
 - Selo de Destaque: "${content.destaque_selo}"
 - Botão CTA: "${brand.cta_default}"
 
-IMPORTANTE: NÃO escreva parágrafos longos do briefing dentro da imagem e NÃO coloque frases miúdas de 2 ou 3 linhas dentro dos cards. Escreva SOMENTE os textos curtos entre aspas acima com ortografia 100% perfeita em português do Brasil.`;
+IMPORTANTE: Mantenha todo o texto 100% dentro de uma área segura central (com pelo menos 8% a 10% de margem livre no topo, base e laterais da imagem para não cortar nenhuma letra). Escreva SOMENTE os textos curtos entre aspas acima com ortografia 100% perfeita em português do Brasil.`;
 
         const singleUrl = await generateFullCreativeWithAI({
           companyId: params.companyId,
@@ -377,12 +377,12 @@ IMPORTANTE: NÃO escreva parágrafos longos do briefing dentro da imagem e NÃO 
         )}
 
 DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE 1/${slidesCount} — CAPA):
-Escreva SOMENTE estes textos curtos na capa (copie letra por letra com ortografia perfeita e letras grandes, sem textos miúdos extras):
+Escreva SOMENTE estes textos curtos na capa (copie letra por letra com ortografia perfeita e mantenha margem livre de pelo menos 90px no topo e laterais para nunca cortar nenhuma letra):
 - Tag Superior: "${firstSlide?.badge || content.tema_visual}"
-- Título Principal Grande: "${slide1Title}"
+- Título Principal (bem enquadrado com respiro acima e nas laterais): "${slide1Title}"
 - Subtítulo Curto: "${slide1Body}"
 - Indicador no Canto Inferior Direito: "Arraste → 1/${slidesCount}"
-Design full-bleed sem bordas brancas externas, com leve elemento gráfico na borda direita sugerindo continuação para o próximo slide.`;
+Design full-bleed ocupando todo o fundo, mas com margem interna segura para todos os textos.`;
 
         const slide1Url = await generateFullCreativeWithAI({
           companyId: params.companyId,
