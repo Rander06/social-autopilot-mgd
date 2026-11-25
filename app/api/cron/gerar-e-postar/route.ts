@@ -41,15 +41,22 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-function getSaoPauloSlotAndDow(): { slot: string; dow: number } {
-  const now = new Date();
-  const brStr = now.toLocaleString("en-US", {
+function getSaoPauloSlotAndDow(now = new Date()): { slot: string; dow: number } {
+  // Adiciona 5 minutos para tolerar pequenos adiantamentos do pg_cron (ex.: 11:59:58)
+  const adjusted = new Date(now.getTime() + 5 * 60 * 1000);
+  const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Sao_Paulo",
-    hour12: false,
     weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
-  });
+    hourCycle: "h23",
+  }).formatToParts(adjusted);
+
+  const partMap: Record<string, string> = {};
+  for (const p of parts) {
+    if (p.type !== "literal") partMap[p.type] = p.value;
+  }
+
   const dowMap: Record<string, number> = {
     Sun: 0,
     Mon: 1,
@@ -59,11 +66,11 @@ function getSaoPauloSlotAndDow(): { slot: string; dow: number } {
     Fri: 5,
     Sat: 6,
   };
-  const parts = brStr.split(", ");
-  const dow = dowMap[parts[0]] ?? now.getUTCDay();
-  const [hhStr, mmStr] = (parts[1] || "10:00").split(":");
-  const mm = Number(mmStr) >= 30 ? "30" : "00";
-  return { slot: `${hhStr.padStart(2, "0")}:${mm}`, dow };
+
+  const dow = dowMap[partMap.weekday || ""] ?? adjusted.getUTCDay();
+  const hh = (partMap.hour || "10").padStart(2, "0");
+  const mm = Number(partMap.minute || "0") >= 30 ? "30" : "00";
+  return { slot: `${hh}:${mm}`, dow };
 }
 
 async function runPostPipeline(params: {
@@ -800,11 +807,23 @@ export async function GET(request: NextRequest) {
           });
           results.push({ company: item.company.name, topic: item.topic.title, ok: true, result: r });
         } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          await appendAuditLog({
+            company_id: item.company.id,
+            action: "CRON_POST_ERROR",
+            details_json: {
+              topic_id: item.topic.id,
+              topic_title: item.topic.title,
+              slot: targetSlot,
+              dow: currentBr.dow,
+              error: errMsg,
+            },
+          }).catch(() => {});
           results.push({
             company: item.company.name,
             topic: item.topic.title,
             ok: false,
-            error: err instanceof Error ? err.message : String(err),
+            error: errMsg,
           });
         }
       }

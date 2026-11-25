@@ -202,7 +202,7 @@ alter default privileges in schema public grant all on tables to service_role;
 -- security definer
 -- as $$
 -- declare
---   br_now timestamp := timezone('America/Sao_Paulo', now());
+--   br_now timestamp := timezone('America/Sao_Paulo', now()) + interval '5 minutes';
 --   br_dow integer := extract(dow from br_now)::integer;
 --   br_slot text := to_char(date_trunc('hour', br_now) +
 --     case when extract(minute from br_now) >= 30 then interval '30 minutes' else interval '0 minutes' end,
@@ -216,7 +216,7 @@ alter default privileges in schema public grant all on tables to service_role;
 --     and c.status in ('ACTIVE', 'TRIAL')
 --     and c.expires_at > now()
 --     and br_dow = any(t.schedule_days)
---     and br_slot = any(string_to_array(t.schedule_time, ','));
+--     and br_slot = any(string_to_array(replace(t.schedule_time, ' ', ''), ','));
 --
 --   if has_due > 0 then
 --     perform net.http_get(
