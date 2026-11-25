@@ -193,6 +193,11 @@ function buildCopywritingPrompt(params: {
         .join("\n")}`
       : "";
 
+  const angleRotationHint =
+    params.previousHeadlines.length > 0
+      ? `\nROTAÇÃO DE ÂNGULO (OBRIGATÓRIO): Escolha UM ângulo/diferencial diferente dos últimos posts (por exemplo: alternar entre 1- Fim dos curiosos/simulador + iCal Airbnb/Booking, 2- PIX direto na conta sem intermediários, 3- Atendimento IA 24h no WhatsApp + contratos PDF automáticos, 4- Controle de aprovação + cronograma de limpeza e financeiro, 5- Site próprio 100% editável pelo dono) para cada post ter chamada e benefícios inéditos.`
+      : "";
+
   return `Você é o estrategista de marketing e copywriter sênior escrevendo para a empresa "${params.companyName}".
 
 ASSUNTO DO POST: ${params.topicTitle}
@@ -206,22 +211,22 @@ FORMATO SOLICITADO: ${params.format === "CAROUSEL"
       ? `CARROSSEL com EXATAMENTE ${params.slidesCount} slides`
       : "IMAGEM ÚNICA (1 slide principal)"
     }
-${antiRepeatBlock}
+${antiRepeatBlock}${angleRotationHint}
 REGRAS ESTRITAS:
 0. Se as instruções acima citarem explicitamente um título entre aspas para o topo da arte (ex: "CONTROLE TUDO + ATENDIMENTO COM IA"), use EXATAMENTE esse título em "headline_arte".
 1. NUNCA use emojis nos textos das artes (tema_visual, headline_arte, subtitulo_arte, dor_vs_solucao, destaque_selo, beneficios, slides). Use emojis APENAS no campo "legenda".
-2. tema_visual: Frase curta (2 a 3 palavras) para badge no topo da arte.
-3. headline_arte: Máximo de 6 palavras, forte, publicitária e inédita (ortografia 100% perfeita em português com todos os acentos corretos).
-4. subtitulo_arte: Frase curta (máximo 8 palavras) reforçando o benefício ou preço (${params.offerPrice || ""}).
-5. dor_vs_solucao: Frase curta (até 10 palavras) atacando a dor do cliente e mostrando a solução.
-6. destaque_selo: Selo curto em caixa alta de 2 a 4 palavras (ex: "PIX DIRETO NA CONTA" ou "0% COMISSÃO • 100% SEU").
-7. beneficios: Array com exatamente 4 itens MUITO CURTOS (apenas 2 a 4 palavras cada, ex: "Simulador de Orçamento", "Agenda Airbnb e Booking", "Contratos Digitais em PDF", "Atendimento IA 24h") escritos com ortografia e acentuação 100% perfeitas em português (NUNCA escreva frases longas aqui, pois serão renderizados em letras grandes nos cards da imagem).
+2. tema_visual: Frase curta (2 a 4 palavras) para badge no topo da arte.
+3. headline_arte: De 5 a 8 palavras, forte, publicitária e inédita (ortografia 100% perfeita em português com todos os acentos corretos).
+4. subtitulo_arte: Frase informativa de 8 a 12 palavras explicando a proposta de valor e reforçando o benefício ou preço (${params.offerPrice || ""}).
+5. dor_vs_solucao: Frase persuasiva de 10 a 14 palavras contrastando a dor do cliente com a solução prática.
+6. destaque_selo: Selo em caixa alta de 3 a 6 palavras (ex: "PIX DIRETO NA CONTA • SEM INTERMEDIÁRIOS" ou "0% COMISSÃO • 100% SEU").
+7. beneficios: Array com exatamente 4 diferenciais informativos e completos de **5 a 7 palavras cada** (ex: "Simulador de orçamento em tempo real", "Calendário integrado Airbnb e Booking", "Contrato e recibo digital em PDF", "Atendimento com IA 24h no WhatsApp") escritos com ortografia e acentuação 100% perfeitas em português (não corte para 2 palavras genéricas e não escreva parágrafos longos de várias frases).
 8. slides: Array com EXATAMENTE ${params.format === "CAROUSEL" ? params.slidesCount : 1
     } objetos, cada um contendo:
    - badge (ex: "PASSO 01", "DESTAQUE", "OFERTA")
-   - title (título curto do slide, máx. 6 palavras)
-   - body (frase curta e direta, máx. 9 palavras, para ficar em fonte grande e nítida na arte)
-   - highlight (opcional, dado ou preço curto de até 4 palavras)${
+   - title (título curto do slide, máx. 7 palavras)
+   - body (frase informativa e clara de 10 a 14 palavras para ficar legível e nítida na arte)
+   - highlight (opcional, dado ou preço curto de até 5 palavras)${
      params.format === "CAROUSEL"
        ? `
    IMPORTANTE PARA CARROSSEL CONTÍNUO: Escreva os ${params.slidesCount} slides como uma HISTÓRIA EM SEQUÊNCIA para a pessoa ir arrastando e lendo:
@@ -952,10 +957,9 @@ export async function generateFullCreativeWithAI(params: {
     params.brandLogoUrl?.trim() || params.brandLogoDarkUrl?.trim()
   );
   const orthographyGuard = `REGRAS ESTRITAS DE ORTOGRAFIA E ENQUADRAMENTO EM PORTUGUÊS-BR:
-1. Escreva APENAS os textos curtos solicitados entre aspas no prompt, copiando EXATAMENTE letra por letra e acento por acento (Ç, Ã, Õ, Á, É, Í, Ó, Ú, Â, Ê).
+1. Escreva APENAS os textos solicitados entre aspas no prompt, copiando EXATAMENTE letra por letra e acento por acento (Ç, Ã, Õ, Á, É, Í, Ó, Ú, Â, Ê).
 2. MARGEM DE SEGURANÇA OBRIGATÓRIA NO TOPO E LATERAIS (NUNCA CORTE TEXTOS): deixe uma margem de respiro livre de pelo menos 9% (~90px) entre a borda superior/laterais da imagem e o início de qualquer texto. NUNCA encoste nem corte o topo das letras do título principal na borda superior (deixe o fundo/cenário visível acima do título) e dimensione o título com folga lateral.
-3. PROIBIDO adicionar subtítulos miúdos ou frases explicativas pequenas dentro dos cards/caixas: use tipografia nítida e bem dimensionada (máximo 2 a 4 palavras por card, cabendo inteiramente dentro de cada card com folga).
-4. NUNCA invente palavras extras fora das aspas.`;
+3. Renderize TODOS os textos entre aspas com tipografia limpa, legível e bem dimensionada (sem letras espremidas em caixinhas minúsculas), com espaçamento generoso entre linhas, cabendo inteiramente dentro de cada faixa ou card sem inventar texto fora das aspas.`;
   const cleanedPrompt = hasOfficialLogo
     ? `${baseCleanedPrompt}\n\n${orthographyGuard}\n\nREGRA OBRIGATÓRIA DE ZONA RESERVADA PARA LOGOMARCA (CANTO INFERIOR ESQUERDO): NÃO desenhe nenhum logotipo, ícone de marca ou assinatura de empresa na arte. Deixe o CANTO INFERIOR ESQUERDO (área de ~240x95px na base esquerda) 100% LIVRE de qualquer texto, título, selo, botão CTA ou elemento importante (mantenha apenas o fundo limpo/contínuo da arte nessa área), e posicione botões de CTA ou setas de carrossel no centro ou à direita, pois a logomarca oficial PNG sem fundo será aplicada no canto inferior esquerdo após a geração.`
     : `${baseCleanedPrompt}\n\n${orthographyGuard}\n\nREGRA DE ASSINATURA: Não invente símbolos ou ícones de logotipo falsos; se incluir assinatura da empresa no rodapé, escreva apenas o nome tipográfico limpo.`;
