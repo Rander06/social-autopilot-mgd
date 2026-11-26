@@ -207,9 +207,9 @@ function parseScheduleTimesList(
     Array.isArray(scheduleTimes) && scheduleTimes.length > 0
       ? scheduleTimes
       : String(scheduleTime || "")
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
   const valid = Array.from(
     new Set(raw.filter((s) => /^\d{2}:\d{2}$/.test(s)))
   ).sort();
@@ -511,22 +511,20 @@ function PromptGuidePanel({
         <button
           type="button"
           onClick={() => setGuideTab("template")}
-          className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
-            guideTab === "template"
+          className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${guideTab === "template"
               ? "bg-indigo-600 text-white shadow-2xs"
               : "border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-100/60"
-          }`}
+            }`}
         >
           1. Preencher aqui
         </button>
         <button
           type="button"
           onClick={() => setGuideTab("external_ai")}
-          className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
-            guideTab === "external_ai"
+          className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${guideTab === "external_ai"
               ? "bg-indigo-600 text-white shadow-2xs"
               : "border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-100/60"
-          }`}
+            }`}
         >
           2. Criar no ChatGPT / Gemini (com foto)
         </button>
@@ -719,8 +717,8 @@ function PublishTargetsSelector({
             {hasFeed && hasVertical
               ? "1080×1080 (Feed) + 1080×1920 (Stories/TikTok)"
               : hasVertical
-              ? "1080×1920 (9:16 Vertical Nativo)"
-              : "1080×1080 (1:1 Feed Padrão)"}
+                ? "1080×1920 (9:16 Vertical Nativo)"
+                : "1080×1080 (1:1 Feed Padrão)"}
           </span>
         )}
       </div>
@@ -750,11 +748,10 @@ function PublishTargetsSelector({
           {/* INSTAGRAM (só exibe se tiver token Meta + IG_USER_ID) */}
           {availableNetworks.instagram && (
             <div
-              className={`overflow-hidden rounded-xl border p-3 transition ${
-                igActive
+              className={`overflow-hidden rounded-xl border p-3 transition ${igActive
                   ? "border-indigo-300 bg-white shadow-xs"
                   : "border-slate-200 bg-white/70 opacity-80"
-              }`}
+                }`}
             >
               <label className="flex cursor-pointer items-center justify-between gap-2 border-b border-slate-100 pb-2">
                 <span className="flex items-center gap-2 text-xs font-extrabold text-slate-900">
@@ -784,22 +781,20 @@ function PublishTargetsSelector({
                   Instagram
                 </span>
                 <span
-                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                    igActive
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${igActive
                       ? "bg-emerald-100 text-emerald-800"
                       : "bg-slate-200 text-slate-600"
-                  }`}
+                    }`}
                 >
                   {igActive ? "Ativado" : "Desativado"}
                 </span>
               </label>
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <label
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
-                    value.ig_feed
+                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${value.ig_feed
                       ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
                       : "border-slate-200 bg-slate-50/60 text-slate-600"
-                  }`}
+                    }`}
                 >
                   <input
                     type="checkbox"
@@ -814,11 +809,10 @@ function PublishTargetsSelector({
                 </label>
 
                 <label
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
-                    value.ig_stories
+                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${value.ig_stories
                       ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
                       : "border-slate-200 bg-slate-50/60 text-slate-600"
-                  }`}
+                    }`}
                 >
                   <input
                     type="checkbox"
@@ -854,11 +848,10 @@ function PublishTargetsSelector({
           {/* FACEBOOK (só exibe se tiver token Meta + FB_PAGE_ID) */}
           {availableNetworks.facebook && (
             <div
-              className={`overflow-hidden rounded-xl border p-3 transition ${
-                fbActive
+              className={`overflow-hidden rounded-xl border p-3 transition ${fbActive
                   ? "border-indigo-300 bg-white shadow-xs"
                   : "border-slate-200 bg-white/70 opacity-80"
-              }`}
+                }`}
             >
               <label className="flex cursor-pointer items-center justify-between gap-2 border-b border-slate-100 pb-2">
                 <span className="flex items-center gap-2 text-xs font-extrabold text-slate-900">
@@ -888,22 +881,20 @@ function PublishTargetsSelector({
                   Facebook
                 </span>
                 <span
-                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                    fbActive
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${fbActive
                       ? "bg-emerald-100 text-emerald-800"
                       : "bg-slate-200 text-slate-600"
-                  }`}
+                    }`}
                 >
                   {fbActive ? "Ativado" : "Desativado"}
                 </span>
               </label>
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <label
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
-                    value.fb_feed
+                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${value.fb_feed
                       ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
                       : "border-slate-200 bg-slate-50/60 text-slate-600"
-                  }`}
+                    }`}
                 >
                   <input
                     type="checkbox"
@@ -918,11 +909,10 @@ function PublishTargetsSelector({
                 </label>
 
                 <label
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
-                    value.fb_stories
+                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${value.fb_stories
                       ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
                       : "border-slate-200 bg-slate-50/60 text-slate-600"
-                  }`}
+                    }`}
                 >
                   <input
                     type="checkbox"
@@ -942,11 +932,10 @@ function PublishTargetsSelector({
           {/* TIKTOK (só exibe se tiver token TikTok ativo em Integrações) */}
           {availableNetworks.tiktok && (
             <div
-              className={`overflow-hidden rounded-xl border p-3 transition ${
-                ttActive
+              className={`overflow-hidden rounded-xl border p-3 transition ${ttActive
                   ? "border-indigo-300 bg-white shadow-xs"
                   : "border-slate-200 bg-white/70 opacity-80"
-              }`}
+                }`}
             >
               <label className="flex cursor-pointer items-center justify-between gap-2 border-b border-slate-100 pb-2">
                 <span className="flex items-center gap-2 text-xs font-extrabold text-slate-900">
@@ -959,22 +948,20 @@ function PublishTargetsSelector({
                   TikTok
                 </span>
                 <span
-                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                    ttActive
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${ttActive
                       ? "bg-emerald-100 text-emerald-800"
                       : "bg-slate-200 text-slate-600"
-                  }`}
+                    }`}
                 >
                   {ttActive ? "Ativado" : "Desativado"}
                 </span>
               </label>
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <label
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
-                    value.tiktok_feed
+                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${value.tiktok_feed
                       ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
                       : "border-slate-200 bg-slate-50/60 text-slate-600"
-                  }`}
+                    }`}
                 >
                   <input
                     type="checkbox"
@@ -2047,8 +2034,8 @@ export default function SaasAppPage() {
     const actionKind = !options.previewOnly
       ? "publishing"
       : options.useEditedContent
-      ? "updating_art"
-      : "generating_preview";
+        ? "updating_art"
+        : "generating_preview";
     setStudioAction(actionKind);
     setGlobalNotice(null);
     setStudioCreditAlert(null);
@@ -2174,8 +2161,8 @@ export default function SaasAppPage() {
         text: isAbort
           ? "A geração excedeu o limite de 65s no servidor. Tente novamente (se houver foto pesada, ela já foi comprimida)."
           : err instanceof Error
-          ? err.message
-          : "Erro no Estúdio.",
+            ? err.message
+            : "Erro no Estúdio.",
       });
     } finally {
       setStudioAction("idle");
@@ -2213,9 +2200,9 @@ export default function SaasAppPage() {
     setStudioPrompt(
       matchedTopic
         ? mergePromptWithLegacyBenefits(
-            matchedTopic.prompt_instructions,
-            matchedTopic.benefits_json
-          )
+          matchedTopic.prompt_instructions,
+          matchedTopic.benefits_json
+        )
         : ""
     );
     setStudioPrice(matchedTopic?.offer_price || "");
@@ -2379,11 +2366,11 @@ export default function SaasAppPage() {
     try {
       const cleanEdited = customPreview
         ? {
-            ...customPreview.post,
-            beneficios: (customPreview.post.beneficios || [])
-              .map((b) => b.trim())
-              .filter(Boolean),
-          }
+          ...customPreview.post,
+          beneficios: (customPreview.post.beneficios || [])
+            .map((b) => b.trim())
+            .filter(Boolean),
+        }
         : undefined;
       const res = await fetch("/api/saas/state", {
         method: "POST",
@@ -2397,9 +2384,9 @@ export default function SaasAppPage() {
           storyImageUrls: customPreview?.storyImageUrls,
           publishToStories: customPreview
             ? Boolean(
-                studioPublishTargets.ig_stories ||
-                  studioPublishTargets.fb_stories
-              )
+              studioPublishTargets.ig_stories ||
+              studioPublishTargets.fb_stories
+            )
             : undefined,
           publishTargets: customPreview ? studioPublishTargets : undefined,
         }),
@@ -2669,11 +2656,10 @@ export default function SaasAppPage() {
                   setLoginError(null);
                   setAuthFeedback(null);
                 }}
-                className={`rounded-lg py-2 text-xs font-bold transition ${
-                  authScreen === key
+                className={`rounded-lg py-2 text-xs font-bold transition ${authScreen === key
                     ? "bg-white text-indigo-700 shadow-sm"
                     : "text-slate-600 hover:text-slate-900"
-                }`}
+                  }`}
               >
                 {label}
               </button>
@@ -2699,22 +2685,20 @@ export default function SaasAppPage() {
                 <button
                   type="button"
                   onClick={() => setLoginMode("credentials")}
-                  className={`rounded-lg py-1.5 text-[11px] font-bold transition ${
-                    loginMode === "credentials"
+                  className={`rounded-lg py-1.5 text-[11px] font-bold transition ${loginMode === "credentials"
                       ? "bg-white text-indigo-700 shadow-xs"
                       : "text-slate-600"
-                  }`}
+                    }`}
                 >
                   E-mail e Senha
                 </button>
                 <button
                   type="button"
                   onClick={() => setLoginMode("cron")}
-                  className={`rounded-lg py-1.5 text-[11px] font-bold transition ${
-                    loginMode === "cron"
+                  className={`rounded-lg py-1.5 text-[11px] font-bold transition ${loginMode === "cron"
                       ? "bg-white text-indigo-700 shadow-xs"
                       : "text-slate-600"
-                  }`}
+                    }`}
                 >
                   Token CRON_SECRET
                 </button>
@@ -2856,7 +2840,7 @@ export default function SaasAppPage() {
                 type="password"
                 value={regAdminSecret}
                 onChange={(e) => setRegAdminSecret(e.target.value)}
-                placeholder="Código Super Admin (opcional — só p/ agência)"
+                placeholder="Insira o Código Super Admin — só p/ Agência Parceira."
                 className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-xs outline-none focus:border-indigo-500 focus:bg-white"
               />
               <button
@@ -2876,22 +2860,20 @@ export default function SaasAppPage() {
                 <button
                   type="button"
                   onClick={() => setRecoveryMethod("email")}
-                  className={`rounded-lg py-1.5 text-[11px] font-bold transition ${
-                    recoveryMethod === "email"
+                  className={`rounded-lg py-1.5 text-[11px] font-bold transition ${recoveryMethod === "email"
                       ? "bg-white text-indigo-700 shadow-xs"
                       : "text-slate-600"
-                  }`}
+                    }`}
                 >
                   Enviar Link p/ E-mail
                 </button>
                 <button
                   type="button"
                   onClick={() => setRecoveryMethod("reset")}
-                  className={`rounded-lg py-1.5 text-[11px] font-bold transition ${
-                    recoveryMethod === "reset"
+                  className={`rounded-lg py-1.5 text-[11px] font-bold transition ${recoveryMethod === "reset"
                       ? "bg-white text-indigo-700 shadow-xs"
                       : "text-slate-600"
-                  }`}
+                    }`}
                 >
                   Definir Nova Senha
                 </button>
@@ -3040,11 +3022,10 @@ export default function SaasAppPage() {
                   Social PilotFlow SaaS
                 </span>
                 <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-                    databaseMode === "supabase"
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${databaseMode === "supabase"
                       ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
                       : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
-                  }`}
+                    }`}
                 >
                   {databaseMode === "supabase"
                     ? "Supabase Ativo"
@@ -3081,22 +3062,20 @@ export default function SaasAppPage() {
                   <button
                     type="button"
                     onClick={() => setViewScope("client")}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                      viewScope === "client"
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${viewScope === "client"
                         ? "bg-white text-indigo-700 shadow-sm"
                         : "text-slate-600"
-                    }`}
+                      }`}
                   >
                     Painel da Empresa
                   </button>
                   <button
                     type="button"
                     onClick={() => setViewScope("admin")}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                      viewScope === "admin"
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${viewScope === "admin"
                         ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-sm"
                         : "text-slate-600"
-                    }`}
+                      }`}
                   >
                     Super Admin
                   </button>
@@ -3130,11 +3109,10 @@ export default function SaasAppPage() {
 
         {globalNotice && (
           <div
-            className={`flex items-center justify-between rounded-2xl border px-4 py-3 text-sm font-semibold shadow-sm ${
-              globalNotice.type === "success"
+            className={`flex items-center justify-between rounded-2xl border px-4 py-3 text-sm font-semibold shadow-sm ${globalNotice.type === "success"
                 ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                 : "border-rose-200 bg-rose-50 text-rose-800"
-            }`}
+              }`}
           >
             <span>{globalNotice.text}</span>
             <button
@@ -3164,11 +3142,10 @@ export default function SaasAppPage() {
                   key={tabKey}
                   type="button"
                   onClick={() => setAdminTab(tabKey)}
-                  className={`rounded-xl px-4 py-2.5 text-xs font-bold transition ${
-                    adminTab === tabKey
+                  className={`rounded-xl px-4 py-2.5 text-xs font-bold transition ${adminTab === tabKey
                       ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md shadow-indigo-500/20"
                       : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                  }`}
+                    }`}
                 >
                   {label}
                   {tabKey === "tips" && openAdminTipsCount > 0 && (
@@ -3265,13 +3242,12 @@ export default function SaasAppPage() {
                             </td>
                             <td className="py-3">
                               <span
-                                className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                  c.status === "ACTIVE"
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${c.status === "ACTIVE"
                                     ? "bg-emerald-50 text-emerald-700"
                                     : c.status === "TRIAL"
-                                    ? "bg-cyan-50 text-cyan-700"
-                                    : "bg-rose-50 text-rose-700"
-                                }`}
+                                      ? "bg-cyan-50 text-cyan-700"
+                                      : "bg-rose-50 text-rose-700"
+                                  }`}
                               >
                                 {c.status}
                               </span>
@@ -3386,8 +3362,8 @@ export default function SaasAppPage() {
                     {savingAdminComp
                       ? "Salvando..."
                       : admCompId
-                      ? "Atualizar Empresa"
-                      : "Criar Empresa & Login"}
+                        ? "Atualizar Empresa"
+                        : "Criar Empresa & Login"}
                   </button>
                 </form>
 
@@ -3407,13 +3383,12 @@ export default function SaasAppPage() {
                               {c.name}
                             </span>
                             <span
-                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                c.status === "ACTIVE"
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${c.status === "ACTIVE"
                                   ? "bg-emerald-100 text-emerald-800"
                                   : c.status === "TRIAL"
-                                  ? "bg-cyan-100 text-cyan-800"
-                                  : "bg-rose-100 text-rose-800"
-                              }`}
+                                    ? "bg-cyan-100 text-cyan-800"
+                                    : "bg-rose-100 text-rose-800"
+                                }`}
                             >
                               {c.status}
                             </span>
@@ -3541,11 +3516,10 @@ export default function SaasAppPage() {
                         key={filterKey}
                         type="button"
                         onClick={() => setAdminTipFilter(filterKey)}
-                        className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                          adminTipFilter === filterKey
+                        className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${adminTipFilter === filterKey
                             ? "bg-indigo-600 text-white"
                             : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                        }`}
+                          }`}
                       >
                         {filterLabel}
                       </button>
@@ -3577,20 +3551,18 @@ export default function SaasAppPage() {
                       {sortedTips.map((tip) => (
                         <div
                           key={tip.id}
-                          className={`rounded-2xl border p-4 text-xs transition ${
-                            tip.status === "COMPLETED"
+                          className={`rounded-2xl border p-4 text-xs transition ${tip.status === "COMPLETED"
                               ? "border-emerald-200 bg-emerald-50/40"
                               : "border-slate-200 bg-slate-50/70"
-                          }`}
+                            }`}
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="flex flex-wrap items-center gap-2">
                               <span
-                                className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                                  tip.status === "COMPLETED"
+                                className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${tip.status === "COMPLETED"
                                     ? "bg-emerald-100 text-emerald-800"
                                     : "bg-amber-100 text-amber-800"
-                                }`}
+                                  }`}
                               >
                                 {tip.status === "COMPLETED"
                                   ? "Concluída"
@@ -3621,8 +3593,8 @@ export default function SaasAppPage() {
                                   <strong>
                                     {tip.completed_at
                                       ? new Date(
-                                          tip.completed_at
-                                        ).toLocaleString("pt-BR")
+                                        tip.completed_at
+                                      ).toLocaleString("pt-BR")
                                       : "—"}
                                   </strong>
                                 </p>
@@ -3731,11 +3703,10 @@ export default function SaasAppPage() {
                   key={tabKey}
                   type="button"
                   onClick={() => setClientTab(tabKey)}
-                  className={`rounded-xl px-4 py-2.5 text-xs font-bold transition ${
-                    clientTab === tabKey
+                  className={`rounded-xl px-4 py-2.5 text-xs font-bold transition ${clientTab === tabKey
                       ? "bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-500 text-white shadow-md shadow-indigo-500/20"
                       : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                  }`}
+                    }`}
                 >
                   {label}
                   {tabKey === "dashboard" && pendingDrafts.length > 0 && (
@@ -3791,8 +3762,8 @@ export default function SaasAppPage() {
                             {t.admin_reply || TIP_COMPLETED_DEFAULT_MESSAGE}
                             {t.completed_at
                               ? ` • Concluída em ${new Date(
-                                  t.completed_at
-                                ).toLocaleString("pt-BR")}`
+                                t.completed_at
+                              ).toLocaleString("pt-BR")}`
                               : ""}
                           </p>
                         </div>
@@ -3878,8 +3849,8 @@ export default function SaasAppPage() {
                     </p>
                     <p className="mt-2 text-lg font-extrabold text-slate-900">
                       {workspace.integrations.has_gemini_key ||
-                      workspace.integrations.has_openai_key ||
-                      workspace.integrations.has_anthropic_key ? (
+                        workspace.integrations.has_openai_key ||
+                        workspace.integrations.has_anthropic_key ? (
                         <span className="text-emerald-600">Chave Ativa</span>
                       ) : (
                         <span className="text-rose-600">Configurar Chave</span>
@@ -3900,7 +3871,7 @@ export default function SaasAppPage() {
                     </p>
                     <p className="mt-2 text-lg font-extrabold">
                       {workspace.integrations.has_meta_token &&
-                      workspace.integrations.ig_user_id ? (
+                        workspace.integrations.ig_user_id ? (
                         <span className="text-emerald-600">Conectado</span>
                       ) : (
                         <span className="text-amber-600">Pendente</span>
@@ -3909,11 +3880,11 @@ export default function SaasAppPage() {
                     <p className="mt-1 text-xs text-slate-500">
                       R2:{" "}
                       {workspace.integrations.has_r2_access_key &&
-                      workspace.integrations.r2_bucket_name
+                        workspace.integrations.r2_bucket_name
                         ? "Próprio"
                         : workspace.integrations.using_global_r2_fallback
-                        ? "Padrão"
-                        : "Pendente"}{" "}
+                          ? "Padrão"
+                          : "Pendente"}{" "}
                       • TikTok:{" "}
                       {workspace.integrations.has_tiktok_token
                         ? "Conectado"
@@ -4163,11 +4134,10 @@ export default function SaasAppPage() {
                     return (
                       <div
                         key={t.id}
-                        className={`rounded-2xl border p-4 transition ${
-                          editingTopicId === t.id
+                        className={`rounded-2xl border p-4 transition ${editingTopicId === t.id
                             ? "border-indigo-500 bg-indigo-50/40 shadow-sm"
                             : "border-slate-200 bg-white"
-                        }`}
+                          }`}
                       >
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div className="min-w-0 flex-1">
@@ -4176,11 +4146,10 @@ export default function SaasAppPage() {
                                 {t.title}
                               </h3>
                               <span
-                                className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                  t.is_active
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${t.is_active
                                     ? "bg-emerald-100 text-emerald-700"
                                     : "bg-slate-200 text-slate-600"
-                                }`}
+                                  }`}
                               >
                                 {t.is_active ? "Ativo" : "Pausado"}
                               </span>
@@ -4402,11 +4371,10 @@ export default function SaasAppPage() {
                                   : [...prev, d.value].sort()
                               )
                             }
-                            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                              checked
+                            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${checked
                                 ? "bg-indigo-600 text-white"
                                 : "border border-slate-200 bg-white text-slate-600"
-                            }`}
+                              }`}
                           >
                             {d.short}
                           </button>
@@ -4528,11 +4496,11 @@ export default function SaasAppPage() {
                     availableNetworks={{
                       instagram: Boolean(
                         workspace.integrations.has_meta_token &&
-                          workspace.integrations.ig_user_id
+                        workspace.integrations.ig_user_id
                       ),
                       facebook: Boolean(
                         workspace.integrations.has_meta_token &&
-                          workspace.integrations.fb_page_id
+                        workspace.integrations.fb_page_id
                       ),
                       tiktok: Boolean(workspace.integrations.has_tiktok_token),
                     }}
@@ -4711,11 +4679,11 @@ export default function SaasAppPage() {
                     availableNetworks={{
                       instagram: Boolean(
                         workspace.integrations.has_meta_token &&
-                          workspace.integrations.ig_user_id
+                        workspace.integrations.ig_user_id
                       ),
                       facebook: Boolean(
                         workspace.integrations.has_meta_token &&
-                          workspace.integrations.fb_page_id
+                        workspace.integrations.fb_page_id
                       ),
                       tiktok: Boolean(workspace.integrations.has_tiktok_token),
                     }}
@@ -4856,13 +4824,13 @@ export default function SaasAppPage() {
                       onClick={() =>
                         studioPreview?.draftPostId
                           ? handleApproveDraft(
-                              studioPreview.draftPostId,
-                              studioPreview
-                            )
+                            studioPreview.draftPostId,
+                            studioPreview
+                          )
                           : handleRunStudio({
-                              previewOnly: false,
-                              useEditedContent: Boolean(studioPreview),
-                            })
+                            previewOnly: false,
+                            useEditedContent: Boolean(studioPreview),
+                          })
                       }
                       className="rounded-xl bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-500 py-3 text-xs font-extrabold text-white shadow-md disabled:opacity-60"
                     >
@@ -4915,11 +4883,11 @@ export default function SaasAppPage() {
                           : studioPreview.imageUrls || [];
                         const verticalUrls =
                           Array.isArray(studioPreview.storyImageUrls) &&
-                          studioPreview.storyImageUrls.length > 0
+                            studioPreview.storyImageUrls.length > 0
                             ? studioPreview.storyImageUrls
                             : isNativeVerticalOnly
-                            ? studioPreview.imageUrls || []
-                            : [];
+                              ? studioPreview.imageUrls || []
+                              : [];
 
                         const feedNetworks = [
                           activeTargets.ig_feed ? "Instagram Feed" : null,
@@ -5006,9 +4974,9 @@ export default function SaasAppPage() {
                                               "pilotflow-feed",
                                               studioPreview.post.headline_arte
                                             ) +
-                                              (feedUrls.length > 1
-                                                ? `-slide-${idx + 1}`
-                                                : "")
+                                            (feedUrls.length > 1
+                                              ? `-slide-${idx + 1}`
+                                              : "")
                                           )
                                         }
                                         title="Baixar imagem"
@@ -5093,9 +5061,9 @@ export default function SaasAppPage() {
                                               "pilotflow-story",
                                               studioPreview.post.headline_arte
                                             ) +
-                                              (verticalUrls.length > 1
-                                                ? `-slide-${idx + 1}`
-                                                : "")
+                                            (verticalUrls.length > 1
+                                              ? `-slide-${idx + 1}`
+                                              : "")
                                           )
                                         }
                                         title="Baixar imagem"
@@ -5167,7 +5135,7 @@ export default function SaasAppPage() {
                           Editar Textos Gerados ({studioPreview.providerUsed})
                         </p>
 
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                           <div>
                             <label className="block text-[11px] font-bold text-slate-600">
                               Badge Superior (Tema Visual)
@@ -5306,7 +5274,7 @@ export default function SaasAppPage() {
                                     <p className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-600">
                                       Slide {sIdx + 1}
                                     </p>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                                       <input
                                         value={sl.badge}
                                         placeholder={`Tag Slide ${sIdx + 1}`}
@@ -5522,11 +5490,10 @@ export default function SaasAppPage() {
                             text_color: preset.text_color,
                           })
                         }
-                        className={`rounded-xl border p-3 text-left transition ${
-                          brandForm.theme_preset === preset.id
+                        className={`rounded-xl border p-3 text-left transition ${brandForm.theme_preset === preset.id
                             ? "border-indigo-500 bg-indigo-50/50"
                             : "border-slate-200 bg-white hover:bg-slate-50"
-                        }`}
+                          }`}
                       >
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-extrabold text-slate-900">
@@ -5591,17 +5558,16 @@ export default function SaasAppPage() {
                           Logomarca Oficial da Empresa (PNG Sem Fundo)
                         </span>
                         <span
-                          className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                            brandForm.logo_url || brandForm.logo_dark_url
+                          className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${brandForm.logo_url || brandForm.logo_dark_url
                               ? "bg-emerald-100 text-emerald-800"
                               : "bg-slate-200 text-slate-600"
-                          }`}
+                            }`}
                         >
                           {brandForm.logo_url && brandForm.logo_dark_url
                             ? "2 Versões Ativas (Claro + Escuro)"
                             : brandForm.logo_url || brandForm.logo_dark_url
-                            ? "1 Versão Ativa (+ Contraste Automático)"
-                            : "Usando Texto no Rodapé"}
+                              ? "1 Versão Ativa (+ Contraste Automático)"
+                              : "Usando Texto no Rodapé"}
                         </span>
                       </div>
                     </div>
@@ -5639,8 +5605,8 @@ export default function SaasAppPage() {
                             {uploadingBrandLogo === "light"
                               ? "Enviando..."
                               : brandForm.logo_url
-                              ? "Trocar PNG"
-                              : "+ Subir PNG (Fundo Claro)"}
+                                ? "Trocar PNG"
+                                : "+ Subir PNG (Fundo Claro)"}
                             <input
                               type="file"
                               accept="image/png,image/webp,image/svg+xml"
@@ -5724,8 +5690,8 @@ export default function SaasAppPage() {
                             {uploadingBrandLogo === "dark"
                               ? "Enviando..."
                               : brandForm.logo_dark_url
-                              ? "Trocar PNG"
-                              : "+ Subir PNG (Fundo Escuro)"}
+                                ? "Trocar PNG"
+                                : "+ Subir PNG (Fundo Escuro)"}
                             <input
                               type="file"
                               accept="image/png,image/webp,image/svg+xml"
@@ -6210,22 +6176,21 @@ export default function SaasAppPage() {
                         Cloudflare R2 Storage (Hospedagem de Mídias)
                       </p>
                       <span
-                        className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                          workspace.integrations.has_r2_access_key &&
-                          workspace.integrations.r2_bucket_name
+                        className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${workspace.integrations.has_r2_access_key &&
+                            workspace.integrations.r2_bucket_name
                             ? "bg-emerald-100 text-emerald-800"
                             : "bg-slate-200 text-slate-700"
-                        }`}
+                          }`}
                       >
                         {workspace.integrations.has_r2_access_key &&
-                        workspace.integrations.r2_bucket_name
+                          workspace.integrations.r2_bucket_name
                           ? "R2 Próprio Conectado"
                           : workspace.integrations.using_global_r2_fallback
-                          ? "Usando R2 Padrão do Servidor"
-                          : "Não Configurado"}
+                            ? "Usando R2 Padrão do Servidor"
+                            : "Não Configurado"}
                       </span>
                     </div>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <input
                         value={integR2AccountId}
                         onChange={(e) => setIntegR2AccountId(e.target.value)}
@@ -6245,7 +6210,7 @@ export default function SaasAppPage() {
                       placeholder="R2_PUBLIC_URL (ex: https://pub-xxxx.r2.dev)"
                       className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
                     />
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <div>
                         <label className="block text-[11px] font-bold text-slate-700">
                           R2_ACCESS_KEY_ID{" "}
@@ -6294,21 +6259,19 @@ export default function SaasAppPage() {
                           TikTok Photo &amp; Content API v2
                         </span>
                         <span
-                          className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                            workspace.integrations.has_tiktok_token
+                          className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${workspace.integrations.has_tiktok_token
                               ? "bg-emerald-100 text-emerald-800"
                               : "bg-slate-200 text-slate-600"
-                          }`}
+                            }`}
                         >
                           {workspace.integrations.has_tiktok_token
-                            ? `Ativo • Conectado (${
-                                workspace.integrations.tiktok_open_id
-                                  ? workspace.integrations.tiktok_open_id.slice(
-                                      0,
-                                      10
-                                    ) + "..."
-                                  : "Token ativo"
-                              })`
+                            ? `Ativo • Conectado (${workspace.integrations.tiktok_open_id
+                              ? workspace.integrations.tiktok_open_id.slice(
+                                0,
+                                10
+                              ) + "..."
+                              : "Token ativo"
+                            })`
                             : "Desconectado"}
                         </span>
                       </div>
@@ -6616,9 +6579,9 @@ export default function SaasAppPage() {
               (() => {
                 const hasActiveFilters = Boolean(
                   historyDateFrom ||
-                    historyDateTo ||
-                    historySearch.trim() ||
-                    historyStatusFilter !== "ALL"
+                  historyDateTo ||
+                  historySearch.trim() ||
+                  historyStatusFilter !== "ALL"
                 );
                 const query = historySearch.trim().toLowerCase();
 
@@ -6736,10 +6699,10 @@ export default function SaasAppPage() {
                           onChange={(e) => {
                             setHistoryStatusFilter(
                               e.target.value as
-                                | "ALL"
-                                | "PUBLISHED"
-                                | "PENDING_APPROVAL"
-                                | "ERROR"
+                              | "ALL"
+                              | "PUBLISHED"
+                              | "PENDING_APPROVAL"
+                              | "ERROR"
                             );
                             setHistoryVisibleCount(20);
                           }}
@@ -6838,13 +6801,12 @@ export default function SaasAppPage() {
                                 <div className="min-w-0 flex-1 space-y-1 text-xs">
                                   <div className="flex flex-wrap items-center justify-between gap-1.5">
                                     <span
-                                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                        p.status === "PENDING_APPROVAL"
+                                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${p.status === "PENDING_APPROVAL"
                                           ? "bg-amber-100 text-amber-800"
                                           : p.status === "ERROR"
-                                          ? "bg-rose-100 text-rose-700"
-                                          : "bg-emerald-100 text-emerald-700"
-                                      }`}
+                                            ? "bg-rose-100 text-rose-700"
+                                            : "bg-emerald-100 text-emerald-700"
+                                        }`}
                                     >
                                       {p.status === "PENDING_APPROVAL"
                                         ? "RASCUNHO PENDENTE"
@@ -7081,28 +7043,25 @@ export default function SaasAppPage() {
                         {(workspace.tips || []).map((tip) => (
                           <div
                             key={tip.id}
-                            className={`rounded-xl border p-4 text-xs ${
-                              tip.status === "COMPLETED"
+                            className={`rounded-xl border p-4 text-xs ${tip.status === "COMPLETED"
                                 ? "border-emerald-200 bg-emerald-50/50"
                                 : "border-slate-200 bg-slate-50/60"
-                            }`}
+                              }`}
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <span
-                                className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                                  tip.status === "COMPLETED"
+                                className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${tip.status === "COMPLETED"
                                     ? "bg-emerald-100 text-emerald-800"
                                     : "bg-amber-100 text-amber-800"
-                                }`}
+                                  }`}
                               >
                                 {tip.status === "COMPLETED"
-                                  ? `Concluída${
+                                  ? `Concluída${tip.completed_at
+                                    ? ` em ${new Date(
                                       tip.completed_at
-                                        ? ` em ${new Date(
-                                            tip.completed_at
-                                          ).toLocaleDateString("pt-BR")}`
-                                        : ""
-                                    }`
+                                    ).toLocaleDateString("pt-BR")}`
+                                    : ""
+                                  }`
                                   : "Em análise"}
                               </span>
                               <span className="text-[11px] text-slate-400">
