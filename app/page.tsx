@@ -2190,16 +2190,33 @@ export default function SaasAppPage() {
         clearTimeout(timeoutId);
       }
 
-      const data = await res.json();
-      if (Array.isArray(data.logs)) setStudioPublishLogs(data.logs);
+      const rawBody = await res.text();
+      let data: Record<string, unknown> = {};
+      try {
+        data = rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
+      } catch {
+        if (res.status === 504 || /timeout|an error occurred/i.test(rawBody)) {
+          throw new Error(
+            "O servidor atingiu o tempo limite (60s) ao gerar as imagens do carrossel. Tente novamente ou reduza a quantidade de slides."
+          );
+        }
+        throw new Error(
+          `Resposta inválida do servidor (HTTP ${res.status}). Tente novamente em instantes.`
+        );
+      }
+
+      if (Array.isArray(data.logs)) setStudioPublishLogs(data.logs as string[]);
       if (!res.ok) {
         if (data.code === "AI_CREDIT_EXHAUSTED") {
           setStudioCreditAlert({
             message:
-              data.error ||
-              "A IA selecionada está sem crédito ou faturamento ativo.",
-            failedProvider: data.failedProvider || "GEMINI",
-            alternativeProvider: data.alternativeProvider || null,
+              typeof data.error === "string"
+                ? data.error
+                : "A IA selecionada está sem crédito ou faturamento ativo.",
+            failedProvider:
+              (data.failedProvider as "GEMINI" | "OPENAI") || "GEMINI",
+            alternativeProvider:
+              (data.alternativeProvider as "GEMINI" | "OPENAI" | null) || null,
             retryOptions: {
               previewOnly: options.previewOnly,
               useEditedContent: options.useEditedContent,
@@ -2207,18 +2224,23 @@ export default function SaasAppPage() {
             },
           });
         }
-        throw new Error(data.error || "Erro ao processar post.");
+        throw new Error(
+          typeof data.error === "string"
+            ? data.error
+            : "Erro ao processar post."
+        );
       }
 
       if (options.previewOnly) {
-        setStudioPreview(data as StudioPreviewState);
-        if (data.draftPostId) {
+        const previewData = data as unknown as StudioPreviewState;
+        setStudioPreview(previewData);
+        if (previewData.draftPostId) {
           await loadState(workspace.company.id);
         }
         setGlobalNotice({
           type: "success",
           text:
-            options.useEditedContent && data.draftPostId
+            options.useEditedContent && previewData.draftPostId
               ? "Arte atualizada e salva como rascunho (sem publicar ainda)!"
               : "Prévia gerada! Revise ou edite qualquer texto abaixo antes de salvar ou publicar.",
         });

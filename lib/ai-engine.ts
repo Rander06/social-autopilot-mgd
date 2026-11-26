@@ -959,10 +959,18 @@ export async function generateFullCreativeWithAI(params: {
   brandLogoDarkUrl?: string | null;
   keys: { gemini?: string | null; openai?: string | null };
   r2Config?: R2StorageConfig;
+  maxWaitMs?: number;
+  isCarouselSlide?: boolean;
   logs: string[];
 }): Promise<string | null> {
   const baseCleanedPrompt = cleanCreativePrompt(params.promptText);
   if (!baseCleanedPrompt) return null;
+
+  const startedAt = Date.now();
+  const budgetMs = Math.max(
+    15_000,
+    Math.min(45_000, params.maxWaitMs ?? 45_000)
+  );
 
   const hasOfficialLogo = Boolean(
     params.brandLogoUrl?.trim() || params.brandLogoDarkUrl?.trim()
@@ -1010,15 +1018,18 @@ export async function generateFullCreativeWithAI(params: {
     if (provider === "OPENAI" && params.keys.openai?.trim()) {
       const openAiKey = params.keys.openai.trim();
       const gptSize = params.aspectRatio === "1:1" ? "1024x1024" : "1024x1536";
-      const openAiModels =
-        params.preferredImageAI === "OPENAI_MINI"
-          ? ["gpt-image-1-mini", "gpt-image-1.5", "chatgpt-image-latest"]
-          : [
-              "chatgpt-image-latest",
-              "gpt-image-1.5",
-              "gpt-image-2",
-              "gpt-image-1-mini",
-            ];
+      const openAiModels = params.isCarouselSlide
+        ? params.preferredImageAI === "OPENAI_MINI"
+          ? ["gpt-image-1-mini", "chatgpt-image-latest"]
+          : ["chatgpt-image-latest", "gpt-image-1-mini"]
+        : params.preferredImageAI === "OPENAI_MINI"
+        ? ["gpt-image-1-mini", "gpt-image-1.5", "chatgpt-image-latest"]
+        : [
+            "chatgpt-image-latest",
+            "gpt-image-1.5",
+            "gpt-image-2",
+            "gpt-image-1-mini",
+          ];
 
       const extractOpenAiBuffer = async (data: {
         data?: Array<{ b64_json?: string; url?: string }>;
@@ -1033,6 +1044,8 @@ export async function generateFullCreativeWithAI(params: {
       };
 
       for (const openAiModel of openAiModels) {
+        const remaining = budgetMs - (Date.now() - startedAt);
+        if (remaining < 6_000) break;
         try {
           let res: Response;
           if (refBuf) {
@@ -1053,7 +1066,7 @@ export async function generateFullCreativeWithAI(params: {
               method: "POST",
               headers: { Authorization: `Bearer ${openAiKey}` },
               body: form,
-              signal: AbortSignal.timeout(45_000),
+              signal: AbortSignal.timeout(remaining),
             });
           } else {
             appendLog(
@@ -1071,7 +1084,7 @@ export async function generateFullCreativeWithAI(params: {
                 prompt: cleanedPrompt,
                 size: gptSize,
               }),
-              signal: AbortSignal.timeout(45_000),
+              signal: AbortSignal.timeout(remaining),
             });
           }
 
@@ -1126,13 +1139,17 @@ export async function generateFullCreativeWithAI(params: {
 
     if (provider === "GEMINI" && params.keys.gemini?.trim()) {
       const ai = new GoogleGenAI({ apiKey: params.keys.gemini.trim() });
-      const geminiModels = [
-        "gemini-3.1-flash-image-preview",
-        "gemini-3-pro-image-preview",
-        "gemini-nano-banana-2.1",
-        "gemini-2.5-flash-image",
-      ];
+      const geminiModels = params.isCarouselSlide
+        ? ["gemini-3.1-flash-image-preview", "gemini-2.5-flash-image"]
+        : [
+            "gemini-3.1-flash-image-preview",
+            "gemini-3-pro-image-preview",
+            "gemini-nano-banana-2.1",
+            "gemini-2.5-flash-image",
+          ];
       for (const model of geminiModels) {
+        const remaining = Math.min(20_000, budgetMs - (Date.now() - startedAt));
+        if (remaining < 5_000) break;
         try {
           appendLog(
             params.logs,
@@ -1156,7 +1173,7 @@ export async function generateFullCreativeWithAI(params: {
               contents: [{ role: "user", parts }],
               config: { responseModalities: ["IMAGE", "TEXT"] },
             }),
-            20_000,
+            remaining,
             `Criativo ${model}`
           );
           const resParts = res.candidates?.[0]?.content?.parts || [];

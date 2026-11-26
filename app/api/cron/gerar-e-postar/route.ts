@@ -101,6 +101,7 @@ async function runPostPipeline(params: {
   draftPostId?: string | null;
   userId?: string | null;
 }) {
+  const pipelineStartedAt = Date.now();
   const logs: string[] = [];
   const log = (m: string) => logs.push(`[${new Date().toISOString()}] ${m}`);
 
@@ -382,83 +383,94 @@ ${offerPrice ? `- Valor em destaque: "Por apenas ${offerPrice}"\n` : ""}- Botão
             openai: secrets.openai_api_key,
           },
           r2Config: secrets.r2_config,
+          maxWaitMs: Math.max(20_000, 45_000 - (Date.now() - pipelineStartedAt)),
           logs,
         });
         aiResults = [singleUrl];
       } else {
-        const firstSlide = content.slides[0];
-        const slide1Title = firstSlide?.title || content.headline_arte;
-        const slide1Body = (firstSlide?.body || content.subtitulo_arte)
-          .split(/\s+/)
-          .slice(0, 12)
-          .join(" ");
-        const slide1Prompt = `${basePrompt.slice(0, 450)}
+        const remainingAiBudgetMs = Math.max(
+          18_000,
+          44_000 - (Date.now() - pipelineStartedAt)
+        );
+        const paletteSummary = `Paleta obrigatória igual em TODOS os slides: primária ${brand.primary_color}, destaque ${brand.accent_color}, fundo base ${brand.bg_color}.`;
+        const carouselVisualDna = `${basePrompt.slice(0, 380)}\n\n${layoutDirectiveBlock}\n${paletteSummary}`;
+        const footerSigRule =
+          brand.logo_url || brand.logo_dark_url
+            ? `deixe o canto inferior esquerdo livre para a logomarca oficial PNG`
+            : `assinatura tipográfica limpa "${brand.footer_name}"`;
+
+        aiResults = await Promise.all(
+          Array.from({ length: slidesCount }, (_, idx) => {
+            const isFirstSlide = idx === 0;
+            const isLastSlide = idx === slidesCount - 1;
+            const sl = content.slides[idx] || {
+              badge: isFirstSlide
+                ? content.tema_visual
+                : isLastSlide
+                ? "OFERTA"
+                : `PASSO ${idx + 1}`,
+              title: content.headline_arte,
+              body: content.subtitulo_arte,
+              highlight: offerPrice || content.destaque_selo,
+            };
+            const slideBody = (sl.body || content.subtitulo_arte)
+              .split(/\s+/)
+              .slice(0, 14)
+              .join(" ");
+            const offerHighlight =
+              offerPrice || sl.highlight || content.destaque_selo;
+
+            let slidePrompt: string;
+            if (isFirstSlide) {
+              slidePrompt = `${carouselVisualDna}
 
 DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE 1/${slidesCount} — CAPA):
-- Tag Superior: "${firstSlide?.badge || content.tema_visual}"
-- Título Principal: "${slide1Title}"
-- Subtítulo Curto: "${slide1Body}"
+- Tag Superior: "${sl.badge || content.tema_visual}"
+- Título Principal: "${sl.title || content.headline_arte}"
+- Subtítulo Curto: "${slideBody}"
 - Indicador no Canto Inferior Direito: "Arraste → 1/${slidesCount}"`;
+            } else if (isLastSlide) {
+              slidePrompt = `${carouselVisualDna}
 
-        const slide1Url = await generateFullCreativeWithAI({
-          companyId: params.companyId,
-          promptText: slide1Prompt,
-          aspectRatio,
-          preferredImageAI: effectiveImageAI,
-          allowFallback: shouldAllowFallback,
-          referencePhotoUrl: photoToRender,
-          brandLogoUrl: brand.logo_url,
-          brandLogoDarkUrl: brand.logo_dark_url,
-          keys: {
-            gemini: secrets.gemini_api_key,
-            openai: secrets.openai_api_key,
-          },
-          r2Config: secrets.r2_config,
-          logs,
-        });
+DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — FECHAMENTO):
+- Mantenha EXATAMENTE a mesma identidade visual, fundo, tipografia e estilo gráfico da capa (sem bordas brancas externas).
+- Tag Superior: "${sl.badge || "OFERTA"}"
+- Título Grande: "${sl.title}"
+- Texto Nítido: "${slideBody}"
+- Destaque em pílula/selo: "${offerHighlight}"
+- Botão CTA: "${brand.cta_default}" e ${footerSigRule}.
+- Canto inferior direito: "${idx + 1}/${slidesCount}" (sem seta).`;
+            } else {
+              slidePrompt = `${carouselVisualDna}
 
-        if (!slide1Url) {
-          aiResults = [null];
-        } else {
-          const remainingResults = await Promise.all(
-            Array.from({ length: slidesCount - 1 }, (_, i) => {
-              const idx = i + 1;
-              const isLastSlide = idx === slidesCount - 1;
-              const sl = content.slides[idx] || {
-                badge: isLastSlide ? "OFERTA" : `PASSO ${idx + 1}`,
-                title: content.headline_arte,
-                body: content.subtitulo_arte,
-                highlight: offerPrice || content.destaque_selo,
-              };
-              const offerHighlight = offerPrice || sl.highlight || content.destaque_selo;
-              const footerSigRule =
-                brand.logo_url || brand.logo_dark_url
-                  ? `deixe o canto inferior esquerdo livre para a logomarca oficial PNG`
-                  : `assinatura tipográfica limpa "${brand.footer_name}"`;
-              const slidePrompt = isLastSlide
-                ? `Slide ${idx + 1} de ${slidesCount} (FECHAMENTO DO CARROSSEL). Use a imagem de referência (Slide 1) como guia visual OBRIGATÓRIO: mantenha EXATAMENTE a mesma paleta de cores, fundo, tipografia, iluminação e estilo gráfico do Slide 1 (sem mudar de tema e sem bordas brancas externas). Conteúdo deste slide final (${sl.badge}): título grande "${sl.title}", texto nítido "${sl.body}", destaque em pílula/selo "${offerHighlight}", CTA "${brand.cta_default}" e ${footerSigRule}. No canto inferior direito mostre apenas "${idx + 1}/${slidesCount}" (sem seta de continuar).`
-                : `Slide ${idx + 1} de ${slidesCount} (CONTINUAÇÃO DO CARROSSEL). Use a imagem de referência (Slide 1) como guia visual OBRIGATÓRIO: mantenha EXATAMENTE a mesma paleta de cores, fundo, tipografia, iluminação e estilo gráfico do Slide 1 (sem mudar de tema e sem bordas brancas externas), dando continuidade visual da esquerda para a direita. Conteúdo deste slide (${sl.badge}): título grande "${sl.title}", texto explicativo nítido "${sl.body}". No canto inferior direito adicione o indicador "Arraste →" (${idx + 1}/${slidesCount}) convidando a rolar para o próximo slide.`;
+DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — CONTINUAÇÃO):
+- Mantenha EXATAMENTE a mesma identidade visual, fundo, tipografia e estilo gráfico da capa (sem bordas brancas externas).
+- Tag Superior: "${sl.badge}"
+- Título Grande: "${sl.title}"
+- Texto Explicativo Nítido: "${slideBody}"
+- Indicador no Canto Inferior Direito: "Arraste → ${idx + 1}/${slidesCount}"`;
+            }
 
-              return generateFullCreativeWithAI({
-                companyId: params.companyId,
-                promptText: slidePrompt,
-                aspectRatio,
-                preferredImageAI: effectiveImageAI,
-                allowFallback: shouldAllowFallback,
-                referencePhotoUrl: slide1Url,
-                brandLogoUrl: brand.logo_url,
-                brandLogoDarkUrl: brand.logo_dark_url,
-                keys: {
-                  gemini: secrets.gemini_api_key,
-                  openai: secrets.openai_api_key,
-                },
-                r2Config: secrets.r2_config,
-                logs,
-              });
-            })
-          );
-          aiResults = [slide1Url, ...remainingResults];
-        }
+            return generateFullCreativeWithAI({
+              companyId: params.companyId,
+              promptText: slidePrompt,
+              aspectRatio,
+              preferredImageAI: effectiveImageAI,
+              allowFallback: shouldAllowFallback,
+              referencePhotoUrl: photoToRender,
+              brandLogoUrl: brand.logo_url,
+              brandLogoDarkUrl: brand.logo_dark_url,
+              keys: {
+                gemini: secrets.gemini_api_key,
+                openai: secrets.openai_api_key,
+              },
+              r2Config: secrets.r2_config,
+              maxWaitMs: remainingAiBudgetMs,
+              isCarouselSlide: true,
+              logs,
+            });
+          })
+        );
       }
     } catch (err) {
       if (err instanceof AICreditError) {
