@@ -1257,6 +1257,17 @@ export default function SaasAppPage() {
     }
   }
 
+  // Topics filter & pagination (10 em 10)
+  const [topicsVisibleCount, setTopicsVisibleCount] = useState(10);
+  const [topicsSearch, setTopicsSearch] = useState("");
+  const [topicsStatusFilter, setTopicsStatusFilter] = useState<
+    "ALL" | "ACTIVE" | "PAUSED"
+  >("ACTIVE");
+  const [topicsFormatFilter, setTopicsFormatFilter] = useState<
+    "ALL" | "SINGLE" | "CAROUSEL"
+  >("ALL");
+  const [topicsDayFilter, setTopicsDayFilter] = useState<number[]>([]);
+
   // History filter & pagination (20 em 20)
   const [historyVisibleCount, setHistoryVisibleCount] = useState(20);
   const [historyDateFrom, setHistoryDateFrom] = useState("");
@@ -3932,7 +3943,7 @@ export default function SaasAppPage() {
 
                   <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
                     <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                      IA Conectada ({workspace.integrations.preferred_text_ai})
+                      IAs Conectadas
                     </p>
                     <p className="mt-2 text-lg font-extrabold text-slate-900">
                       {workspace.integrations.has_gemini_key ||
@@ -3953,46 +3964,83 @@ export default function SaasAppPage() {
                   </div>
 
                   <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
-                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Instagram &amp; Facebook
-                    </p>
-                    <p className="mt-2 text-lg font-extrabold">
-                      {workspace.integrations.has_meta_token &&
-                        workspace.integrations.ig_user_id ? (
-                        <span className="text-emerald-600">Conectado</span>
-                      ) : (
-                        <span className="text-amber-600">Pendente</span>
-                      )}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      R2:{" "}
-                      {workspace.integrations.has_r2_access_key &&
-                        workspace.integrations.r2_bucket_name
-                        ? "Próprio"
-                        : workspace.integrations.using_global_r2_fallback
-                          ? "Padrão"
-                          : "Pendente"}{" "}
-                      • TikTok:{" "}
-                      {workspace.integrations.has_tiktok_token
-                        ? "Conectado"
-                        : "Pronto p/ conectar"}
-                    </p>
+                    {(() => {
+                      const fbOk = Boolean(
+                        workspace.integrations.has_meta_token &&
+                          workspace.integrations.fb_page_id
+                      );
+                      const igOk = Boolean(
+                        workspace.integrations.has_meta_token &&
+                          workspace.integrations.ig_user_id
+                      );
+                      const tiktokOk = Boolean(
+                        workspace.integrations.has_tiktok_token
+                      );
+                      const r2Ok = Boolean(
+                        (workspace.integrations.has_r2_access_key &&
+                          workspace.integrations.r2_bucket_name) ||
+                          workspace.integrations.using_global_r2_fallback
+                      );
+                      return (
+                        <>
+                          <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                            Redes Sociais
+                          </p>
+                          <p className="mt-2 text-lg font-extrabold">
+                            {fbOk || igOk || tiktokOk ? (
+                              <span className="text-emerald-600">
+                                Conectado
+                              </span>
+                            ) : (
+                              <span className="text-amber-600">Pendente</span>
+                            )}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Facebook: {fbOk ? "OK" : "—"} • Instagram:{" "}
+                            {igOk ? "OK" : "—"} • TikTok:{" "}
+                            {tiktokOk ? "OK" : "—"} • R2:{" "}
+                            {r2Ok ? "Conectado" : "Pendente"}
+                          </p>
+                        </>
+                      );
+                    })()}
                   </div>
 
                   <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
-                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Assuntos Ativos
-                    </p>
-                    <p className="mt-2 text-2xl font-extrabold text-cyan-600">
-                      {workspace.topics.filter((t) => t.is_active).length} temas
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setClientTab("studio")}
-                      className="mt-1 text-xs font-bold text-indigo-600 hover:underline"
-                    >
-                      Abrir Estúdio Manual →
-                    </button>
+                    {(() => {
+                      const totalTopics = workspace.topics.length;
+                      const activeTopicsCount = workspace.topics.filter(
+                        (t) => t.is_active
+                      ).length;
+                      const pausedTopicsCount = totalTopics - activeTopicsCount;
+                      return (
+                        <>
+                          <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                            Assuntos / Temas
+                          </p>
+                          <p className="mt-2 text-2xl font-extrabold text-cyan-600">
+                            {totalTopics} {totalTopics === 1 ? "tema" : "temas"}
+                          </p>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] font-bold">
+                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-800">
+                              {activeTopicsCount}{" "}
+                              {activeTopicsCount === 1 ? "ativo" : "ativos"}
+                            </span>
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-800">
+                              {pausedTopicsCount}{" "}
+                              {pausedTopicsCount === 1 ? "pausado" : "pausados"}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setClientTab("studio")}
+                            className="mt-2 text-xs font-bold text-indigo-600 hover:underline"
+                          >
+                            Abrir Estúdio Manual →
+                          </button>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -4201,148 +4249,380 @@ export default function SaasAppPage() {
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
                 {/* Lista de assuntos */}
                 <div className="space-y-3 lg:col-span-5">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-base font-extrabold text-slate-900">
-                      Assuntos &amp; Produtos ({workspace.topics.length})
-                    </h2>
-                    <button
-                      type="button"
-                      onClick={startNewTopic}
-                      className="rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white"
-                    >
-                      + Novo Assunto
-                    </button>
-                  </div>
-
-                  {workspace.topics.map((t) => {
-                    const topicPhotos = workspace.photos.filter(
-                      (p) => p.topic_id === t.id
+                  {(() => {
+                    const activeTopicsTotal = workspace.topics.filter(
+                      (t) => t.is_active
+                    ).length;
+                    const pausedTopicsTotal =
+                      workspace.topics.length - activeTopicsTotal;
+                    const searchTerm = topicsSearch
+                      .trim()
+                      .normalize("NFD")
+                      .replace(/[\u0300-\u036f]/g, "")
+                      .toLowerCase();
+                    const hasActiveTopicFilters = Boolean(
+                      searchTerm ||
+                        topicsStatusFilter !== "ACTIVE" ||
+                        topicsFormatFilter !== "ALL" ||
+                        topicsDayFilter.length > 0
                     );
+
+                    const filteredTopics = workspace.topics.filter((t) => {
+                      if (
+                        topicsStatusFilter === "ACTIVE" &&
+                        !t.is_active
+                      ) {
+                        return false;
+                      }
+                      if (
+                        topicsStatusFilter === "PAUSED" &&
+                        t.is_active
+                      ) {
+                        return false;
+                      }
+                      if (
+                        topicsFormatFilter !== "ALL" &&
+                        t.post_format !== topicsFormatFilter
+                      ) {
+                        return false;
+                      }
+                      if (
+                        topicsDayFilter.length > 0 &&
+                        !topicsDayFilter.some((day) =>
+                          (t.schedule_days || []).includes(day)
+                        )
+                      ) {
+                        return false;
+                      }
+                      if (searchTerm) {
+                        const normalizedTitle = t.title
+                          .normalize("NFD")
+                          .replace(/[\u0300-\u036f]/g, "")
+                          .toLowerCase();
+                        if (!normalizedTitle.includes(searchTerm)) return false;
+                      }
+                      return true;
+                    });
+
+                    const visibleTopics = filteredTopics.slice(
+                      0,
+                      topicsVisibleCount
+                    );
+                    const remainingTopicsCount = Math.max(
+                      0,
+                      filteredTopics.length - visibleTopics.length
+                    );
+
                     return (
-                      <div
-                        key={t.id}
-                        className={`rounded-2xl border p-4 transition ${editingTopicId === t.id
-                            ? "border-indigo-500 bg-indigo-50/40 shadow-sm"
-                            : "border-slate-200 bg-white"
-                          }`}
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="break-words text-sm font-extrabold text-slate-900">
-                                {t.title}
-                              </h3>
-                              <span
-                                className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${t.is_active
-                                    ? "bg-emerald-100 text-emerald-700"
-                                    : "bg-slate-200 text-slate-600"
-                                  }`}
-                              >
-                                {t.is_active ? "Ativo" : "Pausado"}
-                              </span>
-                            </div>
-                            <p className="mt-1 text-xs text-slate-600">
-                              Dias:{" "}
-                              {t.schedule_days
-                                .map(
-                                  (d) =>
-                                    WEEKDAY_LABELS.find((w) => w.value === d)
-                                      ?.short
-                                )
-                                .join(", ")}{" "}
-                              às{" "}
-                              <strong>
-                                {parseScheduleTimesList(
-                                  t.schedule_time,
-                                  t.schedule_times
-                                ).join(", ")}
-                              </strong>{" "}
-                              •{" "}
-                              {t.post_format === "CAROUSEL"
-                                ? `Carrossel (${t.slides_count} slides)`
-                                : "Imagem Única"}{" "}
-                              • {formatTargetsSummary(t.publish_targets)}
-                            </p>
-                            <p className="mt-1 text-[11px] text-slate-500">
-                              Modo:{" "}
-                              {t.approval_mode === "DRAFT"
-                                ? "Aprovação Manual"
-                                : "100% Automático"}{" "}
-                              • Fotos na fila: {topicPhotos.length}
-                            </p>
+                      <>
+                        <div className="flex items-center justify-between">
+                          <h2 className="text-base font-extrabold text-slate-900">
+                            Assuntos &amp; Produtos ({workspace.topics.length})
+                          </h2>
+                          <button
+                            type="button"
+                            onClick={startNewTopic}
+                            className="rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white"
+                          >
+                            + Novo Assunto
+                          </button>
+                        </div>
+
+                        {/* Filtros da lista de assuntos */}
+                        <div className="space-y-2.5 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+                          <input
+                            type="text"
+                            value={topicsSearch}
+                            onChange={(e) => {
+                              setTopicsSearch(e.target.value);
+                              setTopicsVisibleCount(10);
+                            }}
+                            placeholder="Buscar assunto por título..."
+                            className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs text-slate-800 outline-none focus:border-indigo-500 focus:bg-white"
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <select
+                              value={topicsStatusFilter}
+                              onChange={(e) => {
+                                setTopicsStatusFilter(
+                                  e.target.value as "ALL" | "ACTIVE" | "PAUSED"
+                                );
+                                setTopicsVisibleCount(10);
+                              }}
+                              className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-2.5 py-2 text-xs font-bold text-slate-700 outline-none focus:border-indigo-500"
+                            >
+                              <option value="ALL">
+                                Todos ({workspace.topics.length})
+                              </option>
+                              <option value="ACTIVE">
+                                Ativos ({activeTopicsTotal})
+                              </option>
+                              <option value="PAUSED">
+                                Pausados ({pausedTopicsTotal})
+                              </option>
+                            </select>
+                            <select
+                              value={topicsFormatFilter}
+                              onChange={(e) => {
+                                setTopicsFormatFilter(
+                                  e.target.value as "ALL" | "SINGLE" | "CAROUSEL"
+                                );
+                                setTopicsVisibleCount(10);
+                              }}
+                              className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-2.5 py-2 text-xs font-bold text-slate-700 outline-none focus:border-indigo-500"
+                            >
+                              <option value="ALL">Todos os formatos</option>
+                              <option value="SINGLE">Imagem Única</option>
+                              <option value="CAROUSEL">Carrossel</option>
+                            </select>
                           </div>
-                          <div className="flex gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => loadTopicIntoEditor(t)}
-                              className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-indigo-100 hover:text-indigo-700"
-                            >
-                              Editar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteTopic(t.id)}
-                              className="rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700"
-                            >
-                              Excluir
-                            </button>
+                          <div>
+                            <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                              Dia da semana
+                            </p>
+                            <div className="flex flex-wrap gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTopicsDayFilter([]);
+                                  setTopicsVisibleCount(10);
+                                }}
+                                className={`rounded-lg px-2 py-1 text-[11px] font-bold transition ${
+                                  topicsDayFilter.length === 0
+                                    ? "bg-indigo-600 text-white"
+                                    : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                                }`}
+                              >
+                                Todos
+                              </button>
+                              {WEEKDAY_LABELS.map((d) => {
+                                const selected = topicsDayFilter.includes(
+                                  d.value
+                                );
+                                return (
+                                  <button
+                                    key={d.value}
+                                    type="button"
+                                    onClick={() => {
+                                      setTopicsDayFilter((prev) =>
+                                        prev.includes(d.value)
+                                          ? prev.filter((x) => x !== d.value)
+                                          : [...prev, d.value].sort()
+                                      );
+                                      setTopicsVisibleCount(10);
+                                    }}
+                                    className={`rounded-lg px-2 py-1 text-[11px] font-bold transition ${
+                                      selected
+                                        ? "bg-indigo-600 text-white"
+                                        : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                                    }`}
+                                  >
+                                    {d.short}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                            <span>
+                              Mostrando <strong>{visibleTopics.length}</strong> de{" "}
+                              <strong>{filteredTopics.length}</strong> assunto(s)
+                              (10 por página)
+                            </span>
+                            {hasActiveTopicFilters && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTopicsSearch("");
+                                  setTopicsStatusFilter("ACTIVE");
+                                  setTopicsFormatFilter("ALL");
+                                  setTopicsDayFilter([]);
+                                  setTopicsVisibleCount(10);
+                                }}
+                                className="font-bold text-indigo-600 hover:underline"
+                              >
+                                Limpar filtros
+                              </button>
+                            )}
                           </div>
                         </div>
 
-                        {/* Upload rápido de foto do produto para esse assunto */}
-                        <div className="mt-3 border-t border-slate-100 pt-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="text-[11px] font-bold text-slate-600">
-                              Fotos do Produto (Fila sem Repetição):
-                            </span>
-                            <label className="cursor-pointer rounded-lg bg-cyan-50 px-2.5 py-1 text-[11px] font-bold text-cyan-800 hover:bg-cyan-100">
-                              {uploadingPhotoTopicId === t.id
-                                ? "Enviando ao R2..."
-                                : "+ Subir Foto Original"}
-                              <input
-                                type="file"
-                                accept="image/*"
-                                className="hidden"
-                                onChange={(e) => {
-                                  const f = e.target.files?.[0];
-                                  if (f) void handleUploadTopicPhoto(t.id, f);
-                                }}
-                              />
-                            </label>
+                        {filteredTopics.length === 0 ? (
+                          <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center text-xs text-slate-500">
+                            {workspace.topics.length === 0
+                              ? "Nenhum assunto cadastrado ainda."
+                              : "Nenhum assunto encontrado com os filtros selecionados."}
                           </div>
-                          {topicPhotos.length > 0 && (
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {topicPhotos.map((ph) => (
-                                <div
-                                  key={ph.id}
-                                  className="relative h-14 w-14 overflow-hidden rounded-lg border border-slate-200"
-                                >
-                                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                                  <img
-                                    src={ph.enhanced_url || ph.original_url}
-                                    alt="Produto"
-                                    className="h-full w-full object-cover"
-                                  />
-                                  <span className="absolute bottom-0 left-0 bg-slate-900/75 px-1 text-[9px] text-white">
-                                    {ph.times_used}x
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleDeleteTopicPhoto(ph.id)
-                                    }
-                                    className="absolute right-0 top-0 bg-rose-600 px-1 text-[9px] font-bold text-white"
-                                  >
-                                    ×
-                                  </button>
+                        ) : (
+                          visibleTopics.map((t) => {
+                            const topicPhotos = workspace.photos.filter(
+                              (p) => p.topic_id === t.id
+                            );
+                            return (
+                              <div
+                                key={t.id}
+                                className={`rounded-2xl border p-4 transition ${
+                                  editingTopicId === t.id
+                                    ? "border-indigo-500 bg-indigo-50/40 shadow-sm"
+                                    : "border-slate-200 bg-white"
+                                }`}
+                              >
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <h3 className="break-words text-sm font-extrabold text-slate-900">
+                                        {t.title}
+                                      </h3>
+                                      <span
+                                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                          t.is_active
+                                            ? "bg-emerald-100 text-emerald-700"
+                                            : "bg-slate-200 text-slate-600"
+                                        }`}
+                                      >
+                                        {t.is_active ? "Ativo" : "Pausado"}
+                                      </span>
+                                    </div>
+                                    <p className="mt-1 text-xs text-slate-600">
+                                      Dias:{" "}
+                                      {t.schedule_days
+                                        .map(
+                                          (d) =>
+                                            WEEKDAY_LABELS.find(
+                                              (w) => w.value === d
+                                            )?.short
+                                        )
+                                        .join(", ")}{" "}
+                                      às{" "}
+                                      <strong>
+                                        {parseScheduleTimesList(
+                                          t.schedule_time,
+                                          t.schedule_times
+                                        ).join(", ")}
+                                      </strong>{" "}
+                                      •{" "}
+                                      {t.post_format === "CAROUSEL"
+                                        ? `Carrossel (${t.slides_count} slides)`
+                                        : "Imagem Única"}{" "}
+                                      • {formatTargetsSummary(t.publish_targets)}
+                                    </p>
+                                    <p className="mt-1 text-[11px] text-slate-500">
+                                      Modo:{" "}
+                                      {t.approval_mode === "DRAFT"
+                                        ? "Aprovação Manual"
+                                        : "100% Automático"}{" "}
+                                      • Fotos na fila: {topicPhotos.length}
+                                    </p>
+                                  </div>
+                                  <div className="flex gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => loadTopicIntoEditor(t)}
+                                      className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-indigo-100 hover:text-indigo-700"
+                                    >
+                                      Editar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteTopic(t.id)}
+                                      className="rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700"
+                                    >
+                                      Excluir
+                                    </button>
+                                  </div>
                                 </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
+
+                                {/* Upload rápido de foto do produto para esse assunto */}
+                                <div className="mt-3 border-t border-slate-100 pt-3">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <span className="text-[11px] font-bold text-slate-600">
+                                      Fotos do Produto (Fila sem Repetição):
+                                    </span>
+                                    <label className="cursor-pointer rounded-lg bg-cyan-50 px-2.5 py-1 text-[11px] font-bold text-cyan-800 hover:bg-cyan-100">
+                                      {uploadingPhotoTopicId === t.id
+                                        ? "Enviando ao R2..."
+                                        : "+ Subir Foto Original"}
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        className="hidden"
+                                        onChange={(e) => {
+                                          const f = e.target.files?.[0];
+                                          if (f)
+                                            void handleUploadTopicPhoto(
+                                              t.id,
+                                              f
+                                            );
+                                        }}
+                                      />
+                                    </label>
+                                  </div>
+                                  {topicPhotos.length > 0 && (
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {topicPhotos.map((ph) => (
+                                        <div
+                                          key={ph.id}
+                                          className="relative h-14 w-14 overflow-hidden rounded-lg border border-slate-200"
+                                        >
+                                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                                          <img
+                                            src={
+                                              ph.enhanced_url || ph.original_url
+                                            }
+                                            alt="Produto"
+                                            className="h-full w-full object-cover"
+                                          />
+                                          <span className="absolute bottom-0 left-0 bg-slate-900/75 px-1 text-[9px] text-white">
+                                            {ph.times_used}x
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handleDeleteTopicPhoto(ph.id)
+                                            }
+                                            className="absolute right-0 top-0 bg-rose-600 px-1 text-[9px] font-bold text-white"
+                                          >
+                                            ×
+                                          </button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+
+                        {(remainingTopicsCount > 0 ||
+                          topicsVisibleCount > 10) && (
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                            {remainingTopicsCount > 0 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setTopicsVisibleCount((prev) => prev + 10)
+                                }
+                                className="flex-1 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm hover:opacity-95"
+                              >
+                                + Carregar mais 10 assuntos (restam{" "}
+                                {remainingTopicsCount})
+                              </button>
+                            )}
+                            {topicsVisibleCount > 10 && (
+                              <button
+                                type="button"
+                                onClick={() => setTopicsVisibleCount(10)}
+                                className="rounded-xl border border-slate-200 bg-slate-100 px-3.5 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-200"
+                              >
+                                Mostrar apenas 10
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </>
                     );
-                  })}
+                  })()}
                 </div>
 
                 {/* Editor de Assunto */}
