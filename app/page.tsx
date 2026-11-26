@@ -235,6 +235,395 @@ function defaultPublishTargets(
   };
 }
 
+function DownloadIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 20h14" />
+    </svg>
+  );
+}
+
+function buildDownloadBaseName(prefix: string, label?: string | null): string {
+  const slug = String(label || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 44);
+  return slug ? `${prefix}-${slug}` : prefix;
+}
+
+function extensionFromMimeOrUrl(mime?: string | null, url?: string): string {
+  const m = (mime || "").toLowerCase();
+  if (m.includes("png")) return ".png";
+  if (m.includes("webp")) return ".webp";
+  if (m.includes("jpeg") || m.includes("jpg")) return ".jpg";
+  if (url) {
+    const cleanUrl = url.split("?")[0].toLowerCase();
+    if (cleanUrl.endsWith(".png")) return ".png";
+    if (cleanUrl.endsWith(".webp")) return ".webp";
+  }
+  return ".jpg";
+}
+
+function triggerBlobDownload(blob: Blob, filename: string): void {
+  const blobUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.download = filename;
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+}
+
+async function downloadSingleImage(url: string, baseName: string): Promise<void> {
+  if (!url || typeof document === "undefined") return;
+
+  if (url.startsWith("data:")) {
+    const mimeMatch = url.match(/^data:([^;]+);/);
+    const ext = extensionFromMimeOrUrl(mimeMatch?.[1], url);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${baseName}${ext}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return;
+  }
+
+  try {
+    const proxyUrl = `/api/media/proxy?url=${encodeURIComponent(
+      url
+    )}&download=1&filename=${encodeURIComponent(baseName)}`;
+    const res = await fetch(proxyUrl);
+    if (res.ok) {
+      const disposition = res.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="([^"]+)"/i);
+      const filename =
+        match?.[1] ||
+        `${baseName}${extensionFromMimeOrUrl(
+          res.headers.get("content-type"),
+          url
+        )}`;
+      const blob = await res.blob();
+      triggerBlobDownload(blob, filename);
+      return;
+    }
+  } catch {
+    // Fallback para fetch direto abaixo
+  }
+
+  try {
+    const directRes = await fetch(url);
+    if (directRes.ok) {
+      const blob = await directRes.blob();
+      const ext = extensionFromMimeOrUrl(
+        blob.type || directRes.headers.get("content-type"),
+        url
+      );
+      triggerBlobDownload(blob, `${baseName}${ext}`);
+      return;
+    }
+  } catch {
+    // Fallback final abre em nova aba
+  }
+
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+async function downloadImageList(urls: string[], baseName: string): Promise<void> {
+  const validUrls = urls.filter((u) => Boolean(u?.trim()));
+  if (validUrls.length === 0) return;
+
+  if (validUrls.length === 1) {
+    await downloadSingleImage(validUrls[0], baseName);
+    return;
+  }
+
+  for (let i = 0; i < validUrls.length; i++) {
+    await downloadSingleImage(validUrls[i], `${baseName}-slide-${i + 1}`);
+    if (i < validUrls.length - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+}
+
+function mergePromptWithLegacyBenefits(
+  prompt: string,
+  benefits?: string[] | null
+): string {
+  const base = (prompt || "").trim();
+  const normalizedBase = base
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const missing = (benefits || [])
+    .map((b) => b.trim())
+    .filter((b) => {
+      if (!b) return false;
+      const normB = b
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase();
+      return !normalizedBase.includes(normB);
+    });
+  if (missing.length === 0) return base;
+  const bullets = missing.map((b) => `- ${b}`).join("\n");
+  return base
+    ? `${base}\n\nPrincipais diferenciais:\n${bullets}`
+    : `Principais diferenciais:\n${bullets}`;
+}
+
+const GUIDED_PROMPT_TEMPLATE = `Título no topo da arte (opcional — apague esta linha no Piloto Automático para a IA variar): "[Frase curta de até 7 palavras]"
+
+1. O QUE VOCÊ VENDE E PARA QUEM
+- Produto/Serviço: [Ex: Criação de sites / Clínica odontológica / Consultoria]
+- Público-alvo: [Quem compra de você]
+- Objetivo do post: [Ex: gerar mensagens no WhatsApp / agendar avaliação / vender oferta]
+
+2. DOR, BENEFÍCIO E DIFERENCIAIS
+- Dor que resolve: [Principal problema do cliente]
+- Resultado principal: [Grande benefício que ele ganha]
+- Principais diferenciais (3 a 5 tópicos curtos):
+  - [Diferencial 1]
+  - [Diferencial 2]
+  - [Diferencial 3]
+
+3. ESTILO VISUAL DESEJADO (OPCIONAL)
+- Cena/Elemento principal: [Ex: pessoa feliz usando o produto / ambiente real bem iluminado]
+- Clima e estilo: [Ex: foto realista luminosa / visual moderno escuro e sofisticado]
+- Tom da legenda: [Ex: direto e persuasivo / acolhedor e consultivo]
+
+4. REGRAS E O QUE EVITAR
+- [Ex: nunca citar preços errados, nunca falar em mensalidade, não usar termos como X]`;
+
+const EXTERNAL_AI_META_PROMPT = `Você vai criar um BRIEFING DINÂMICO DE CAMPANHA para eu colar no meu sistema de automação de posts (PilotFlow), que vai gerar vários criativos e legendas DIFERENTES ao longo da semana com base nesse mesmo texto.
+
+Analise a foto que enviei (se houver) e a descrição simples do meu negócio abaixo, e transforme isso em um briefing limpo, enxuto e em português perfeito.
+
+REGRAS OBRIGATÓRIAS:
+1. NÃO crie um roteiro estático de uma única imagem nem trave um título fixo entre aspas — o sistema precisa variar títulos, layouts e ângulos em cada post.
+2. NÃO inclua proporção/formato (1:1, 4:5, 9:16), não escreva legenda pronta e não inclua saudações ("Claro, aqui está..."). Entregue APENAS o texto final pronto para copiar e colar.
+3. Deixe 100% claro logo nas 2 primeiras linhas O QUE é vendido e PARA QUEM (público-alvo), evitando qualquer ambiguidade.
+4. Liste de 4 a 6 diferenciais/ângulos distintos em tópicos curtos para a IA alternar o foco a cada publicação.
+5. Descreva o estilo visual geral inspirado na foto (ex.: atmosfera, tipo de cena/produto, iluminação), sem travar posições rígidas de texto nem códigos de cor.
+6. Inclua um bloco curto de "Regras e o que evitar" com base no que eu informar.
+
+EXEMPLO DO FORMATO IDEAL DE SAÍDA (substitua 100% pelo meu negócio):
+---
+OBJETIVO: Venda de [produto/serviço] para [público-alvo específico], com foco em [objetivo: gerar mensagens no WhatsApp / agendamentos / vendas]. Fale sempre direto com [quem decide a compra].
+
+DORES E ÂNGULOS PARA VARIAR A CADA POST:
+- [Ângulo/Diferencial 1 curto e claro]
+- [Ângulo/Diferencial 2 curto e claro]
+- [Ângulo/Diferencial 3 curto e claro]
+- [Ângulo/Diferencial 4 curto e claro]
+
+UNIVERSO VISUAL E TOM:
+- Mostrar [elementos reais do produto/ambiente observados na foto], em composições variadas, luminosas e limpas (sempre full-bleed e sem poluição visual).
+- Tom de voz: [ex.: direto, confiável e persuasivo].
+
+REGRAS E O QUE EVITAR:
+- [Restrições importantes do negócio, termos proibidos e cuidados].
+---
+
+AGORA, AQUI ESTÃO AS INFORMAÇÕES DO MEU NEGÓCIO (e a foto em anexo):
+- O que eu vendo: [escreva aqui em 1 ou 2 frases simples]
+- Quem é meu cliente: [escreva aqui]
+- Diferenciais / preço / detalhes importantes: [escreva aqui]
+- O que NÃO quero que a IA fale: [opcional]`;
+
+function PromptGuidePanel({
+  hasExistingText,
+  onReplace,
+  onAppend,
+  onClose,
+}: {
+  hasExistingText: boolean;
+  onReplace: (template: string) => void;
+  onAppend: (template: string) => void;
+  onClose: () => void;
+}) {
+  const [guideTab, setGuideTab] = useState<"template" | "external_ai">(
+    "template"
+  );
+  const [copied, setCopied] = useState(false);
+  const [copiedMeta, setCopiedMeta] = useState(false);
+
+  async function handleCopy(text: string, isMeta: boolean) {
+    try {
+      await navigator.clipboard?.writeText(text);
+      if (isMeta) {
+        setCopiedMeta(true);
+        setTimeout(() => setCopiedMeta(false), 1800);
+      } else {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1800);
+      }
+    } catch {
+      setCopied(false);
+      setCopiedMeta(false);
+    }
+  }
+
+  return (
+    <div className="mb-2 mt-2 space-y-2.5 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3.5 text-xs text-slate-700">
+      <div className="flex items-center justify-between gap-2">
+        <p className="font-extrabold text-indigo-950">
+          Como montar um bom prompt no PilotFlow
+        </p>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg px-2 py-0.5 text-[11px] font-bold text-slate-500 transition hover:bg-white hover:text-slate-800"
+        >
+          Fechar
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          onClick={() => setGuideTab("template")}
+          className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
+            guideTab === "template"
+              ? "bg-indigo-600 text-white shadow-2xs"
+              : "border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-100/60"
+          }`}
+        >
+          1. Preencher aqui
+        </button>
+        <button
+          type="button"
+          onClick={() => setGuideTab("external_ai")}
+          className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
+            guideTab === "external_ai"
+              ? "bg-indigo-600 text-white shadow-2xs"
+              : "border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-100/60"
+          }`}
+        >
+          2. Criar no ChatGPT / Gemini (com foto)
+        </button>
+      </div>
+
+      {guideTab === "template" ? (
+        <>
+          <ul className="list-disc space-y-1 pl-4 text-[11px] leading-relaxed text-slate-600">
+            <li>
+              <strong>Formato, preço, logo e CTA:</strong> o sistema já aplica
+              pelos campos da tela — não precisa repetir no texto.
+            </li>
+            <li>
+              <strong>Título fixo (opcional):</strong> a linha{" "}
+              <code className="rounded bg-white px-1 py-0.5 text-[10px]">
+                Título no topo da arte: &quot;...&quot;
+              </code>{" "}
+              trava exatamente essa frase (ótima no Estúdio Manual; no Piloto
+              Automático, apague a linha para a IA variar).
+            </li>
+            <li>
+              <strong>Substitua os colchetes</strong>{" "}
+              <code className="rounded bg-white px-1 py-0.5 text-[10px]">
+                [...]
+              </code>{" "}
+              pelos seus dados reais e apague o que não for usar — prompts
+              enxutos geram imagens mais nítidas e sem erros de escrita.
+            </li>
+          </ul>
+
+          <pre className="max-h-52 overflow-y-auto whitespace-pre-wrap rounded-lg border border-indigo-100 bg-white p-2.5 font-sans text-[11px] leading-relaxed text-slate-700">
+            {GUIDED_PROMPT_TEMPLATE}
+          </pre>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {!hasExistingText ? (
+              <button
+                type="button"
+                onClick={() => onReplace(GUIDED_PROMPT_TEMPLATE)}
+                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-2xs transition hover:bg-indigo-700"
+              >
+                Usar este modelo no Prompt
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onReplace(GUIDED_PROMPT_TEMPLATE)}
+                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-2xs transition hover:bg-indigo-700"
+                >
+                  Substituir Prompt atual
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onAppend(GUIDED_PROMPT_TEMPLATE)}
+                  className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-[11px] font-bold text-indigo-700 transition hover:bg-indigo-100/60"
+                >
+                  Adicionar ao final
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => void handleCopy(GUIDED_PROMPT_TEMPLATE, false)}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700 transition hover:bg-slate-100"
+            >
+              {copied ? "Copiado!" : "Copiar modelo"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <ol className="list-decimal space-y-1 pl-4 text-[11px] leading-relaxed text-slate-600">
+            <li>
+              Clique em <strong>Copiar comando para ChatGPT / Gemini</strong>{" "}
+              abaixo.
+            </li>
+            <li>
+              Abra seu ChatGPT ou Gemini, <strong>anexe uma foto</strong> do seu
+              produto/espaço (opcional), cole o comando e preencha só as 4
+              linhas simples no final.
+            </li>
+            <li>
+              Copie a resposta gerada (briefing dinâmico que permite à IA variar
+              criativos e legendas a cada post) e cole aqui no campo Prompt.
+            </li>
+          </ol>
+
+          <pre className="max-h-52 overflow-y-auto whitespace-pre-wrap rounded-lg border border-indigo-100 bg-white p-2.5 font-sans text-[11px] leading-relaxed text-slate-700">
+            {EXTERNAL_AI_META_PROMPT}
+          </pre>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleCopy(EXTERNAL_AI_META_PROMPT, true)}
+              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-2xs transition hover:bg-indigo-700"
+            >
+              {copiedMeta
+                ? "Comando copiado!"
+                : "Copiar comando para ChatGPT / Gemini"}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function deriveRatioFromTargets(targets: PublishTargets): AspectRatio {
   const hasFeed = targets.ig_feed || targets.fb_feed;
   const hasVertical =
@@ -773,8 +1162,8 @@ export default function SaasAppPage() {
   const [topicTitle, setTopicTitle] = useState("");
   const [topicTemplateId, setTopicTemplateId] = useState("custom");
   const [topicPrompt, setTopicPrompt] = useState("");
+  const [showTopicPromptGuide, setShowTopicPromptGuide] = useState(false);
   const [topicPrice, setTopicPrice] = useState("");
-  const [topicBenefitsText, setTopicBenefitsText] = useState("");
   const [topicFormat, setTopicFormat] = useState<PostFormat>("SINGLE");
   const [topicSlides, setTopicSlides] = useState(3);
   const [topicRatio, setTopicRatio] = useState<AspectRatio>("1:1");
@@ -803,6 +1192,7 @@ export default function SaasAppPage() {
   const [studioTopicId, setStudioTopicId] = useState<string>("__free__");
   const [studioTitle, setStudioTitle] = useState("");
   const [studioPrompt, setStudioPrompt] = useState("");
+  const [showStudioPromptGuide, setShowStudioPromptGuide] = useState(false);
   const [studioPrice, setStudioPrice] = useState("");
   const [studioFormat, setStudioFormat] = useState<PostFormat>("SINGLE");
   const [studioSlides, setStudioSlides] = useState(3);
@@ -848,6 +1238,21 @@ export default function SaasAppPage() {
   } | null>(null);
   const [approvingPostId, setApprovingPostId] = useState<string | null>(null);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
+
+  async function handleDownloadMedia(
+    key: string,
+    urls: string[],
+    baseName: string
+  ) {
+    if (!urls.length || downloadingKey) return;
+    setDownloadingKey(key);
+    try {
+      await downloadImageList(urls, baseName);
+    } finally {
+      setDownloadingKey(null);
+    }
+  }
 
   // History filter & pagination (20 em 20)
   const [historyVisibleCount, setHistoryVisibleCount] = useState(20);
@@ -902,7 +1307,12 @@ export default function SaasAppPage() {
       );
       setStudioTopicId(first.id);
       setStudioTitle(first.title);
-      setStudioPrompt(first.prompt_instructions);
+      setStudioPrompt(
+        mergePromptWithLegacyBenefits(
+          first.prompt_instructions,
+          first.benefits_json
+        )
+      );
       setStudioPrice(first.offer_price || "");
       setStudioFormat(first.post_format);
       setStudioSlides(first.slides_count);
@@ -1399,7 +1809,6 @@ export default function SaasAppPage() {
     setTopicTemplateId("custom");
     setTopicPrompt("");
     setTopicPrice("");
-    setTopicBenefitsText("");
     setTopicFormat("SINGLE");
     setTopicSlides(3);
     setTopicPublishTargets(defaultTargets);
@@ -1422,9 +1831,10 @@ export default function SaasAppPage() {
     setEditingTopicId(t.id);
     setTopicTitle(t.title);
     setTopicTemplateId(t.niche_template || "custom");
-    setTopicPrompt(t.prompt_instructions);
+    setTopicPrompt(
+      mergePromptWithLegacyBenefits(t.prompt_instructions, t.benefits_json)
+    );
     setTopicPrice(t.offer_price || "");
-    setTopicBenefitsText((t.benefits_json || []).join("\n"));
     setTopicFormat(t.post_format);
     setTopicSlides(t.slides_count || 3);
     setTopicPublishTargets(targets);
@@ -1447,8 +1857,9 @@ export default function SaasAppPage() {
     if (!found) return;
     setTopicTitle(found.title);
     setTopicPrice(found.offer_price);
-    setTopicBenefitsText(found.benefits.join("\n"));
-    setTopicPrompt(found.prompt_instructions);
+    setTopicPrompt(
+      mergePromptWithLegacyBenefits(found.prompt_instructions, found.benefits)
+    );
     setTopicPhotoPrompt(found.ai_photo_prompt);
   }
 
@@ -1458,11 +1869,6 @@ export default function SaasAppPage() {
     setSavingTopic(true);
     setGlobalNotice(null);
     try {
-      const benefits = topicBenefitsText
-        .split("\n")
-        .map((s) => s.trim())
-        .filter(Boolean);
-
       const res = await fetch("/api/saas/state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1475,7 +1881,7 @@ export default function SaasAppPage() {
             niche_template: topicTemplateId,
             prompt_instructions: topicPrompt,
             offer_price: topicPrice,
-            benefits_json: benefits,
+            benefits_json: [],
             post_format: topicFormat,
             slides_count: topicFormat === "CAROUSEL" ? topicSlides : 1,
             aspect_ratio: deriveRatioFromTargets(topicPublishTargets),
@@ -1603,7 +2009,12 @@ export default function SaasAppPage() {
       workspace?.integrations.tiktok_enabled
     );
     setStudioTitle(found.title);
-    setStudioPrompt(found.prompt_instructions);
+    setStudioPrompt(
+      mergePromptWithLegacyBenefits(
+        found.prompt_instructions,
+        found.benefits_json
+      )
+    );
     setStudioPrice(found.offer_price || "");
     setStudioFormat(found.post_format);
     setStudioSlides(found.slides_count);
@@ -1791,7 +2202,14 @@ export default function SaasAppPage() {
 
     setStudioTopicId(matchedTopic ? matchedTopic.id : "__free__");
     setStudioTitle(matchedTopic?.title || post.headline || "");
-    setStudioPrompt(matchedTopic?.prompt_instructions || "");
+    setStudioPrompt(
+      matchedTopic
+        ? mergePromptWithLegacyBenefits(
+            matchedTopic.prompt_instructions,
+            matchedTopic.benefits_json
+          )
+        : ""
+    );
     setStudioPrice(matchedTopic?.offer_price || "");
     setStudioFormat(post.format);
     setStudioSlides(post.slides_count || post.image_urls_json.length || 3);
@@ -3210,6 +3628,35 @@ export default function SaasAppPage() {
                                   alt={d.headline}
                                   className="h-full w-full object-cover transition group-hover:scale-105"
                                 />
+                                <button
+                                  type="button"
+                                  disabled={Boolean(downloadingKey)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleDownloadMedia(
+                                      `draft-${d.id}`,
+                                      d.image_urls_json,
+                                      buildDownloadBaseName(
+                                        "pilotflow-rascunho",
+                                        d.headline
+                                      )
+                                    );
+                                  }}
+                                  onKeyDown={(e) => e.stopPropagation()}
+                                  title={
+                                    d.image_urls_json.length > 1
+                                      ? `Baixar todos os ${d.image_urls_json.length} slides`
+                                      : "Baixar imagem"
+                                  }
+                                  aria-label={
+                                    d.image_urls_json.length > 1
+                                      ? `Baixar todos os ${d.image_urls_json.length} slides`
+                                      : "Baixar imagem"
+                                  }
+                                  className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/80 text-white shadow-md transition hover:bg-indigo-600 disabled:opacity-50"
+                                >
+                                  <DownloadIcon className="h-3.5 w-3.5" />
+                                </button>
                                 <span className="absolute bottom-1 right-1 rounded bg-slate-900/80 px-1.5 py-0.5 text-[9px] font-bold text-white">
                                   {d.image_urls_json.length > 1
                                     ? `${d.image_urls_json.length} slides`
@@ -3548,28 +3995,42 @@ export default function SaasAppPage() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-600">
-                      Prompt / Briefing para a IA
-                    </label>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label className="block text-xs font-bold text-slate-600">
+                        Prompt / Briefing e Diferenciais para a IA (Arte e Legenda)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setShowTopicPromptGuide((prev) => !prev)
+                        }
+                        className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-[11px] font-bold text-indigo-700 transition hover:bg-indigo-100"
+                      >
+                        {showTopicPromptGuide ? "Fechar guia" : "Guia de Prompt"}
+                      </button>
+                    </div>
+                    {showTopicPromptGuide && (
+                      <PromptGuidePanel
+                        hasExistingText={Boolean(topicPrompt.trim())}
+                        onReplace={(tpl) => {
+                          setTopicPrompt(tpl);
+                          setShowTopicPromptGuide(false);
+                        }}
+                        onAppend={(tpl) => {
+                          setTopicPrompt((prev) =>
+                            prev.trim() ? `${prev.trim()}\n\n${tpl}` : tpl
+                          );
+                          setShowTopicPromptGuide(false);
+                        }}
+                        onClose={() => setShowTopicPromptGuide(false)}
+                      />
+                    )}
                     <textarea
-                      rows={3}
+                      rows={5}
                       value={topicPrompt}
                       onChange={(e) => setTopicPrompt(e.target.value)}
                       required
-                      placeholder="Descreva o produto/serviço, público-alvo, dores e oferta..."
-                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-600">
-                      Benefícios / Diferenciais (1 por linha)
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={topicBenefitsText}
-                      onChange={(e) => setTopicBenefitsText(e.target.value)}
-                      placeholder="Entrega rápida&#10;Garantia de 30 dias&#10;Atendimento no WhatsApp"
+                      placeholder="Descreva o produto/serviço, público-alvo, regras e principais diferenciais em tópicos..."
                       className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
                     />
                   </div>
@@ -3818,14 +4279,41 @@ export default function SaasAppPage() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-600">
-                      Prompt para a IA (Arte e Legenda)
-                    </label>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label className="block text-xs font-bold text-slate-600">
+                        Prompt para a IA (Arte, Diferenciais e Legenda)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setShowStudioPromptGuide((prev) => !prev)
+                        }
+                        className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-[11px] font-bold text-indigo-700 transition hover:bg-indigo-100"
+                      >
+                        {showStudioPromptGuide ? "Fechar guia" : "Guia de Prompt"}
+                      </button>
+                    </div>
+                    {showStudioPromptGuide && (
+                      <PromptGuidePanel
+                        hasExistingText={Boolean(studioPrompt.trim())}
+                        onReplace={(tpl) => {
+                          setStudioPrompt(tpl);
+                          setShowStudioPromptGuide(false);
+                        }}
+                        onAppend={(tpl) => {
+                          setStudioPrompt((prev) =>
+                            prev.trim() ? `${prev.trim()}\n\n${tpl}` : tpl
+                          );
+                          setShowStudioPromptGuide(false);
+                        }}
+                        onClose={() => setShowStudioPromptGuide(false)}
+                      />
+                    )}
                     <textarea
                       rows={5}
                       value={studioPrompt}
                       onChange={(e) => setStudioPrompt(e.target.value)}
-                      placeholder="Descreva ou cole o prompt completo para a IA gerar a imagem e a legenda exatamente como você deseja..."
+                      placeholder="Descreva ou cole o prompt completo com oferta, regras e diferenciais para a IA gerar a imagem e a legenda..."
                       className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500"
                     />
                   </div>
@@ -4105,32 +4593,83 @@ export default function SaasAppPage() {
                                   <span className="text-xs font-extrabold text-slate-900">
                                     Prévia Feed • 1080×1080 (1:1)
                                   </span>
-                                  <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-bold text-indigo-800">
-                                    {feedNetworks.length > 0
-                                      ? feedNetworks.join(" + ")
-                                      : "Feed 1:1"}
-                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    {feedUrls.length > 1 && (
+                                      <button
+                                        type="button"
+                                        disabled={Boolean(downloadingKey)}
+                                        onClick={() =>
+                                          void handleDownloadMedia(
+                                            "studio-feed-all",
+                                            feedUrls,
+                                            buildDownloadBaseName(
+                                              "pilotflow-feed",
+                                              studioPreview.post.headline_arte
+                                            )
+                                          )
+                                        }
+                                        className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[10px] font-bold text-slate-700 shadow-2xs transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-50"
+                                        title={`Baixar todos os ${feedUrls.length} slides`}
+                                      >
+                                        <DownloadIcon className="h-3 w-3" />
+                                        {downloadingKey === "studio-feed-all"
+                                          ? "Baixando..."
+                                          : "Baixar todos"}
+                                      </button>
+                                    )}
+                                    <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-bold text-indigo-800">
+                                      {feedNetworks.length > 0
+                                        ? feedNetworks.join(" + ")
+                                        : "Feed 1:1"}
+                                    </span>
+                                  </div>
                                 </div>
                                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                   {feedUrls.map((url, idx) => (
-                                    <a
+                                    <div
                                       key={`feed-${url}-${idx}`}
-                                      href={url}
-                                      target="_blank"
-                                      rel="noreferrer"
                                       className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs"
-                                      title="Clique para abrir imagem 1080×1080 em tamanho original"
                                     >
-                                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                                      <img
-                                        src={url}
-                                        alt={`Arte Feed ${idx + 1}`}
-                                        className="aspect-square w-full object-cover"
-                                      />
-                                      <span className="absolute bottom-2 right-2 rounded-lg bg-slate-900/80 px-2 py-1 text-[10px] font-bold text-white opacity-90 group-hover:opacity-100">
-                                        Slide {idx + 1} (1080×1080) • HD ↗
-                                      </span>
-                                    </a>
+                                      <a
+                                        href={url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="block"
+                                        title="Clique para abrir imagem 1080×1080 em tamanho original"
+                                      >
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img
+                                          src={url}
+                                          alt={`Arte Feed ${idx + 1}`}
+                                          className="aspect-square w-full object-cover"
+                                        />
+                                        <span className="absolute bottom-2 right-2 rounded-lg bg-slate-900/80 px-2 py-1 text-[10px] font-bold text-white opacity-90 group-hover:opacity-100">
+                                          Slide {idx + 1} (1080×1080) • HD ↗
+                                        </span>
+                                      </a>
+                                      <button
+                                        type="button"
+                                        disabled={Boolean(downloadingKey)}
+                                        onClick={() =>
+                                          void handleDownloadMedia(
+                                            `studio-feed-${idx}`,
+                                            [url],
+                                            buildDownloadBaseName(
+                                              "pilotflow-feed",
+                                              studioPreview.post.headline_arte
+                                            ) +
+                                              (feedUrls.length > 1
+                                                ? `-slide-${idx + 1}`
+                                                : "")
+                                          )
+                                        }
+                                        title="Baixar imagem"
+                                        aria-label={`Baixar imagem Feed Slide ${idx + 1}`}
+                                        className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-slate-900/80 text-white shadow-md backdrop-blur-xs transition hover:bg-indigo-600 disabled:opacity-50"
+                                      >
+                                        <DownloadIcon className="h-4 w-4" />
+                                      </button>
+                                    </div>
                                   ))}
                                 </div>
                               </div>
@@ -4143,30 +4682,81 @@ export default function SaasAppPage() {
                                     Prévia Stories &amp; TikTok • 1080×1920
                                     (9:16 Vertical)
                                   </span>
-                                  <span className="rounded-full bg-indigo-600 px-2.5 py-0.5 text-[10px] font-bold text-white">
-                                    {verticalNetworks.join(" + ")}
-                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    {verticalUrls.length > 1 && (
+                                      <button
+                                        type="button"
+                                        disabled={Boolean(downloadingKey)}
+                                        onClick={() =>
+                                          void handleDownloadMedia(
+                                            "studio-vert-all",
+                                            verticalUrls,
+                                            buildDownloadBaseName(
+                                              "pilotflow-story",
+                                              studioPreview.post.headline_arte
+                                            )
+                                          )
+                                        }
+                                        className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-white px-2.5 py-0.5 text-[10px] font-bold text-indigo-700 shadow-2xs transition hover:bg-indigo-100 disabled:opacity-50"
+                                        title={`Baixar todos os ${verticalUrls.length} slides`}
+                                      >
+                                        <DownloadIcon className="h-3 w-3" />
+                                        {downloadingKey === "studio-vert-all"
+                                          ? "Baixando..."
+                                          : "Baixar todos"}
+                                      </button>
+                                    )}
+                                    <span className="rounded-full bg-indigo-600 px-2.5 py-0.5 text-[10px] font-bold text-white">
+                                      {verticalNetworks.join(" + ")}
+                                    </span>
+                                  </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                                   {verticalUrls.map((url, idx) => (
-                                    <a
+                                    <div
                                       key={`vert-${url}-${idx}`}
-                                      href={url}
-                                      target="_blank"
-                                      rel="noreferrer"
                                       className="group relative overflow-hidden rounded-2xl border border-indigo-200 bg-white shadow-xs"
-                                      title="Clique para abrir imagem 1080×1920 em tamanho original"
                                     >
-                                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                                      <img
-                                        src={url}
-                                        alt={`Arte Vertical ${idx + 1}`}
-                                        className="aspect-[9/16] w-full object-cover"
-                                      />
-                                      <span className="absolute bottom-2 right-2 rounded-lg bg-indigo-950/85 px-2 py-1 text-[10px] font-bold text-white opacity-90 group-hover:opacity-100">
-                                        Slide {idx + 1} (1080×1920) ↗
-                                      </span>
-                                    </a>
+                                      <a
+                                        href={url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="block"
+                                        title="Clique para abrir imagem 1080×1920 em tamanho original"
+                                      >
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img
+                                          src={url}
+                                          alt={`Arte Vertical ${idx + 1}`}
+                                          className="aspect-[9/16] w-full object-cover"
+                                        />
+                                        <span className="absolute bottom-2 right-2 rounded-lg bg-indigo-950/85 px-2 py-1 text-[10px] font-bold text-white opacity-90 group-hover:opacity-100">
+                                          Slide {idx + 1} (1080×1920) ↗
+                                        </span>
+                                      </a>
+                                      <button
+                                        type="button"
+                                        disabled={Boolean(downloadingKey)}
+                                        onClick={() =>
+                                          void handleDownloadMedia(
+                                            `studio-vert-${idx}`,
+                                            [url],
+                                            buildDownloadBaseName(
+                                              "pilotflow-story",
+                                              studioPreview.post.headline_arte
+                                            ) +
+                                              (verticalUrls.length > 1
+                                                ? `-slide-${idx + 1}`
+                                                : "")
+                                          )
+                                        }
+                                        title="Baixar imagem"
+                                        aria-label={`Baixar imagem Vertical Slide ${idx + 1}`}
+                                        className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-indigo-950/85 text-white shadow-md backdrop-blur-xs transition hover:bg-indigo-600 disabled:opacity-50"
+                                      >
+                                        <DownloadIcon className="h-4 w-4" />
+                                      </button>
+                                    </div>
                                   ))}
                                 </div>
                               </div>
@@ -4193,12 +4783,33 @@ export default function SaasAppPage() {
                               <p className="mb-1 text-[11px] font-bold text-emerald-700">
                                 Foto Ambientada pela IA
                               </p>
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={studioPreview.post.enhanced_photo_url}
-                                alt="Melhorada IA"
-                                className="h-32 w-full rounded-lg object-cover"
-                              />
+                              <div className="relative overflow-hidden rounded-lg">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={studioPreview.post.enhanced_photo_url}
+                                  alt="Melhorada IA"
+                                  className="h-32 w-full object-cover"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={Boolean(downloadingKey)}
+                                  onClick={() =>
+                                    void handleDownloadMedia(
+                                      "studio-enhanced",
+                                      [studioPreview.post.enhanced_photo_url!],
+                                      buildDownloadBaseName(
+                                        "pilotflow-foto-ia",
+                                        studioPreview.post.headline_arte
+                                      )
+                                    )
+                                  }
+                                  title="Baixar foto ambientada pela IA"
+                                  aria-label="Baixar foto ambientada pela IA"
+                                  className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-slate-900/80 text-white shadow-md transition hover:bg-emerald-600 disabled:opacity-50"
+                                >
+                                  <DownloadIcon className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
                             </div>
                           </div>
                         )}
@@ -5828,24 +6439,53 @@ export default function SaasAppPage() {
                             >
                               <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
                                 {p.image_urls_json[0] && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenDraftInStudio(p)}
-                                    className="relative h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-slate-200"
-                                    title="Clique para visualizar e editar no Estúdio"
-                                  >
-                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img
-                                      src={p.image_urls_json[0]}
-                                      alt={p.headline}
-                                      className="h-full w-full object-cover transition hover:scale-105"
-                                    />
-                                    {p.image_urls_json.length > 1 && (
-                                      <span className="absolute bottom-1 right-1 rounded bg-slate-900/80 px-1.5 py-0.5 text-[9px] font-bold text-white">
-                                        {p.image_urls_json.length} slides
-                                      </span>
-                                    )}
-                                  </button>
+                                  <div className="relative h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-slate-200">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenDraftInStudio(p)}
+                                      className="block h-full w-full"
+                                      title="Clique para visualizar e editar no Estúdio"
+                                    >
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img
+                                        src={p.image_urls_json[0]}
+                                        alt={p.headline}
+                                        className="h-full w-full object-cover transition hover:scale-105"
+                                      />
+                                      {p.image_urls_json.length > 1 && (
+                                        <span className="absolute bottom-1 right-1 rounded bg-slate-900/80 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                                          {p.image_urls_json.length} slides
+                                        </span>
+                                      )}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={Boolean(downloadingKey)}
+                                      onClick={() =>
+                                        void handleDownloadMedia(
+                                          `history-${p.id}`,
+                                          p.image_urls_json,
+                                          buildDownloadBaseName(
+                                            "pilotflow-post",
+                                            p.headline
+                                          )
+                                        )
+                                      }
+                                      title={
+                                        p.image_urls_json.length > 1
+                                          ? `Baixar todos os ${p.image_urls_json.length} slides`
+                                          : "Baixar imagem"
+                                      }
+                                      aria-label={
+                                        p.image_urls_json.length > 1
+                                          ? `Baixar todos os ${p.image_urls_json.length} slides`
+                                          : "Baixar imagem"
+                                      }
+                                      className="absolute right-1.5 top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-slate-900/80 text-white shadow-md transition hover:bg-indigo-600 disabled:opacity-50"
+                                    >
+                                      <DownloadIcon className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
                                 )}
                                 <div className="min-w-0 flex-1 space-y-1 text-xs">
                                   <div className="flex flex-wrap items-center justify-between gap-1.5">

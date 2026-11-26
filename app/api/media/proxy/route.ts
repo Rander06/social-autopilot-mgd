@@ -23,8 +23,31 @@ function isAllowedMediaUrl(rawUrl: string): boolean {
   }
 }
 
+function sanitizeDownloadFilename(rawName: string, contentType: string): string {
+  const ext = contentType.includes("png")
+    ? ".png"
+    : contentType.includes("webp")
+    ? ".webp"
+    : ".jpg";
+
+  const cleaned = rawName
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "")
+    .slice(0, 80);
+
+  const base = cleaned || "pilotflow-arte";
+  if (/\.(jpg|jpeg|png|webp)$/i.test(base)) {
+    return base;
+  }
+  return `${base}${ext}`;
+}
+
 export async function GET(request: NextRequest) {
   const targetUrl = request.nextUrl.searchParams.get("url")?.trim();
+  const isDownload = request.nextUrl.searchParams.get("download") === "1";
+  const requestedFilename =
+    request.nextUrl.searchParams.get("filename")?.trim() || "";
+
   if (!targetUrl || !isAllowedMediaUrl(targetUrl)) {
     return NextResponse.json({ error: "URL de mídia inválida." }, { status: 400 });
   }
@@ -41,6 +64,25 @@ export async function GET(request: NextRequest) {
     }
 
     const rawBuffer = Buffer.from(await upstream.arrayBuffer());
+
+    if (isDownload) {
+      const upstreamType =
+        upstream.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ||
+        "image/jpeg";
+      const contentType = upstreamType.startsWith("image/")
+        ? upstreamType
+        : "image/jpeg";
+      const safeName = sanitizeDownloadFilename(requestedFilename, contentType);
+
+      return new NextResponse(new Uint8Array(rawBuffer), {
+        status: 200,
+        headers: {
+          "Content-Type": contentType,
+          "Content-Disposition": `attachment; filename="${safeName}"`,
+          "Cache-Control": "private, max-age=3600",
+        },
+      });
+    }
 
     // Normaliza toda imagem para JPEG dentro dos limites do TikTok Photo Mode
     // (máx. 1080x1920, mín. 720px no maior lado, sem transparência e EXIF corrigido).
