@@ -24,6 +24,7 @@ import {
   deletePostRecord,
   deleteTopic,
   deleteTopicPhoto,
+  EmailNotConfirmedError,
   getCompanyById,
   getCompanySecrets,
   getCompanyWorkspace,
@@ -37,6 +38,7 @@ import {
   recordGeneratedPost,
   refreshTikTokTokenIfNeeded,
   registerNewAccount,
+  resendSupabaseSignupConfirmation,
   resetPasswordWithRecoveryAccessToken,
   resetUserPasswordByAdminOrSecret,
   saveBrandSettings,
@@ -139,21 +141,38 @@ export async function POST(request: NextRequest) {
   const action = String(body.action || "");
 
   if (action === "login") {
-    const authResult = await authenticateLogin({
-      email: typeof body.email === "string" ? body.email : undefined,
-      password: typeof body.password === "string" ? body.password : undefined,
-      cronSecret:
-        typeof body.cronSecret === "string" ? body.cronSecret : undefined,
-    });
+    try {
+      const authResult = await authenticateLogin({
+        email: typeof body.email === "string" ? body.email : undefined,
+        password: typeof body.password === "string" ? body.password : undefined,
+        cronSecret:
+          typeof body.cronSecret === "string" ? body.cronSecret : undefined,
+      });
 
-    if (!authResult) {
+      if (!authResult) {
+        return NextResponse.json(
+          { error: "E-mail, senha ou CRON_SECRET inválido." },
+          { status: 401 }
+        );
+      }
+
+      return buildAuthenticatedResponse(authResult.user);
+    } catch (err) {
+      if (err instanceof EmailNotConfirmedError) {
+        return NextResponse.json(
+          {
+            error: err.message,
+            code: err.code,
+            email: err.email,
+          },
+          { status: 403 }
+        );
+      }
       return NextResponse.json(
-        { error: "E-mail, senha ou CRON_SECRET inválido." },
-        { status: 401 }
+        { error: "Erro ao autenticar conta." },
+        { status: 500 }
       );
     }
-
-    return buildAuthenticatedResponse(authResult.user);
   }
 
   if (action === "register") {
@@ -168,13 +187,44 @@ export async function POST(request: NextRequest) {
         password: String(body.password || ""),
         adminSecret:
           typeof body.adminSecret === "string" ? body.adminSecret : undefined,
+        redirectTo:
+          typeof body.redirectTo === "string" ? body.redirectTo : undefined,
       });
+
+      if (reg.requiresEmailConfirmation) {
+        return NextResponse.json({
+          requiresEmailConfirmation: true,
+          email: reg.user.email,
+          message: `Conta criada! Enviamos um link de confirmação para ${reg.user.email}. Confirme seu e-mail (verifique também a caixa de spam) antes de entrar.`,
+        });
+      }
+
       return buildAuthenticatedResponse(reg.user);
     } catch (err) {
       return NextResponse.json(
         {
           error:
             err instanceof Error ? err.message : "Erro ao cadastrar conta.",
+        },
+        { status: 400 }
+      );
+    }
+  }
+
+  if (action === "resend_confirmation") {
+    try {
+      const result = await resendSupabaseSignupConfirmation(
+        String(body.email || ""),
+        typeof body.redirectTo === "string" ? body.redirectTo : undefined
+      );
+      return NextResponse.json(result);
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error:
+            err instanceof Error
+              ? err.message
+              : "Erro ao reenviar link de confirmação.",
         },
         { status: 400 }
       );

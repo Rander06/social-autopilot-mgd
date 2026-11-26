@@ -451,9 +451,23 @@ async function sbAuthRequest<T>(
   return { ok: res.ok, status: res.status, data };
 }
 
+export class EmailNotConfirmedError extends Error {
+  readonly code = "EMAIL_NOT_CONFIRMED";
+  readonly email: string;
+  constructor(email: string) {
+    super(
+      "Seu e-mail ainda não foi confirmado. Verifique sua caixa de entrada (ou pasta de spam) e clique no link de confirmação."
+    );
+    this.name = "EmailNotConfirmedError";
+    this.email = email;
+  }
+}
+
 export async function findSupabaseAuthUserByEmail(email: string): Promise<{
   id: string;
   email?: string;
+  email_confirmed_at?: string | null;
+  confirmed_at?: string | null;
   user_metadata?: Record<string, unknown>;
 } | null> {
   if (!isSupabaseConfigured()) return null;
@@ -462,6 +476,8 @@ export async function findSupabaseAuthUserByEmail(email: string): Promise<{
     users?: Array<{
       id: string;
       email?: string;
+      email_confirmed_at?: string | null;
+      confirmed_at?: string | null;
       user_metadata?: Record<string, unknown>;
     }>;
   }>(`admin/users?page=1&per_page=50&filter=${encodeURIComponent(cleanEmail)}`);
@@ -508,6 +524,114 @@ export async function ensureSupabaseAuthUser(params: {
     return null;
   }
   return created.data;
+}
+
+async function signupSupabaseAuthUserWithEmailConfirmation(params: {
+  email: string;
+  password: string;
+  name: string;
+  role: string;
+  redirectTo?: string;
+}): Promise<{ id?: string; alreadyConfirmed: boolean }> {
+  const cleanEmail = params.email.trim().toLowerCase();
+  const query = params.redirectTo
+    ? `?redirect_to=${encodeURIComponent(params.redirectTo)}`
+    : "";
+
+  const res = await sbAuthRequest<{
+    id?: string;
+    access_token?: string;
+    email_confirmed_at?: string | null;
+    user?: {
+      id?: string;
+      email_confirmed_at?: string | null;
+      confirmed_at?: string | null;
+    };
+    msg?: string;
+    message?: string;
+    error_description?: string;
+  }>(`signup${query}`, {
+    method: "POST",
+    useAnonKey: true,
+    body: {
+      email: cleanEmail,
+      password: params.password,
+      data: {
+        name: params.name,
+        role: params.role,
+      },
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(
+      res.data?.msg ||
+        res.data?.error_description ||
+        res.data?.message ||
+        `Erro ao cadastrar usuário no Supabase Authentication (HTTP ${res.status}).`
+    );
+  }
+
+  const alreadyConfirmed = Boolean(
+    res.data?.access_token ||
+      res.data?.user?.email_confirmed_at ||
+      res.data?.user?.confirmed_at ||
+      res.data?.email_confirmed_at
+  );
+
+  return {
+    id: res.data?.user?.id || res.data?.id,
+    alreadyConfirmed,
+  };
+}
+
+export async function resendSupabaseSignupConfirmation(
+  email: string,
+  redirectTo?: string
+): Promise<{ sent: boolean; message: string }> {
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail) {
+    throw new Error("Informe o e-mail para reenviar o link de confirmação.");
+  }
+  if (!isSupabaseConfigured()) {
+    throw new Error("Supabase não configurado neste ambiente.");
+  }
+
+  const query = redirectTo
+    ? `?redirect_to=${encodeURIComponent(redirectTo)}`
+    : "";
+  const res = await sbAuthRequest<{
+    msg?: string;
+    message?: string;
+    error_description?: string;
+  }>(`resend${query}`, {
+    method: "POST",
+    useAnonKey: true,
+    body: {
+      type: "signup",
+      email: cleanEmail,
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(
+      res.data?.msg ||
+        res.data?.error_description ||
+        res.data?.message ||
+        `Erro ao reenviar confirmação no Supabase (HTTP ${res.status}).`
+    );
+  }
+
+  await appendAuditLog({
+    action: "EMAIL_CONFIRMATION_RESENT",
+    details_json: { email: cleanEmail },
+  });
+
+  return {
+    sent: true,
+    message:
+      "Reenviamos o link de confirmação para o seu e-mail. Verifique a caixa de entrada e a pasta de spam.",
+  };
 }
 
 async function verifyPasswordWithSupabaseAuth(
@@ -703,7 +827,12 @@ export async function registerNewAccount(input: {
   email: string;
   password: string;
   adminSecret?: string;
-}): Promise<{ user: Omit<UserAccount, "password_hash">; mode: "supabase" | "memory" }> {
+  redirectTo?: string;
+}): Promise<{
+  user: Omit<UserAccount, "password_hash">;
+  mode: "supabase" | "memory";
+  requiresEmailConfirmation: boolean;
+}> {
   await ensureSeededInSupabase();
   const cleanEmail = input.email.trim().toLowerCase();
   const pwd = input.password.trim();
@@ -733,6 +862,22 @@ export async function registerNewAccount(input: {
   const isSuperAdminSignup = Boolean(
     suppliedAdminSecret && envCron && suppliedAdminSecret === envCron
   );
+  const role = isSuperAdminSignup ? "SUPER_ADMIN" : "COMPANY_ADMIN";
+
+  let requiresEmailConfirmation = false;
+  let signupUserId: string | undefined;
+
+  if (isSupabaseConfigured() && !isSuperAdminSignup) {
+    const signupRes = await signupSupabaseAuthUserWithEmailConfirmation({
+      email: cleanEmail,
+      password: pwd,
+      name: fullName,
+      role,
+      redirectTo: input.redirectTo,
+    });
+    signupUserId = signupRes.id;
+    requiresEmailConfirmation = !signupRes.alreadyConfirmed;
+  }
 
   let targetCompanyId = "comp-mgd";
   if (!isSuperAdminSignup || input.companyName?.trim()) {
@@ -750,7 +895,6 @@ export async function registerNewAccount(input: {
     targetCompanyId = company.id;
   }
 
-  const role = isSuperAdminSignup ? "SUPER_ADMIN" : "COMPANY_ADMIN";
   const newUser: UserAccount = {
     id: generateId("usr"),
     company_id: targetCompanyId,
@@ -763,13 +907,26 @@ export async function registerNewAccount(input: {
   };
 
   if (isSupabaseConfigured()) {
-    await ensureSupabaseAuthUser({
-      email: cleanEmail,
-      password: pwd,
-      name: fullName,
-      role,
-      company_id: targetCompanyId,
-    });
+    if (isSuperAdminSignup) {
+      await ensureSupabaseAuthUser({
+        email: cleanEmail,
+        password: pwd,
+        name: fullName,
+        role,
+        company_id: targetCompanyId,
+      });
+    } else if (signupUserId) {
+      await sbAuthRequest(`admin/users/${signupUserId}`, {
+        method: "PUT",
+        body: {
+          user_metadata: {
+            name: fullName,
+            role,
+            company_id: targetCompanyId,
+          },
+        },
+      }).catch(() => {});
+    }
     await sbRequest("users?on_conflict=email", {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates" },
@@ -783,12 +940,20 @@ export async function registerNewAccount(input: {
     company_id: targetCompanyId,
     user_id: newUser.id,
     action: "USER_REGISTERED",
-    details_json: { email: cleanEmail, role },
+    details_json: {
+      email: cleanEmail,
+      role,
+      requires_email_confirmation: requiresEmailConfirmation,
+    },
   });
 
   const { password_hash: _ignored, ...safeUser } = newUser;
   void _ignored;
-  return { user: safeUser, mode: getDatabaseMode() };
+  return {
+    user: safeUser,
+    mode: getDatabaseMode(),
+    requiresEmailConfirmation,
+  };
 }
 
 async function sbRequest<T>(
@@ -1064,15 +1229,19 @@ export async function authenticateLogin(params: {
   const users = await listUsersInternal();
   const found = users.find((u) => u.email.toLowerCase() === email);
 
+  if (!found) return null;
+
   let authenticatedViaSupabaseAuth = false;
   if (isSupabaseConfigured()) {
+    const sbUser = await findSupabaseAuthUserByEmail(email);
+    if (sbUser && !sbUser.email_confirmed_at && !sbUser.confirmed_at) {
+      throw new EmailNotConfirmedError(email);
+    }
     authenticatedViaSupabaseAuth = await verifyPasswordWithSupabaseAuth(
       email,
       password
     );
   }
-
-  if (!found) return null;
 
   const validLocalHash = verifyPassword(password, found.password_hash);
   if (!authenticatedViaSupabaseAuth && !validLocalHash) return null;

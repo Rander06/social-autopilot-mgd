@@ -1097,6 +1097,10 @@ export default function SaasAppPage() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [authFeedback, setAuthFeedback] = useState<string | null>(null);
   const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [pendingConfirmEmail, setPendingConfirmEmail] = useState<string | null>(
+    null
+  );
+  const [resendingConfirm, setResendingConfirm] = useState(false);
 
   // Register states
   const [regCompanyName, setRegCompanyName] = useState("");
@@ -1416,12 +1420,24 @@ export default function SaasAppPage() {
       );
       const token = hashParams.get("access_token");
       const type = hashParams.get("type");
-      if (token && type === "recovery") {
+      const hashError = hashParams.get("error_description");
+      if (hashError) {
+        setLoginError(hashError);
+        window.history.replaceState(null, "", window.location.pathname);
+      } else if (token && type === "recovery") {
         setRecoveryAccessToken(token);
         setAuthScreen("recovery");
         setRecoveryMethod("reset");
         setAuthFeedback(
           "Link de recuperação validado! Digite abaixo a sua nova senha."
+        );
+        window.history.replaceState(null, "", window.location.pathname);
+      } else if (type === "signup" || type === "email") {
+        setAuthScreen("login");
+        setLoginMode("credentials");
+        setPendingConfirmEmail(null);
+        setAuthFeedback(
+          "E-mail confirmado com sucesso! Agora você já pode entrar com seu e-mail e senha."
         );
         window.history.replaceState(null, "", window.location.pathname);
       }
@@ -1446,9 +1462,13 @@ export default function SaasAppPage() {
       });
       const data = await res.json();
       if (!res.ok) {
+        if (data.code === "EMAIL_NOT_CONFIRMED") {
+          setPendingConfirmEmail(data.email || loginEmail.trim());
+        }
         setLoginError(data.error || "Falha ao autenticar.");
         return;
       }
+      setPendingConfirmEmail(null);
       setDatabaseMode(data.database_mode || "memory");
       setUser(data.user);
       setWorkspace(data.workspace);
@@ -1479,6 +1499,8 @@ export default function SaasAppPage() {
           email: regEmail,
           password: regPassword,
           adminSecret: regAdminSecret,
+          redirectTo:
+            typeof window !== "undefined" ? window.location.origin : undefined,
         }),
       });
       const data = await res.json();
@@ -1486,6 +1508,20 @@ export default function SaasAppPage() {
         setLoginError(data.error || "Não foi possível criar sua conta.");
         return;
       }
+      if (data.requiresEmailConfirmation) {
+        const targetEmail = data.email || regEmail.trim();
+        setPendingConfirmEmail(targetEmail);
+        setLoginEmail(targetEmail);
+        setRegPassword("");
+        setAuthScreen("login");
+        setLoginMode("credentials");
+        setAuthFeedback(
+          data.message ||
+            "Conta criada! Enviamos um link de confirmação para o seu e-mail."
+        );
+        return;
+      }
+      setPendingConfirmEmail(null);
       setDatabaseMode(data.database_mode || "memory");
       setUser(data.user);
       setWorkspace(data.workspace);
@@ -1495,6 +1531,37 @@ export default function SaasAppPage() {
       setLoginError("Erro de conexão ao cadastrar conta.");
     } finally {
       setAuthSubmitting(false);
+    }
+  }
+
+  async function handleResendConfirmation() {
+    if (!pendingConfirmEmail || resendingConfirm) return;
+    setResendingConfirm(true);
+    setLoginError(null);
+    try {
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "resend_confirmation",
+          email: pendingConfirmEmail,
+          redirectTo:
+            typeof window !== "undefined" ? window.location.origin : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLoginError(data.error || "Erro ao reenviar confirmação.");
+        return;
+      }
+      setAuthFeedback(
+        data.message ||
+          "Reenviamos o link de confirmação para o seu e-mail."
+      );
+    } catch {
+      setLoginError("Erro de conexão ao reenviar confirmação.");
+    } finally {
+      setResendingConfirm(false);
     }
   }
 
@@ -2678,6 +2745,25 @@ export default function SaasAppPage() {
             </div>
           )}
 
+          {pendingConfirmEmail && (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900">
+              <span>
+                Aguardando confirmação de{" "}
+                <strong className="break-all">{pendingConfirmEmail}</strong>.
+              </span>
+              <button
+                type="button"
+                disabled={resendingConfirm}
+                onClick={() => void handleResendConfirmation()}
+                className="rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-amber-700 disabled:opacity-60"
+              >
+                {resendingConfirm
+                  ? "Reenviando..."
+                  : "Reenviar e-mail de confirmação"}
+              </button>
+            </div>
+          )}
+
           {/* TELA 1: ENTRAR */}
           {authScreen === "login" && (
             <>
@@ -2793,7 +2879,8 @@ export default function SaasAppPage() {
             <form onSubmit={handleRegister} className="mt-4 space-y-3">
               <p className="text-xs text-slate-600">
                 Cadastre sua empresa no <strong>Supabase Authentication</strong>{" "}
-                com 14 dias de teste grátis no plano Pro IA.
+                com 14 dias de teste grátis no plano Pro IA. Você receberá um
+                link de confirmação no seu e-mail antes de acessar o painel.
               </p>
               <input
                 type="text"
