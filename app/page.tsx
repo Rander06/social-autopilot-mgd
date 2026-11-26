@@ -10,6 +10,14 @@ import {
   WEEKDAY_LABELS,
 } from "@/lib/presets";
 import {
+  buildSupportWhatsappPreviewText,
+  buildSupportWhatsappUrl,
+  SUPPORT_EMAIL,
+  SUPPORT_WHATSAPP_DISPLAY,
+  TIP_COMPLETED_DEFAULT_MESSAGE,
+  TIP_ENCOURAGEMENT_TEXT,
+} from "@/lib/support";
+import {
   AIProvider,
   AIPhotoMode,
   ApprovalMode,
@@ -21,6 +29,7 @@ import {
   CompanyStatus,
   GeneratedContentPayload,
   ImageAIProvider,
+  ImprovementTip,
   Plan,
   PostFormat,
   PostHistoryItem,
@@ -48,6 +57,7 @@ interface WorkspaceData {
   photos: TopicPhoto[];
   posts: PostHistoryItem[];
   audits: AuditLogItem[];
+  tips: ImprovementTip[];
 }
 
 interface AdminCompanyRow extends Company {
@@ -79,6 +89,7 @@ interface AdminSnapshot {
   }>;
   posts: PostHistoryItem[];
   audits: AuditLogItem[];
+  tips: ImprovementTip[];
 }
 
 interface StudioPreviewState {
@@ -104,9 +115,10 @@ type ClientTab =
   | "studio"
   | "brand"
   | "integrations"
-  | "history";
+  | "history"
+  | "support";
 
-type AdminTab = "overview" | "companies" | "plans" | "audit";
+type AdminTab = "overview" | "companies" | "plans" | "audit" | "tips";
 
 function fileToBase64(file: File): Promise<{ base64: string; contentType: string }> {
   return new Promise((resolve, reject) => {
@@ -1277,6 +1289,18 @@ export default function SaasAppPage() {
   );
   const [savingAdminComp, setSavingAdminComp] = useState(false);
 
+  // Support & Improvement Tips
+  const [tipMessage, setTipMessage] = useState("");
+  const [submittingTip, setSubmittingTip] = useState(false);
+  const [copiedSupportEmail, setCopiedSupportEmail] = useState(false);
+  const [adminTipFilter, setAdminTipFilter] = useState<
+    "ALL" | "OPEN" | "COMPLETED"
+  >("ALL");
+  const [adminTipReplyDrafts, setAdminTipReplyDrafts] = useState<
+    Record<string, string>
+  >({});
+  const [updatingTipId, setUpdatingTipId] = useState<string | null>(null);
+
   const syncWorkspaceForms = useCallback((ws: WorkspaceData | null) => {
     if (!ws) return;
     setBrandForm(ws.brand);
@@ -1305,15 +1329,10 @@ export default function SaasAppPage() {
         first,
         Boolean(ws.integrations.has_tiktok_token)
       );
-      setStudioTopicId(first.id);
-      setStudioTitle(first.title);
-      setStudioPrompt(
-        mergePromptWithLegacyBenefits(
-          first.prompt_instructions,
-          first.benefits_json
-        )
-      );
-      setStudioPrice(first.offer_price || "");
+      setStudioTopicId("__free__");
+      setStudioTitle("");
+      setStudioPrompt("");
+      setStudioPrice("");
       setStudioFormat(first.post_format);
       setStudioSlides(first.slides_count);
       setStudioPublishTargets(targets);
@@ -1986,20 +2005,9 @@ export default function SaasAppPage() {
     setStudioTopicId(topicId);
     setStudioPreview(null);
     if (topicId === "__free__") {
-      const defaultTargets: PublishTargets = {
-        ig_feed: true,
-        ig_stories: false,
-        fb_feed: true,
-        fb_stories: false,
-        tiktok_feed: false,
-      };
-      setStudioTitle("Campanha Especial");
+      setStudioTitle("");
       setStudioPrompt("");
       setStudioPrice("");
-      setStudioImageAi("");
-      setStudioPublishTargets(defaultTargets);
-      setStudioRatio("1:1");
-      setStudioPublishToStories(false);
       return;
     }
     const found = workspace?.topics.find((t) => t.id === topicId);
@@ -2504,6 +2512,112 @@ export default function SaasAppPage() {
     }
   }
 
+  async function handleSubmitTip(e: React.FormEvent) {
+    e.preventDefault();
+    if (!workspace || !tipMessage.trim()) return;
+    setSubmittingTip(true);
+    setGlobalNotice(null);
+    try {
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "submit_improvement_tip",
+          companyId: workspace.company.id,
+          message: tipMessage,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro ao enviar dica.");
+      if (data.workspace) setWorkspace(data.workspace);
+      if (data.adminSnapshot) setAdminSnapshot(data.adminSnapshot);
+      setTipMessage("");
+      setGlobalNotice({
+        type: "success",
+        text: "Sua dica foi enviada para o painel administrativo! Obrigado por contribuir.",
+      });
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro ao enviar dica.",
+      });
+    } finally {
+      setSubmittingTip(false);
+    }
+  }
+
+  async function handleMarkTipsSeen() {
+    if (!workspace) return;
+    try {
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "mark_tips_seen",
+          companyId: workspace.company.id,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.workspace) {
+        setWorkspace(data.workspace);
+      }
+    } catch {
+      // Ignora erro silencioso
+    }
+  }
+
+  async function handleAdminUpdateTipStatus(
+    tipId: string,
+    nextStatus: "OPEN" | "COMPLETED"
+  ) {
+    setUpdatingTipId(tipId);
+    setGlobalNotice(null);
+    try {
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "admin_update_tip_status",
+          companyId: workspace?.company.id,
+          tipId,
+          status: nextStatus,
+          adminReply:
+            nextStatus === "COMPLETED"
+              ? adminTipReplyDrafts[tipId] || ""
+              : "",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro ao atualizar dica.");
+      if (data.adminSnapshot) setAdminSnapshot(data.adminSnapshot);
+      if (data.workspace) setWorkspace(data.workspace);
+      setGlobalNotice({
+        type: "success",
+        text:
+          nextStatus === "COMPLETED"
+            ? "Dica marcada como concluída! O cliente receberá a notificação."
+            : "Dica reaberta como pendente.",
+      });
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro ao atualizar dica.",
+      });
+    } finally {
+      setUpdatingTipId(null);
+    }
+  }
+
+  async function handleCopySupportEmail() {
+    try {
+      await navigator.clipboard?.writeText(SUPPORT_EMAIL);
+      setCopiedSupportEmail(true);
+      setTimeout(() => setCopiedSupportEmail(false), 1800);
+    } catch {
+      setCopiedSupportEmail(false);
+    }
+  }
+
   if (bootLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -2864,6 +2978,12 @@ export default function SaasAppPage() {
             <span>Meu Gestor Digital</span>
             <div className="flex items-center gap-3">
               <Link
+                href="/suporte"
+                className="font-semibold text-indigo-600 hover:underline"
+              >
+                Suporte
+              </Link>
+              <Link
                 href="/termos"
                 className="font-semibold text-slate-600 hover:text-indigo-600 hover:underline"
               >
@@ -2893,6 +3013,12 @@ export default function SaasAppPage() {
   const pendingDrafts = workspace.posts.filter(
     (p) => p.status === "PENDING_APPROVAL"
   );
+  const unseenCompletedTips = (workspace.tips || []).filter(
+    (t) => t.status === "COMPLETED" && !t.client_seen_at
+  );
+  const openAdminTipsCount = (adminSnapshot?.tips || []).filter(
+    (t) => t.status === "OPEN"
+  ).length;
   const metaDaysLeft = daysUntil(workspace.integrations.meta_token_expires_at);
   const planDaysLeft = daysUntil(workspace.company.expires_at);
 
@@ -3030,6 +3156,7 @@ export default function SaasAppPage() {
                   ["overview", "Dashboard Executivo SaaS"],
                   ["companies", "Empresas Clientes"],
                   ["plans", "Planos & Limites"],
+                  ["tips", "Dicas & Melhorias"],
                   ["audit", "Auditoria & Logs Globais"],
                 ] as Array<[AdminTab, string]>
               ).map(([tabKey, label]) => (
@@ -3044,6 +3171,11 @@ export default function SaasAppPage() {
                   }`}
                 >
                   {label}
+                  {tabKey === "tips" && openAdminTipsCount > 0 && (
+                    <span className="ml-2 rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] text-slate-900">
+                      {openAdminTipsCount}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -3384,6 +3516,171 @@ export default function SaasAppPage() {
               </div>
             )}
 
+            {adminTab === "tips" && (
+              <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-extrabold text-slate-900">
+                      Dicas e Melhorias dos Clientes ({(adminSnapshot.tips || []).length})
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      Ordenadas por data de envio (mais recentes primeiro). Ao marcar
+                      como concluído, o cliente recebe automaticamente o aviso de que
+                      a dica foi atendida.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(
+                      [
+                        ["ALL", "Todas"],
+                        ["OPEN", "Pendentes"],
+                        ["COMPLETED", "Concluídas"],
+                      ] as const
+                    ).map(([filterKey, filterLabel]) => (
+                      <button
+                        key={filterKey}
+                        type="button"
+                        onClick={() => setAdminTipFilter(filterKey)}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                          adminTipFilter === filterKey
+                            ? "bg-indigo-600 text-white"
+                            : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                        }`}
+                      >
+                        {filterLabel}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {(() => {
+                  const sortedTips = [...(adminSnapshot.tips || [])]
+                    .sort(
+                      (a, b) =>
+                        new Date(b.created_at).getTime() -
+                        new Date(a.created_at).getTime()
+                    )
+                    .filter((t) =>
+                      adminTipFilter === "ALL" ? true : t.status === adminTipFilter
+                    );
+
+                  if (sortedTips.length === 0) {
+                    return (
+                      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-xs text-slate-500">
+                        Nenhuma dica encontrada neste filtro.
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-3">
+                      {sortedTips.map((tip) => (
+                        <div
+                          key={tip.id}
+                          className={`rounded-2xl border p-4 text-xs transition ${
+                            tip.status === "COMPLETED"
+                              ? "border-emerald-200 bg-emerald-50/40"
+                              : "border-slate-200 bg-slate-50/70"
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                                  tip.status === "COMPLETED"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-amber-100 text-amber-800"
+                                }`}
+                              >
+                                {tip.status === "COMPLETED"
+                                  ? "Concluída"
+                                  : "Pendente"}
+                              </span>
+                              <span className="font-extrabold text-slate-900">
+                                {tip.company_name}
+                              </span>
+                              <span className="text-slate-600">
+                                • {tip.user_name} ({tip.user_email})
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-slate-500">
+                              Enviada em{" "}
+                              {new Date(tip.created_at).toLocaleString("pt-BR")}
+                            </span>
+                          </div>
+
+                          <p className="mt-2.5 whitespace-pre-wrap rounded-xl border border-slate-200/80 bg-white p-3 text-sm text-slate-800">
+                            {tip.message}
+                          </p>
+
+                          {tip.status === "COMPLETED" ? (
+                            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                              <div className="space-y-0.5 text-[11px] font-semibold text-emerald-800">
+                                <p>
+                                  Concluída em:{" "}
+                                  <strong>
+                                    {tip.completed_at
+                                      ? new Date(
+                                          tip.completed_at
+                                        ).toLocaleString("pt-BR")
+                                      : "—"}
+                                  </strong>
+                                </p>
+                                <p>
+                                  Mensagem ao cliente:{" "}
+                                  {tip.admin_reply ||
+                                    TIP_COMPLETED_DEFAULT_MESSAGE}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                disabled={updatingTipId === tip.id}
+                                onClick={() =>
+                                  void handleAdminUpdateTipStatus(tip.id, "OPEN")
+                                }
+                                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                              >
+                                Reabrir
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                              <input
+                                value={adminTipReplyDrafts[tip.id] || ""}
+                                onChange={(e) =>
+                                  setAdminTipReplyDrafts((prev) => ({
+                                    ...prev,
+                                    [tip.id]: e.target.value,
+                                  }))
+                                }
+                                placeholder="Mensagem opcional ao cliente (se vazio, envia: Sua dica foi atendida!)"
+                                className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-500"
+                              />
+                              <button
+                                type="button"
+                                disabled={updatingTipId === tip.id}
+                                onClick={() =>
+                                  void handleAdminUpdateTipStatus(
+                                    tip.id,
+                                    "COMPLETED"
+                                  )
+                                }
+                                className="shrink-0 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
+                              >
+                                {updatingTipId === tip.id
+                                  ? "Salvando..."
+                                  : "Marcar como concluído"}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
             {adminTab === "audit" && (
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h2 className="text-base font-extrabold text-slate-900">
@@ -3427,6 +3724,7 @@ export default function SaasAppPage() {
                   ["brand", "Identidade Visual"],
                   ["integrations", "Integrações (Multi-IA & Redes)"],
                   ["history", "Histórico de Posts"],
+                  ["support", "Suporte & Dicas"],
                 ] as Array<[ClientTab, string]>
               ).map(([tabKey, label]) => (
                 <button
@@ -3445,6 +3743,11 @@ export default function SaasAppPage() {
                       {pendingDrafts.length}
                     </span>
                   )}
+                  {tabKey === "support" && unseenCompletedTips.length > 0 && (
+                    <span className="ml-2 rounded-full bg-emerald-400 px-1.5 py-0.5 text-[10px] text-slate-900">
+                      {unseenCompletedTips.length}
+                    </span>
+                  )}
                 </button>
               ))}
             </nav>
@@ -3452,6 +3755,51 @@ export default function SaasAppPage() {
             {/* ---------- ABA 1: DASHBOARD DA EMPRESA ---------- */}
             {clientTab === "dashboard" && (
               <div className="space-y-6">
+                {unseenCompletedTips.length > 0 && (
+                  <div className="space-y-2 rounded-2xl border border-emerald-300 bg-emerald-50 p-4 text-xs text-emerald-950 shadow-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-extrabold text-emerald-900">
+                        Boa notícia! Sua dica de melhoria foi atendida
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setClientTab("support")}
+                          className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100/60"
+                        >
+                          Ver em Suporte &amp; Dicas
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleMarkTipsSeen()}
+                          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-700"
+                        >
+                          Entendi
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {unseenCompletedTips.map((t) => (
+                        <div
+                          key={t.id}
+                          className="rounded-xl border border-emerald-200 bg-white p-3"
+                        >
+                          <p className="font-semibold text-slate-800">
+                            &ldquo;{t.message}&rdquo;
+                          </p>
+                          <p className="mt-1 text-[11px] font-bold text-emerald-700">
+                            {t.admin_reply || TIP_COMPLETED_DEFAULT_MESSAGE}
+                            {t.completed_at
+                              ? ` • Concluída em ${new Date(
+                                  t.completed_at
+                                ).toLocaleString("pt-BR")}`
+                              : ""}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {(() => {
                   const latestCreditError = workspace.posts.find(
                     (p) =>
@@ -6595,6 +6943,189 @@ export default function SaasAppPage() {
                   </div>
                 );
               })()}
+
+            {/* ---------- ABA 7: SUPORTE & CAIXA DE DICAS ---------- */}
+            {clientTab === "support" && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="flex flex-col justify-between gap-3 rounded-2xl border border-indigo-200 bg-white p-6 shadow-sm">
+                    <div>
+                      <span className="inline-flex rounded-full bg-indigo-50 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-indigo-700">
+                        Suporte por E-mail
+                      </span>
+                      <h2 className="mt-2 text-base font-extrabold text-slate-900">
+                        {SUPPORT_EMAIL}
+                      </h2>
+                      <p className="mt-1 text-xs text-slate-600">
+                        Canal oficial para dúvidas técnicas, solicitações e suporte
+                        da sua conta PilotFlow.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <a
+                        href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
+                          `Suporte PilotFlow - ${workspace.company.name}`
+                        )}`}
+                        className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-indigo-700"
+                      >
+                        Enviar E-mail
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopySupportEmail()}
+                        className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                      >
+                        {copiedSupportEmail ? "Copiado!" : "Copiar e-mail"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col justify-between gap-3 rounded-2xl border border-emerald-200 bg-white p-6 shadow-sm">
+                    <div>
+                      <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700">
+                        Suporte via WhatsApp
+                      </span>
+                      <h2 className="mt-2 text-base font-extrabold text-slate-900">
+                        {SUPPORT_WHATSAPP_DISPLAY}
+                      </h2>
+                      <p className="mt-1 text-xs text-slate-600">
+                        A mensagem já abre identificada para sabermos que você está
+                        vindo do suporte do PilotFlow:
+                      </p>
+                      <p className="mt-1.5 rounded-lg border border-emerald-100 bg-emerald-50/70 px-2.5 py-1.5 text-[11px] font-medium text-emerald-900">
+                        &ldquo;{buildSupportWhatsappPreviewText(workspace.company.name)}&rdquo;
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <a
+                        href={buildSupportWhatsappUrl(workspace.company.name)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700"
+                      >
+                        Falar no WhatsApp (Suporte PilotFlow) ↗
+                      </a>
+                      <Link
+                        href="/suporte"
+                        className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                      >
+                        Abrir página /suporte ↗
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Caixa de Dicas de Melhoria */}
+                <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+                  <div>
+                    <h2 className="text-base font-extrabold text-slate-900">
+                      Dê sua dica para melhorar o projeto
+                    </h2>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                      {TIP_ENCOURAGEMENT_TEXT}
+                    </p>
+                  </div>
+
+                  {unseenCompletedTips.length > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-xs text-emerald-900">
+                      <span className="font-bold">
+                        Você tem {unseenCompletedTips.length} dica(s) marcada(s)
+                        como atendida(s) abaixo!
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void handleMarkTipsSeen()}
+                        className="rounded-lg bg-emerald-600 px-3 py-1 text-[11px] font-bold text-white hover:bg-emerald-700"
+                      >
+                        Marcar avisos como lidos
+                      </button>
+                    </div>
+                  )}
+
+                  <form onSubmit={handleSubmitTip} className="space-y-3">
+                    <textarea
+                      rows={4}
+                      required
+                      minLength={5}
+                      maxLength={2000}
+                      value={tipMessage}
+                      onChange={(e) => setTipMessage(e.target.value)}
+                      placeholder="Descreva sua dica, ideia ou necessidade com o máximo de detalhes (onde você usaria, como gostaria que funcionasse e qual problema isso resolve no seu dia a dia)..."
+                      className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500"
+                    />
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[11px] text-slate-500">
+                        Sua dica vai direto para o painel administrativo do
+                        PilotFlow em ordem de data.
+                      </span>
+                      <button
+                        type="submit"
+                        disabled={submittingTip}
+                        className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:opacity-95 disabled:opacity-60"
+                      >
+                        {submittingTip ? "Enviando..." : "Enviar Dica"}
+                      </button>
+                    </div>
+                  </form>
+
+                  <div className="space-y-2 border-t border-slate-100 pt-4">
+                    <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
+                      Minhas Dicas Enviadas ({(workspace.tips || []).length})
+                    </h3>
+                    {(workspace.tips || []).length === 0 ? (
+                      <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-4 text-center text-xs text-slate-500">
+                        Você ainda não enviou nenhuma dica. Envie a primeira acima!
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {(workspace.tips || []).map((tip) => (
+                          <div
+                            key={tip.id}
+                            className={`rounded-xl border p-4 text-xs ${
+                              tip.status === "COMPLETED"
+                                ? "border-emerald-200 bg-emerald-50/50"
+                                : "border-slate-200 bg-slate-50/60"
+                            }`}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span
+                                className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                                  tip.status === "COMPLETED"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-amber-100 text-amber-800"
+                                }`}
+                              >
+                                {tip.status === "COMPLETED"
+                                  ? `Concluída${
+                                      tip.completed_at
+                                        ? ` em ${new Date(
+                                            tip.completed_at
+                                          ).toLocaleDateString("pt-BR")}`
+                                        : ""
+                                    }`
+                                  : "Em análise"}
+                              </span>
+                              <span className="text-[11px] text-slate-400">
+                                Enviada em{" "}
+                                {new Date(tip.created_at).toLocaleString("pt-BR")}
+                              </span>
+                            </div>
+                            <p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">
+                              {tip.message}
+                            </p>
+                            {tip.status === "COMPLETED" && (
+                              <div className="mt-2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-[11px] font-bold text-emerald-800">
+                                {tip.admin_reply || TIP_COMPLETED_DEFAULT_MESSAGE}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>
@@ -6605,6 +7136,12 @@ export default function SaasAppPage() {
           Digital
         </span>
         <div className="flex items-center gap-4">
+          <Link
+            href="/suporte"
+            className="font-semibold text-indigo-600 hover:underline"
+          >
+            Suporte &amp; Dicas
+          </Link>
           <Link
             href="/termos"
             className="font-semibold text-slate-600 hover:text-indigo-600 hover:underline"

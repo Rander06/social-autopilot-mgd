@@ -213,3 +213,20 @@ export interface AuditLogItem {
   details_json: Record<string, unknown>;
   created_at: string;
 }
+
+export type ImprovementTipStatus = "OPEN" | "COMPLETED";
+
+export interface ImprovementTip {
+  id: string;
+  company_id: string;
+  company_name: string;
+  user_id?: string | null;
+  user_name: string;
+  user_email: string;
+  message: string;
+  status: ImprovementTipStatus;
+  admin_reply?: string | null;
+  completed_at?: string | null;
+  client_seen_at?: string | null;
+  created_at: string;
+}

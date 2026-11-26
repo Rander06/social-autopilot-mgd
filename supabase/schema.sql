@@ -152,6 +152,22 @@ create table if not exists public.audit_logs (
   created_at timestamptz not null default now()
 );
 
+-- 10. CAIXA DE DICAS E MELHORIAS DOS CLIENTES
+create table if not exists public.improvement_tips (
+  id text primary key,
+  company_id text not null references public.companies(id) on delete cascade,
+  company_name text not null,
+  user_id text references public.users(id) on delete set null,
+  user_name text not null,
+  user_email text not null,
+  message text not null,
+  status text not null default 'OPEN' check (status in ('OPEN', 'COMPLETED')),
+  admin_reply text,
+  completed_at timestamptz,
+  client_seen_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
 -- ÍNDICES DE PERFORMANCE
 create index if not exists idx_topics_company_active on public.topics(company_id, is_active);
 create index if not exists idx_topics_schedule_time on public.topics(schedule_time) where is_active = true;
@@ -159,6 +175,8 @@ create index if not exists idx_topic_photos_queue on public.topic_photos(topic_i
 create index if not exists idx_posts_history_company on public.posts_history(company_id, created_at desc);
 create index if not exists idx_posts_history_topic on public.posts_history(topic_id, created_at desc);
 create index if not exists idx_audit_logs_created on public.audit_logs(created_at desc);
+create index if not exists idx_improvement_tips_created on public.improvement_tips(created_at desc);
+create index if not exists idx_improvement_tips_company on public.improvement_tips(company_id, created_at desc);
 
 -- SEED INICIAL DOS PLANOS
 insert into public.plans (id, name, price_brl, max_posts_month, allow_carousel, allow_ai_photo, allow_multi_ai)

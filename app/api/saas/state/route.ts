@@ -19,9 +19,12 @@ import {
   appendAuditLog,
   authenticateLogin,
   checkCompanyQuotaAndStatus,
+  createImprovementTip,
   createOrUpdateCompanyByAdmin,
+  deletePostRecord,
   deleteTopic,
   deleteTopicPhoto,
+  getCompanyById,
   getCompanySecrets,
   getCompanyWorkspace,
   getDatabaseMode,
@@ -29,6 +32,7 @@ import {
   incrementCompanyPostUsage,
   listPostsHistory,
   listTopicsByCompany,
+  markCompanyCompletedTipsSeen,
   normalizePublishTargets,
   recordGeneratedPost,
   refreshTikTokTokenIfNeeded,
@@ -38,7 +42,7 @@ import {
   saveBrandSettings,
   saveCompanyIntegrations,
   sendSupabasePasswordRecoveryEmail,
-  deletePostRecord,
+  updateImprovementTipStatus,
   updatePlanByAdmin,
   updatePostRecord,
   upsertTopic,
@@ -956,6 +960,74 @@ export async function POST(request: NextRequest) {
       });
       const adminSnapshot = await getSuperAdminSnapshot();
       return NextResponse.json({ plan, adminSnapshot });
+    }
+
+    if (action === "submit_improvement_tip") {
+      const message = String(body.message || "").trim();
+      if (message.length < 5) {
+        return NextResponse.json(
+          { error: "Descreva sua dica com pelo menos 5 caracteres." },
+          { status: 400 }
+        );
+      }
+      if (message.length > 2000) {
+        return NextResponse.json(
+          { error: "A dica deve ter no máximo 2000 caracteres." },
+          { status: 400 }
+        );
+      }
+      const company = await getCompanyById(targetCompanyId);
+      const tip = await createImprovementTip({
+        company_id: targetCompanyId,
+        company_name: company?.name || "Empresa Cliente",
+        user_id: session.userId,
+        user_name: session.name,
+        user_email: session.email,
+        message,
+      });
+      const workspace = await getCompanyWorkspace(targetCompanyId);
+      const adminSnapshot =
+        session.role === "SUPER_ADMIN" ? await getSuperAdminSnapshot() : null;
+      return NextResponse.json({ tip, workspace, adminSnapshot });
+    }
+
+    if (action === "mark_tips_seen") {
+      await markCompanyCompletedTipsSeen(targetCompanyId);
+      const workspace = await getCompanyWorkspace(targetCompanyId);
+      return NextResponse.json({ ok: true, workspace });
+    }
+
+    if (action === "admin_update_tip_status") {
+      if (session.role !== "SUPER_ADMIN") {
+        return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
+      }
+      const tipId = String(body.tipId || "").trim();
+      if (!tipId) {
+        return NextResponse.json(
+          { error: "ID da dica não informado." },
+          { status: 400 }
+        );
+      }
+      const status = body.status === "OPEN" ? "OPEN" : "COMPLETED";
+      const adminReply =
+        typeof body.adminReply === "string" ? body.adminReply : null;
+      const tip = await updateImprovementTipStatus({
+        tipId,
+        status,
+        adminReply,
+        adminUserId: session.userId,
+      });
+      if (!tip) {
+        return NextResponse.json(
+          { error: "Dica não encontrada." },
+          { status: 404 }
+        );
+      }
+      const [adminSnapshot, workspace] = await Promise.all([
+        getSuperAdminSnapshot(),
+        getCompanyWorkspace(targetCompanyId),
+      ]);
+      return NextResponse.json({ tip, adminSnapshot, workspace });
     }
 
     return NextResponse.json({ error: "Ação desconhecida." }, { status: 400 });

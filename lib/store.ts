@@ -14,6 +14,8 @@ import {
   CompanyIntegrations,
   CompanyIntegrationsPublic,
   CompanyStatus,
+  ImprovementTip,
+  ImprovementTipStatus,
   Plan,
   PostHistoryItem,
   PublishTargets,
@@ -32,6 +34,7 @@ interface InMemoryDatabase {
   photos: TopicPhoto[];
   posts: PostHistoryItem[];
   audits: AuditLogItem[];
+  tips: ImprovementTip[];
   seededSupabase: boolean;
 }
 
@@ -377,6 +380,7 @@ function createInitialSeedData(): InMemoryDatabase {
     photos: [],
     posts: [],
     audits,
+    tips: [],
     seededSupabase: false,
   };
 }
@@ -1570,17 +1574,27 @@ export async function listAuditLogs(
 }
 
 export async function getCompanyWorkspace(companyId: string) {
-  const [company, plans, brand, integrations, topics, photos, posts, audits] =
-    await Promise.all([
-      getCompanyById(companyId),
-      listPlans(),
-      getBrandSettings(companyId),
-      getCompanyIntegrations(companyId),
-      listTopicsByCompany(companyId),
-      listPhotosByCompany(companyId),
-      listPostsHistory(companyId, 250),
-      listAuditLogs(companyId, 30),
-    ]);
+  const [
+    company,
+    plans,
+    brand,
+    integrations,
+    topics,
+    photos,
+    posts,
+    audits,
+    tips,
+  ] = await Promise.all([
+    getCompanyById(companyId),
+    listPlans(),
+    getBrandSettings(companyId),
+    getCompanyIntegrations(companyId),
+    listTopicsByCompany(companyId),
+    listPhotosByCompany(companyId),
+    listPostsHistory(companyId, 250),
+    listAuditLogs(companyId, 30),
+    listImprovementTips(companyId, 100),
+  ]);
 
   if (!company) return null;
   const plan = plans.find((p) => p.id === company.plan_id) || plans[0];
@@ -1595,16 +1609,18 @@ export async function getCompanyWorkspace(companyId: string) {
     photos,
     posts,
     audits,
+    tips,
   };
 }
 
 export async function getSuperAdminSnapshot() {
-  const [plans, companies, users, posts, audits] = await Promise.all([
+  const [plans, companies, users, posts, audits, tips] = await Promise.all([
     listPlans(),
     listCompanies(),
     listUsersInternal(),
     listPostsHistory(undefined, 50),
     listAuditLogs(undefined, 80),
+    listImprovementTips(undefined, 200),
   ]);
 
   const enrichedCompanies = await Promise.all(
@@ -1652,6 +1668,7 @@ export async function getSuperAdminSnapshot() {
     users: safeUsers,
     posts,
     audits,
+    tips,
   };
 }
 
@@ -2505,4 +2522,189 @@ export async function pickNextTopicForCompany(
   });
 
   return topics[0];
+}
+
+export async function listImprovementTips(
+  companyId?: string,
+  limit = 150
+): Promise<ImprovementTip[]> {
+  await ensureSeededInSupabase();
+  if (isSupabaseConfigured()) {
+    try {
+      const filter = companyId
+        ? `company_id=eq.${encodeURIComponent(companyId)}&`
+        : "";
+      return await sbRequest<ImprovementTip[]>(
+        `improvement_tips?${filter}order=created_at.desc&limit=${limit}`
+      );
+    } catch {
+      // Fallback para memória caso a tabela ainda não tenha sido criada no Supabase
+    }
+  }
+  const all = [...getMemDb().tips].sort(
+    (a, b) =>
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+  const filtered = companyId
+    ? all.filter((t) => t.company_id === companyId)
+    : all;
+  return filtered.slice(0, limit);
+}
+
+export async function createImprovementTip(input: {
+  company_id: string;
+  company_name: string;
+  user_id?: string | null;
+  user_name: string;
+  user_email: string;
+  message: string;
+}): Promise<ImprovementTip> {
+  const tip: ImprovementTip = {
+    id: generateId("tip"),
+    company_id: input.company_id,
+    company_name: input.company_name,
+    user_id: input.user_id || null,
+    user_name: input.user_name,
+    user_email: input.user_email,
+    message: input.message.trim(),
+    status: "OPEN",
+    admin_reply: null,
+    completed_at: null,
+    client_seen_at: null,
+    created_at: new Date().toISOString(),
+  };
+
+  let persistedInSupabase = false;
+  if (isSupabaseConfigured()) {
+    try {
+      await sbRequest("improvement_tips", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(tip),
+      });
+      persistedInSupabase = true;
+    } catch {
+      // Fallback em memória caso a tabela ainda não exista no Supabase
+    }
+  }
+
+  if (!persistedInSupabase) {
+    getMemDb().tips.unshift(tip);
+  }
+
+  await appendAuditLog({
+    company_id: tip.company_id,
+    user_id: tip.user_id,
+    action: "IMPROVEMENT_TIP_SUBMITTED",
+    details_json: {
+      tip_id: tip.id,
+      company_name: tip.company_name,
+      user_email: tip.user_email,
+    },
+  });
+
+  return tip;
+}
+
+export async function updateImprovementTipStatus(input: {
+  tipId: string;
+  status: ImprovementTipStatus;
+  adminReply?: string | null;
+  adminUserId?: string;
+}): Promise<ImprovementTip | null> {
+  const nowIso = new Date().toISOString();
+  const patchPayload =
+    input.status === "COMPLETED"
+      ? {
+          status: "COMPLETED" as ImprovementTipStatus,
+          completed_at: nowIso,
+          client_seen_at: null,
+          admin_reply: input.adminReply?.trim() || null,
+        }
+      : {
+          status: "OPEN" as ImprovementTipStatus,
+          completed_at: null,
+          client_seen_at: null,
+          admin_reply: null,
+        };
+
+  let updated: ImprovementTip | null = null;
+
+  if (isSupabaseConfigured()) {
+    try {
+      const rows = await sbRequest<ImprovementTip[]>(
+        `improvement_tips?id=eq.${encodeURIComponent(input.tipId)}`,
+        {
+          method: "PATCH",
+          headers: { Prefer: "return=representation" },
+          body: JSON.stringify(patchPayload),
+        }
+      );
+      if (rows?.[0]) updated = rows[0];
+    } catch {
+      // Fallback para memória
+    }
+  }
+
+  if (!updated) {
+    const idx = getMemDb().tips.findIndex((t) => t.id === input.tipId);
+    if (idx >= 0) {
+      getMemDb().tips[idx] = { ...getMemDb().tips[idx], ...patchPayload };
+      updated = getMemDb().tips[idx];
+    }
+  }
+
+  if (updated) {
+    await appendAuditLog({
+      company_id: updated.company_id,
+      user_id: input.adminUserId || null,
+      action:
+        input.status === "COMPLETED"
+          ? "IMPROVEMENT_TIP_COMPLETED"
+          : "IMPROVEMENT_TIP_REOPENED",
+      details_json: {
+        tip_id: updated.id,
+        company_name: updated.company_name,
+      },
+    });
+  }
+
+  return updated;
+}
+
+export async function markCompanyCompletedTipsSeen(
+  companyId: string
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  let updatedSupabase = false;
+
+  if (isSupabaseConfigured()) {
+    try {
+      await sbRequest(
+        `improvement_tips?company_id=eq.${encodeURIComponent(
+          companyId
+        )}&status=eq.COMPLETED&client_seen_at=is.null`,
+        {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ client_seen_at: nowIso }),
+        }
+      );
+      updatedSupabase = true;
+    } catch {
+      // Fallback em memória
+    }
+  }
+
+  if (!updatedSupabase) {
+    for (const tip of getMemDb().tips) {
+      if (
+        tip.company_id === companyId &&
+        tip.status === "COMPLETED" &&
+        !tip.client_seen_at
+      ) {
+        tip.client_seen_at = nowIso;
+      }
+    }
+  }
 }
