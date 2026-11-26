@@ -1464,14 +1464,22 @@ export async function publishToMetaChannels(params: {
     ig: null,
     fb: null,
   };
-  const storyImgUrl = params.storyImageUrls?.[0] || params.imageUrls[0];
+  const storyImgUrls = (
+    params.storyImageUrls && params.storyImageUrls.length > 0
+      ? params.storyImageUrls
+      : params.imageUrls
+  ).filter((u) => Boolean(u?.trim()));
 
   const publishIgMediaWithRetry = async (
     igId: string,
-    creationId: string
+    creationId: string,
+    initialDelayMs = 2500
   ): Promise<{ ok: boolean; id?: string; errorMessage: string }> => {
     for (let attempt = 0; attempt < 2; attempt++) {
-      await new Promise((r) => setTimeout(r, 2500));
+      const waitMs = attempt === 0 ? initialDelayMs : 2000;
+      if (waitMs > 0) {
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
       const pubRes = await fetch(
         `${META_GRAPH_BASE_URL}/${igId}/media_publish`,
         {
@@ -1631,45 +1639,88 @@ export async function publishToMetaChannels(params: {
       }
     })(),
 
-    // 2. INSTAGRAM STORIES (em paralelo desde o início)
+    // 2. INSTAGRAM STORIES (cria todos em paralelo e publica na sequência 1 -> N)
     (async () => {
-      if (!doIgStories || !storyImgUrl || !params.igUserId?.trim()) return;
+      if (!doIgStories || storyImgUrls.length === 0 || !params.igUserId?.trim()) {
+        return;
+      }
       const igId = params.igUserId.trim();
+      const totalStories = storyImgUrls.length;
       try {
-        appendLog(params.logs, "Meta IG Stories: Criando Story...");
-        const stMediaRes = await fetch(`${META_GRAPH_BASE_URL}/${igId}/media`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            image_url: storyImgUrl,
-            media_type: "STORIES",
-            access_token: token,
-          }),
-        });
-        const stMediaData = (await stMediaRes.json()) as {
-          id?: string;
-          error?: { message?: string };
-        };
-        if (!stMediaRes.ok || !stMediaData.id) {
-          appendLog(
-            params.logs,
-            `Meta IG Stories aviso: ${
-              stMediaData.error?.message || stMediaRes.statusText
-            }`
-          );
-          return;
-        }
-        const stPubResult = await publishIgMediaWithRetry(igId, stMediaData.id);
-        if (stPubResult.ok && stPubResult.id) {
-          appendLog(
-            params.logs,
-            `Meta IG Stories: Publicado com sucesso (ID ${stPubResult.id}).`
-          );
-        } else {
-          appendLog(
-            params.logs,
-            `Meta IG Stories aviso: ${stPubResult.errorMessage}`
-          );
+        appendLog(
+          params.logs,
+          totalStories > 1
+            ? `Meta IG Stories: Criando ${totalStories} Stories em sequência...`
+            : "Meta IG Stories: Criando Story..."
+        );
+        const createdResults = await Promise.all(
+          storyImgUrls.map(async (url, idx) => {
+            try {
+              const stMediaRes = await fetch(
+                `${META_GRAPH_BASE_URL}/${igId}/media`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    image_url: url,
+                    media_type: "STORIES",
+                    access_token: token,
+                  }),
+                }
+              );
+              const stMediaData = (await stMediaRes.json()) as {
+                id?: string;
+                error?: { message?: string };
+              };
+              if (!stMediaRes.ok || !stMediaData.id) {
+                appendLog(
+                  params.logs,
+                  `Meta IG Stories aviso (Slide ${idx + 1}/${totalStories}): ${
+                    stMediaData.error?.message || stMediaRes.statusText
+                  }`
+                );
+                return null;
+              }
+              return { idx, id: stMediaData.id };
+            } catch (err) {
+              appendLog(
+                params.logs,
+                `Meta IG Stories aviso (Slide ${idx + 1}/${totalStories}): ${
+                  err instanceof Error ? err.message : String(err)
+                }`
+              );
+              return null;
+            }
+          })
+        );
+
+        const createdContainers = createdResults
+          .filter((item): item is { idx: number; id: string } => Boolean(item))
+          .sort((a, b) => a.idx - b.idx);
+        if (createdContainers.length === 0) return;
+
+        // Aguarda uma única vez o processamento dos containers antes de publicar na ordem
+        await new Promise((r) => setTimeout(r, 2500));
+
+        for (let i = 0; i < createdContainers.length; i++) {
+          const item = createdContainers[i];
+          const stPubResult = await publishIgMediaWithRetry(igId, item.id, 0);
+          if (stPubResult.ok && stPubResult.id) {
+            appendLog(
+              params.logs,
+              totalStories > 1
+                ? `Meta IG Stories: Slide ${item.idx + 1}/${totalStories} publicado (ID ${stPubResult.id}).`
+                : `Meta IG Stories: Publicado com sucesso (ID ${stPubResult.id}).`
+            );
+          } else {
+            appendLog(
+              params.logs,
+              `Meta IG Stories aviso (Slide ${item.idx + 1}/${totalStories}): ${stPubResult.errorMessage}`
+            );
+          }
+          if (i < createdContainers.length - 1) {
+            await new Promise((r) => setTimeout(r, 400));
+          }
         }
       } catch (err) {
         appendLog(
@@ -1858,69 +1909,105 @@ export async function publishToMetaChannels(params: {
           }
         })(),
 
-        // 3B. Facebook Stories
+        // 3B. Facebook Stories (sobe todas em paralelo e publica na sequência 1 -> N)
         (async () => {
-          if (!doFbStories || !storyImgUrl || !fbPageToken) return;
+          if (!doFbStories || storyImgUrls.length === 0 || !fbPageToken) return;
+          const totalStories = storyImgUrls.length;
           try {
             appendLog(
               params.logs,
-              "Meta FB Stories: Criando Story na Página..."
+              totalStories > 1
+                ? `Meta FB Stories: Criando ${totalStories} Stories na Página em sequência...`
+                : "Meta FB Stories: Criando Story na Página..."
             );
-            const photoRes = await fetch(
-              `${META_GRAPH_BASE_URL}/${fbId}/photos`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  url: storyImgUrl,
-                  published: false,
-                  access_token: fbPageToken,
-                }),
+
+            const uploadResults = await Promise.all(
+              storyImgUrls.map(async (url, idx) => {
+                try {
+                  const photoRes = await fetch(
+                    `${META_GRAPH_BASE_URL}/${fbId}/photos`,
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        url,
+                        published: false,
+                        access_token: fbPageToken,
+                      }),
+                    }
+                  );
+                  const photoData = (await photoRes.json()) as {
+                    id?: string;
+                    error?: { message?: string };
+                  };
+                  if (!photoRes.ok || !photoData.id) {
+                    appendLog(
+                      params.logs,
+                      `Meta FB Stories aviso (upload Slide ${idx + 1}/${totalStories}): ${
+                        photoData.error?.message || photoRes.statusText
+                      }`
+                    );
+                    return null;
+                  }
+                  return { idx, id: photoData.id };
+                } catch (err) {
+                  appendLog(
+                    params.logs,
+                    `Meta FB Stories aviso (upload Slide ${idx + 1}/${totalStories}): ${
+                      err instanceof Error ? err.message : String(err)
+                    }`
+                  );
+                  return null;
+                }
+              })
+            );
+
+            const uploadedPhotos = uploadResults
+              .filter((item): item is { idx: number; id: string } =>
+                Boolean(item)
+              )
+              .sort((a, b) => a.idx - b.idx);
+
+            for (let i = 0; i < uploadedPhotos.length; i++) {
+              const item = uploadedPhotos[i];
+              const stRes = await fetch(
+                `${META_GRAPH_BASE_URL}/${fbId}/photo_stories`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    photo_id: item.id,
+                    access_token: fbPageToken,
+                  }),
+                }
+              );
+              const stData = (await stRes.json()) as {
+                post_id?: string;
+                success?: boolean;
+                error?: { message?: string };
+              };
+              if (stRes.ok && (stData.post_id || stData.success)) {
+                appendLog(
+                  params.logs,
+                  totalStories > 1
+                    ? `Meta FB Stories: Slide ${item.idx + 1}/${totalStories} publicado (${
+                        stData.post_id || "OK"
+                      }).`
+                    : `Meta FB Stories: Publicado com sucesso (${
+                        stData.post_id || "OK"
+                      }).`
+                );
+              } else {
+                appendLog(
+                  params.logs,
+                  `Meta FB Stories aviso (Slide ${item.idx + 1}/${totalStories}): ${
+                    stData.error?.message || stRes.statusText
+                  }`
+                );
               }
-            );
-            const photoData = (await photoRes.json()) as {
-              id?: string;
-              error?: { message?: string };
-            };
-            if (!photoRes.ok || !photoData.id) {
-              appendLog(
-                params.logs,
-                `Meta FB Stories aviso (upload): ${
-                  photoData.error?.message || photoRes.statusText
-                }`
-              );
-              return;
-            }
-            const stRes = await fetch(
-              `${META_GRAPH_BASE_URL}/${fbId}/photo_stories`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  photo_id: photoData.id,
-                  access_token: fbPageToken,
-                }),
+              if (i < uploadedPhotos.length - 1) {
+                await new Promise((r) => setTimeout(r, 400));
               }
-            );
-            const stData = (await stRes.json()) as {
-              post_id?: string;
-              success?: boolean;
-              error?: { message?: string };
-            };
-            if (stRes.ok && (stData.post_id || stData.success)) {
-              appendLog(
-                params.logs,
-                `Meta FB Stories: Publicado com sucesso (${
-                  stData.post_id || "OK"
-                }).`
-              );
-            } else {
-              appendLog(
-                params.logs,
-                `Meta FB Stories aviso: ${
-                  stData.error?.message || stRes.statusText
-                }`
-              );
             }
           } catch (err) {
             appendLog(
