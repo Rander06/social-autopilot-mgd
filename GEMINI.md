@@ -1,4 +1,4 @@
-# Regras do Projeto — Marketing Meta Graph API
+# Regras do Projeto — Projeto-PilotFlow
 
 ## Controle de Git (Commit e Push)
 - Nunca executar `git commit` ou `git push` automaticamente, mesmo com o Antigravity no modo Turbo.
