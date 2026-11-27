@@ -10,7 +10,81 @@ import {
   MetaAdObjective,
   ParsedCampaignPlan,
   PostHistoryItem,
+  PostOrganicMetrics,
 } from "@/lib/types";
+import { CampaignsReportCharts } from "./CampaignsReportCharts";
+
+export function PostOrganicMetricsBar({
+  metrics,
+  isTopPerformer = false,
+}: {
+  metrics?: PostOrganicMetrics | null;
+  isTopPerformer?: boolean;
+}) {
+  if (!metrics) {
+    return (
+      <p className="text-[10px] text-slate-400">
+        Sem métricas orgânicas carregadas ainda.
+      </p>
+    );
+  }
+
+  const igBreakdown = metrics.ig
+    ? `IG: ${metrics.ig.likes}❤️ ${metrics.ig.comments}💬${
+        metrics.ig.views != null ? ` ${metrics.ig.views}👁️` : ""
+      }`
+    : "";
+  const fbBreakdown = metrics.fb
+    ? `FB: ${metrics.fb.likes}👍 ${metrics.fb.comments}💬${
+        metrics.fb.views != null ? ` ${metrics.fb.views}👁️` : ""
+      }`
+    : "";
+  const tooltip = [
+    igBreakdown,
+    fbBreakdown,
+    `Sincronizado em ${new Date(metrics.synced_at).toLocaleString("pt-BR")}`,
+  ]
+    .filter(Boolean)
+    .join(" • ");
+
+  return (
+    <div
+      title={tooltip}
+      className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold"
+    >
+      {isTopPerformer && metrics.engagement_score > 0 && (
+        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-800">
+          🔥 Melhor Orgânico
+        </span>
+      )}
+      {metrics.total_views !== null ? (
+        <span className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-indigo-800">
+          👁️ {metrics.total_views.toLocaleString("pt-BR")}
+        </span>
+      ) : metrics.total_reach !== null ? (
+        <span className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-indigo-800">
+          📣 {metrics.total_reach.toLocaleString("pt-BR")} alc.
+        </span>
+      ) : null}
+      <span className="rounded-md bg-rose-50 px-1.5 py-0.5 text-rose-700">
+        ❤️ {metrics.total_likes.toLocaleString("pt-BR")}
+      </span>
+      <span className="rounded-md bg-cyan-50 px-1.5 py-0.5 text-cyan-800">
+        💬 {metrics.total_comments.toLocaleString("pt-BR")}
+      </span>
+      {metrics.total_saved !== null && metrics.total_saved > 0 && (
+        <span className="rounded-md bg-violet-50 px-1.5 py-0.5 text-violet-800">
+          🔖 {metrics.total_saved.toLocaleString("pt-BR")}
+        </span>
+      )}
+      {metrics.total_shares !== null && metrics.total_shares > 0 && (
+        <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-emerald-800">
+          🔁 {metrics.total_shares.toLocaleString("pt-BR")}
+        </span>
+      )}
+    </div>
+  );
+}
 
 interface RemoteMetaAdAccount {
   id: string;
@@ -464,20 +538,24 @@ export function BoostCampaignModal({
 
 export function CampaignsPanel({
   companyId,
+  companyName,
   publishedPosts,
   refreshKey,
   onOpenBoostModal,
   onOpenIntegrations,
   onUseHookInStudio,
   onAccountsLoaded,
+  onPostsEngagementSynced,
 }: {
   companyId: string;
+  companyName?: string;
   publishedPosts: PostHistoryItem[];
   refreshKey: number;
   onOpenBoostModal: (post: PostHistoryItem) => void;
   onOpenIntegrations: () => void;
   onUseHookInStudio: (hookPrompt: string) => void;
   onAccountsLoaded?: (accounts: AdAccountConfig[]) => void;
+  onPostsEngagementSynced?: (updatedPosts: Record<string, PostOrganicMetrics>) => void;
 }) {
   const [state, setState] = useState<AdsDashboardStateResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -495,6 +573,14 @@ export function CampaignsPanel({
   );
   const [advisor, setAdvisor] = useState<AdsAdvisorReport | null>(null);
   const [selectedWindow, setSelectedWindow] = useState<AdInsightsWindow>("7d");
+  const [postSortBy, setPostSortBy] = useState<"RECENT" | "ENGAGEMENT">(
+    "RECENT"
+  );
+  const [engagementPermInfo, setEngagementPermInfo] = useState<{
+    has_instagram_manage_insights: boolean;
+    has_read_insights: boolean;
+    missing_insights_scopes: string[];
+  } | null>(null);
 
   // Formulário de Conta de Anúncios & Perfil decide()
   const [accId, setAccId] = useState("");
@@ -750,11 +836,70 @@ export function CampaignsPanel({
     }
   }
 
-  const readyPosts = publishedPosts
-    .filter(
-      (p) => p.status === "PUBLISHED" && (Boolean(p.ig_post_id) || Boolean(p.fb_post_id))
-    )
-    .slice(0, 6);
+  async function handleSyncPostEngagement() {
+    setBusyAction("sync_engagement");
+    setNotice(null);
+    try {
+      const res = await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "sync_post_engagement",
+          companyId,
+          limit: 25,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao buscar engajamento na Meta.");
+      }
+      if (data.updatedPosts) {
+        onPostsEngagementSynced?.(
+          data.updatedPosts as Record<string, PostOrganicMetrics>
+        );
+      }
+      if (data.permissions) {
+        setEngagementPermInfo(data.permissions);
+      }
+      const missing: string[] = data.permissions?.missing_insights_scopes || [];
+      setNotice({
+        type: "success",
+        text:
+          missing.length > 0
+            ? `Curtidas e comentários atualizados em ${data.syncedCount || 0} post(s). Para liberar Visualizações/Alcance, adicione: ${missing.join(", ")}.`
+            : `Engajamento orgânico completo atualizado em ${data.syncedCount || 0} post(s)!`,
+      });
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text:
+          err instanceof Error
+            ? err.message
+            : "Erro ao sincronizar engajamento.",
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  const eligiblePosts = publishedPosts.filter(
+    (p) => p.status === "PUBLISHED" && (Boolean(p.ig_post_id) || Boolean(p.fb_post_id))
+  );
+  const topEngagementScore = eligiblePosts.reduce(
+    (max, p) => Math.max(max, p.organic_metrics?.engagement_score || 0),
+    0
+  );
+  const readyPosts = [...eligiblePosts]
+    .sort((a, b) => {
+      if (postSortBy === "ENGAGEMENT") {
+        const diff =
+          (b.organic_metrics?.engagement_score ?? -1) -
+          (a.organic_metrics?.engagement_score ?? -1);
+        if (diff !== 0) return diff;
+      }
+      return b.created_at.localeCompare(a.created_at);
+    })
+    .slice(0, 9);
 
   return (
     <div className="space-y-6">
@@ -831,6 +976,26 @@ export function CampaignsPanel({
           {notice.text}
         </div>
       )}
+
+      {/* Relatório Completo com Métricas & Gráficos */}
+      <CampaignsReportCharts
+        companyName={companyName || "Empresa"}
+        accountName={
+          state?.default_ad_account?.account_name || accName || null
+        }
+        currency={
+          state?.default_ad_account?.currency || accCurrency || "BRL"
+        }
+        campaigns={state?.campaigns || []}
+        selectedWindow={selectedWindow}
+        onSelectWindow={setSelectedWindow}
+        cpaMaximo={
+          state?.default_ad_account?.cpa_maximo ?? (Number(cpaMax) || 35)
+        }
+        roasMinimo={
+          state?.default_ad_account?.roas_minimo ?? (Number(roasMin) || 2)
+        }
+      />
 
       {/* Conta de Anúncios & Metas decide() */}
       <form
@@ -954,6 +1119,10 @@ export function CampaignsPanel({
               onChange={(e) => setCpaMax(e.target.value)}
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold"
             />
+            <p className="mt-1 text-[10px] leading-snug text-slate-500">
+              Valor máximo que você aceita pagar por conversa no WhatsApp, lead
+              ou venda. Ex.: R$ 15–35 para leads.
+            </p>
           </div>
           <div>
             <label className="block text-[11px] font-bold text-slate-600">
@@ -966,6 +1135,10 @@ export function CampaignsPanel({
               onChange={(e) => setRoasMin(e.target.value)}
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold"
             />
+            <p className="mt-1 text-[10px] leading-snug text-slate-500">
+              Retorno mínimo por R$ 1 gasto (ex.: 2 = R$ 2 em vendas para cada
+              R$ 1 investido). Usado quando há venda rastreada no Pixel.
+            </p>
           </div>
           <div>
             <label className="block text-[11px] font-bold text-slate-600">
@@ -978,6 +1151,10 @@ export function CampaignsPanel({
               onChange={(e) => setMinClicks(e.target.value)}
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold"
             />
+            <p className="mt-1 text-[10px] leading-snug text-slate-500">
+              Cliques mínimos antes de escalar ou pausar por CPA alto (após 48h).
+              Ex.: 30 cliques p/ R$ 20/dia; 50 p/ R$ 40+/dia.
+            </p>
           </div>
           <div>
             <label className="block text-[11px] font-bold text-slate-600">
@@ -991,6 +1168,29 @@ export function CampaignsPanel({
             />
           </div>
         </div>
+
+        <details className="rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-[11px] text-slate-600">
+          <summary className="cursor-pointer font-bold text-slate-700 hover:text-indigo-700">
+            Como o sistema usa esses 3 números (regra decide)?
+          </summary>
+          <ul className="mt-2 list-disc space-y-1 pl-4">
+            <li>
+              <strong>Primeiras 48h:</strong> sempre mantém em{" "}
+              <strong>MANTER</strong> para respeitar a fase de aprendizado da
+              Meta.
+            </li>
+            <li>
+              <strong>ESCALAR (+20%):</strong> após atingir os cliques mínimos
+              com CPA ≤ CPA Máximo (ou ROAS ≥ ROAS Mínimo) e sem fadiga
+              criativa.
+            </li>
+            <li>
+              <strong>PAUSAR:</strong> se gastar ≥ 2× o CPA Máximo com zero
+              conversões ou se o CPA passar de 1,5× o limite após a amostra
+              mínima.
+            </li>
+          </ul>
+        </details>
 
         <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
           <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
@@ -1102,9 +1302,66 @@ export function CampaignsPanel({
 
       {/* Posts Publicados Prontos para Impulsionar */}
       <div className="space-y-3 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
-        <h3 className="text-sm font-extrabold text-slate-900">
-          Posts Publicados Prontos para Impulsionar (últimos {readyPosts.length})
-        </h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-extrabold text-slate-900">
+              Posts Publicados Prontos para Impulsionar ({readyPosts.length})
+            </h3>
+            <p className="text-[11px] text-slate-500">
+              Compare curtidas, comentários e visualizações orgânicas para
+              impulsionar o post que mais chamou atenção.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setPostSortBy("RECENT")}
+                className={`rounded-lg px-2.5 py-1 font-bold ${
+                  postSortBy === "RECENT"
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-600 hover:bg-white"
+                }`}
+              >
+                Mais Recentes
+              </button>
+              <button
+                type="button"
+                onClick={() => setPostSortBy("ENGAGEMENT")}
+                className={`rounded-lg px-2.5 py-1 font-bold ${
+                  postSortBy === "ENGAGEMENT"
+                    ? "bg-amber-500 text-white"
+                    : "text-slate-600 hover:bg-white"
+                }`}
+              >
+                🔥 Melhor Engajamento
+              </button>
+            </div>
+            <button
+              type="button"
+              disabled={busyAction !== null}
+              onClick={handleSyncPostEngagement}
+              className="rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-[11px] font-extrabold text-cyan-800 hover:bg-cyan-100 disabled:opacity-60"
+            >
+              {busyAction === "sync_engagement"
+                ? "Buscando na Meta..."
+                : "Atualizar Engajamento"}
+            </button>
+          </div>
+        </div>
+
+        {engagementPermInfo &&
+          engagementPermInfo.missing_insights_scopes.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[11px] text-amber-900">
+              <strong>Visualizações/Alcance parciais:</strong> seu token já traz
+              curtidas e comentários, mas faltam os escopos{" "}
+              <code>
+                {engagementPermInfo.missing_insights_scopes.join(", ")}
+              </code>{" "}
+              para liberar visualizações e alcance detalhados.
+            </div>
+          )}
+
         {readyPosts.length === 0 ? (
           <p className="text-xs text-slate-500">
             Publique um post no Instagram ou Facebook para que ele apareça aqui
@@ -1112,37 +1369,49 @@ export function CampaignsPanel({
           </p>
         ) : (
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {readyPosts.map((p) => (
-              <div
-                key={p.id}
-                className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3"
-              >
-                {p.image_urls_json[0] && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={p.image_urls_json[0]}
-                    alt={p.headline}
-                    className="h-14 w-14 shrink-0 rounded-lg object-cover"
-                  />
-                )}
-                <div className="min-w-0 flex-1 text-xs">
-                  <p className="truncate font-extrabold text-slate-900">
-                    {p.headline}
-                  </p>
-                  <p className="mt-0.5 text-[10px] text-slate-500">
-                    {p.ig_post_id ? "IG OK" : "Sem IG"} •{" "}
-                    {p.fb_post_id ? "FB OK" : "Sem FB"}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => onOpenBoostModal(p)}
-                    className="mt-1.5 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-indigo-700"
-                  >
-                    Criar Campanha
-                  </button>
+            {readyPosts.map((p) => {
+              const score = p.organic_metrics?.engagement_score || 0;
+              const isTop = topEngagementScore > 0 && score === topEngagementScore;
+              return (
+                <div
+                  key={p.id}
+                  className={`flex items-start gap-3 rounded-xl border p-3 ${
+                    isTop
+                      ? "border-amber-300 bg-amber-50/40"
+                      : "border-slate-200 bg-slate-50/70"
+                  }`}
+                >
+                  {p.image_urls_json[0] && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={p.image_urls_json[0]}
+                      alt={p.headline}
+                      className="h-14 w-14 shrink-0 rounded-lg object-cover"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1 space-y-1.5 text-xs">
+                    <p className="truncate font-extrabold text-slate-900">
+                      {p.headline}
+                    </p>
+                    <p className="text-[10px] text-slate-500">
+                      {p.ig_post_id ? "IG OK" : "Sem IG"} •{" "}
+                      {p.fb_post_id ? "FB OK" : "Sem FB"}
+                    </p>
+                    <PostOrganicMetricsBar
+                      metrics={p.organic_metrics}
+                      isTopPerformer={isTop}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => onOpenBoostModal(p)}
+                      className="rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-indigo-700"
+                    >
+                      Criar Campanha
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -1189,8 +1458,10 @@ export function CampaignsPanel({
                 cmp.last_insights_json?.windows?.[selectedWindow] ||
                 cmp.last_insights_json;
               const spend = winMetrics?.spend;
+              const impressions = winMetrics?.impressions;
               const clicks = winMetrics?.clicks;
               const ctr = winMetrics?.ctr;
+              const cpc = winMetrics?.cpc;
               const cpm = winMetrics?.cpm;
               const freq = winMetrics?.frequency;
               const conversions = winMetrics?.conversions;
@@ -1296,11 +1567,19 @@ export function CampaignsPanel({
                   </div>
 
                   {/* Métricas da janela */}
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                     <div className="rounded-lg bg-white p-2 border border-slate-200/70">
                       <p className="text-[10px] text-slate-500">Gasto</p>
                       <p className="font-extrabold text-slate-900">
                         {formatMoney(spend, cmp.currency)}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-white p-2 border border-slate-200/70">
+                      <p className="text-[10px] text-slate-500">Impressões</p>
+                      <p className="font-extrabold text-slate-900">
+                        {impressions !== undefined
+                          ? Number(impressions).toLocaleString("pt-BR")
+                          : "—"}
                       </p>
                     </div>
                     <div className="rounded-lg bg-white p-2 border border-slate-200/70">
@@ -1313,6 +1592,12 @@ export function CampaignsPanel({
                       <p className="text-[10px] text-slate-500">CTR</p>
                       <p className="font-extrabold text-slate-900">
                         {ctr !== undefined ? `${Number(ctr).toFixed(2)}%` : "—"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-white p-2 border border-slate-200/70">
+                      <p className="text-[10px] text-slate-500">CPC</p>
+                      <p className="font-extrabold text-slate-900">
+                        {formatMoney(cpc, cmp.currency)}
                       </p>
                     </div>
                     <div className="rounded-lg bg-white p-2 border border-slate-200/70">

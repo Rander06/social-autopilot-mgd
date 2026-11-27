@@ -1713,10 +1713,13 @@ function unpackPostHistoryRow(p: PostHistoryItem): PostHistoryItem {
       ? p.content_json.story_image_urls
       : [];
   const targets = p.publish_targets || p.content_json?.publish_targets;
+  const organicMetrics =
+    p.organic_metrics || p.content_json?.organic_metrics || null;
   return {
     ...p,
     story_image_urls_json: storyUrls,
     ...(targets ? { publish_targets: targets } : {}),
+    ...(organicMetrics ? { organic_metrics: organicMetrics } : {}),
   };
 }
 
@@ -2447,6 +2450,7 @@ export async function updatePostRecord(
       topic_title: _ignoredTitle,
       story_image_urls_json: storyUrls,
       publish_targets: publishTargets,
+      organic_metrics: organicMetrics,
       ...restPatch
     } = patch;
     void _ignoredTitle;
@@ -2459,6 +2463,9 @@ export async function updatePostRecord(
           ? { story_image_urls: storyUrls }
           : {}),
         ...(publishTargets ? { publish_targets: publishTargets } : {}),
+        ...(organicMetrics !== undefined
+          ? { organic_metrics: organicMetrics }
+          : {}),
       };
     }
 
@@ -2476,7 +2483,12 @@ export async function updatePostRecord(
   const found = getMemDb().posts.find((p) => p.id === postId);
   if (!found) return null;
   Object.assign(found, patch);
-  if (patch.content_json || patch.story_image_urls_json || patch.publish_targets) {
+  if (
+    patch.content_json ||
+    patch.story_image_urls_json ||
+    patch.publish_targets ||
+    patch.organic_metrics !== undefined
+  ) {
     found.content_json = {
       ...found.content_json,
       ...(found.story_image_urls_json && found.story_image_urls_json.length > 0
@@ -2484,6 +2496,9 @@ export async function updatePostRecord(
         : {}),
       ...(found.publish_targets
         ? { publish_targets: found.publish_targets }
+        : {}),
+      ...(patch.organic_metrics !== undefined
+        ? { organic_metrics: patch.organic_metrics }
         : {}),
     };
   }

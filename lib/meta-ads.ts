@@ -1,8 +1,10 @@
 import {
+  AdInsightsDailyPoint,
   AdInsightsSnapshot,
   AdInsightsWindow,
   AdInsightsWindowMetrics,
   MetaAdObjective,
+  PostChannelOrganicMetrics,
 } from "./types";
 
 export const META_ADS_GRAPH_VERSION = "v26.0";
@@ -288,6 +290,9 @@ export class MetaAdsService {
     has_ads_management: boolean;
     has_ads_read: boolean;
     has_business_management: boolean;
+    has_instagram_manage_insights: boolean;
+    has_read_insights: boolean;
+    has_pages_read_engagement: boolean;
     granted: string[];
   }> {
     const data = await this.request<{
@@ -301,8 +306,199 @@ export class MetaAdsService {
       has_ads_management: granted.includes("ads_management"),
       has_ads_read: granted.includes("ads_read"),
       has_business_management: granted.includes("business_management"),
+      has_instagram_manage_insights: granted.includes(
+        "instagram_manage_insights"
+      ),
+      has_read_insights: granted.includes("read_insights"),
+      has_pages_read_engagement: granted.includes("pages_read_engagement"),
       granted,
     };
+  }
+
+  private async requestWithToken<T>(
+    path: string,
+    token: string,
+    query: Record<string, string | number | undefined> = {}
+  ): Promise<T> {
+    const cleanPath = path.startsWith("/") ? path : `/${path}`;
+    const url = new URL(`${META_ADS_GRAPH_BASE_URL}${cleanPath}`);
+    for (const [k, v] of Object.entries(query)) {
+      if (v !== undefined && v !== null && String(v).length > 0) {
+        url.searchParams.set(k, String(v));
+      }
+    }
+    url.searchParams.set("access_token", token);
+
+    const res = await fetch(url.toString(), {
+      method: "GET",
+      signal: AbortSignal.timeout(20_000),
+    });
+    const data = (await res.json().catch(() => ({}))) as T & {
+      error?: { message?: string; code?: number; error_subcode?: number };
+    };
+    if (!res.ok || data.error) {
+      throw new MetaAdsApiError({
+        message: `Meta Graph (${cleanPath}): ${
+          data.error?.message || res.statusText || `HTTP ${res.status}`
+        }`,
+        status: res.status,
+        code: data.error?.code,
+        subcode: data.error?.error_subcode,
+      });
+    }
+    return data;
+  }
+
+  async resolvePageAccessToken(fbPageId: string): Promise<string> {
+    const cleanPage = fbPageId.trim();
+    if (!cleanPage) return this.accessToken;
+    try {
+      const data = await this.request<{ access_token?: string }>(
+        `/${cleanPage}`,
+        { query: { fields: "access_token,name" } }
+      );
+      return data.access_token?.trim() || this.accessToken;
+    } catch {
+      return this.accessToken;
+    }
+  }
+
+  async fetchInstagramPostMetrics(
+    igMediaId: string,
+    tryInsights = true
+  ): Promise<PostChannelOrganicMetrics> {
+    const cleanId = igMediaId.trim();
+    const basic = await this.request<{
+      id: string;
+      like_count?: number;
+      comments_count?: number;
+      permalink?: string;
+    }>(`/${cleanId}`, {
+      query: {
+        fields: "id,like_count,comments_count,media_type,media_product_type,permalink",
+      },
+    });
+
+    const metrics: PostChannelOrganicMetrics = {
+      likes: Number(basic.like_count || 0),
+      comments: Number(basic.comments_count || 0),
+      views: null,
+      reach: null,
+      saved: null,
+      shares: null,
+      permalink: basic.permalink || null,
+      insights_available: false,
+      error: null,
+    };
+
+    if (!tryInsights) {
+      return metrics;
+    }
+
+    const extractInsightValue = (
+      items: Array<{ name?: string; values?: Array<{ value?: number }> }> | undefined,
+      metricName: string
+    ): number | null => {
+      const found = (items || []).find((m) => m.name === metricName);
+      const val = found?.values?.[0]?.value;
+      return typeof val === "number" && Number.isFinite(val) ? val : null;
+    };
+
+    for (const metricList of ["views,reach,saved,shares", "reach,saved,shares"]) {
+      try {
+        const ins = await this.request<{
+          data?: Array<{ name?: string; values?: Array<{ value?: number }> }>;
+        }>(`/${cleanId}/insights`, {
+          query: { metric: metricList },
+        });
+        const items = ins.data || [];
+        metrics.views = extractInsightValue(items, "views");
+        metrics.reach = extractInsightValue(items, "reach");
+        metrics.saved = extractInsightValue(items, "saved");
+        metrics.shares = extractInsightValue(items, "shares");
+        metrics.insights_available = true;
+        break;
+      } catch {
+        // segue para fallback ou mantém likes/comments básicos
+      }
+    }
+
+    return metrics;
+  }
+
+  async fetchFacebookPostMetrics(params: {
+    fbPageId?: string | null;
+    fbPostId: string;
+    pageAccessToken?: string | null;
+    tryInsights?: boolean;
+  }): Promise<PostChannelOrganicMetrics> {
+    const storyId = normalizeFbObjectStoryId(
+      params.fbPageId || "",
+      params.fbPostId
+    );
+    const token = params.pageAccessToken?.trim() || this.accessToken;
+
+    const basic = await this.requestWithToken<{
+      id: string;
+      permalink_url?: string;
+      shares?: { count?: number };
+      reactions?: { summary?: { total_count?: number } };
+      comments?: { summary?: { total_count?: number } };
+    }>(`/${storyId}`, token, {
+      fields:
+        "id,permalink_url,shares,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)",
+    });
+
+    const metrics: PostChannelOrganicMetrics = {
+      likes: Number(basic.reactions?.summary?.total_count || 0),
+      comments: Number(basic.comments?.summary?.total_count || 0),
+      views: null,
+      reach: null,
+      saved: null,
+      shares:
+        basic.shares?.count !== undefined
+          ? Number(basic.shares.count || 0)
+          : null,
+      permalink: basic.permalink_url || null,
+      insights_available: false,
+      error: null,
+    };
+
+    if (params.tryInsights === false) {
+      return metrics;
+    }
+
+    const extractInsightValue = (
+      items: Array<{ name?: string; values?: Array<{ value?: number }> }> | undefined,
+      metricName: string
+    ): number | null => {
+      const found = (items || []).find((m) => m.name === metricName);
+      const val = found?.values?.[0]?.value;
+      return typeof val === "number" && Number.isFinite(val) ? val : null;
+    };
+
+    for (const metricList of [
+      "post_media_view,post_impressions_unique",
+      "post_impressions,post_impressions_unique",
+    ]) {
+      try {
+        const ins = await this.requestWithToken<{
+          data?: Array<{ name?: string; values?: Array<{ value?: number }> }>;
+        }>(`/${storyId}/insights`, token, { metric: metricList });
+        const items = ins.data || [];
+        const mediaView = extractInsightValue(items, "post_media_view");
+        const impressions = extractInsightValue(items, "post_impressions");
+        const reach = extractInsightValue(items, "post_impressions_unique");
+        metrics.views = mediaView ?? impressions ?? null;
+        metrics.reach = reach;
+        metrics.insights_available = true;
+        break;
+      } catch {
+        // mantém likes/comments/shares básicos
+      }
+    }
+
+    return metrics;
   }
 
   async listAdAccounts(): Promise<MetaAdAccountSummary[]> {
@@ -687,6 +883,7 @@ export class MetaAdsService {
           cpm,
           frequency,
           conversions,
+          revenue: Number(revenue.toFixed(2)),
           cpl: unitCost,
           cpa: unitCost,
           roas: spend > 0 && revenue > 0 ? Number((revenue / spend).toFixed(2)) : null,
@@ -694,6 +891,90 @@ export class MetaAdsService {
         },
       };
     });
+  }
+
+  async fetchDailyAdInsights(
+    adAccountId: string,
+    options: {
+      windowDays?: 4 | 7 | 14 | 30;
+      adIds?: string[];
+    } = {}
+  ): Promise<Record<string, AdInsightsDailyPoint[]>> {
+    const cleanAccountId = normalizeAdAccountId(adAccountId);
+    if (!cleanAccountId) return {};
+
+    const windowDays = options.windowDays || 30;
+    const untilDate = new Date();
+    const sinceDate = new Date(
+      untilDate.getTime() - (windowDays - 1) * 24 * 60 * 60 * 1000
+    );
+
+    const query: Record<string, string | number | undefined> = {
+      level: "ad",
+      time_increment: 1,
+      fields:
+        "ad_id,date_start,spend,impressions,clicks,ctr,cpc,actions,action_values",
+      time_range: JSON.stringify({
+        since: sinceDate.toISOString().slice(0, 10),
+        until: untilDate.toISOString().slice(0, 10),
+      }),
+      limit: 500,
+    };
+
+    const cleanAdIds = (options.adIds || [])
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (cleanAdIds.length > 0) {
+      query.filtering = JSON.stringify([
+        { field: "ad.id", operator: "IN", value: cleanAdIds },
+      ]);
+    }
+
+    const data = await this.request<{
+      data?: Array<{
+        ad_id: string;
+        date_start?: string;
+        spend?: string;
+        impressions?: string;
+        clicks?: string;
+        ctr?: string;
+        cpc?: string;
+        actions?: Array<{ action_type: string; value: string }>;
+        action_values?: Array<{ action_type: string; value: string }>;
+      }>;
+    }>(`/${cleanAccountId}/insights`, { query });
+
+    const byAdId: Record<string, AdInsightsDailyPoint[]> = {};
+    for (const row of data.data || []) {
+      const adId = row.ad_id?.trim();
+      const date = String(row.date_start || "").slice(0, 10);
+      if (!adId || !date) continue;
+
+      const { conversions, revenue } = extractConversionsAndRevenue(
+        row.actions,
+        row.action_values
+      );
+
+      if (!byAdId[adId]) {
+        byAdId[adId] = [];
+      }
+      byAdId[adId].push({
+        date,
+        spend: Number(row.spend || 0),
+        impressions: Number(row.impressions || 0),
+        clicks: Number(row.clicks || 0),
+        conversions,
+        revenue: Number(revenue.toFixed(2)),
+        ctr: Number(row.ctr || 0),
+        cpc: Number(row.cpc || 0),
+      });
+    }
+
+    for (const adId of Object.keys(byAdId)) {
+      byAdId[adId].sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    return byAdId;
   }
 
   async fetchMultiWindowAdInsights(
@@ -707,15 +988,21 @@ export class MetaAdsService {
       { key: "30d", days: 30 },
     ];
 
-    const settled = await Promise.all(
-      windowSpecs.map(async (w) => {
-        const rows = await this.fetchAdInsights(adAccountId, {
-          windowDays: w.days,
-          adIds,
-        });
-        return { key: w.key, rows };
-      })
-    );
+    const [settled, dailyByAdId] = await Promise.all([
+      Promise.all(
+        windowSpecs.map(async (w) => {
+          const rows = await this.fetchAdInsights(adAccountId, {
+            windowDays: w.days,
+            adIds,
+          });
+          return { key: w.key, rows };
+        })
+      ),
+      this.fetchDailyAdInsights(adAccountId, {
+        windowDays: 30,
+        adIds,
+      }).catch(() => ({} as Record<string, AdInsightsDailyPoint[]>)),
+    ]);
 
     const byAdId: Record<string, AdInsightsSnapshot> = {};
 
@@ -734,6 +1021,7 @@ export class MetaAdsService {
           cpm: Number(s.cpm || 0),
           frequency: Number(s.frequency || 0),
           conversions: Number(s.conversions || 0),
+          revenue: Number(s.revenue || 0),
           cpl: s.cpl ?? null,
           cpa: s.cpa ?? null,
           roas: s.roas ?? null,
@@ -748,6 +1036,12 @@ export class MetaAdsService {
             windows: byAdId[row.ad_id].windows,
           };
         }
+      }
+    }
+
+    for (const adId of Object.keys(dailyByAdId)) {
+      if (!byAdId[adId]) {
+        byAdId[adId] = { windows: {} };
       }
     }
 
@@ -767,6 +1061,7 @@ export class MetaAdsService {
       const ctr = Number(snap.ctr ?? w4?.ctr ?? 0);
       const ctrDropped = Boolean(w4 && w7 && w7.ctr > 0 && w4.ctr < w7.ctr * 0.75);
       snap.creative_fatigue = freq >= 2.8 && (ctr < 0.8 || ctrDropped);
+      snap.daily = dailyByAdId[adId] || [];
     }
 
     return byAdId;

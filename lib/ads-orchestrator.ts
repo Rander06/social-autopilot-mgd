@@ -18,6 +18,7 @@ import {
   listAdCampaignsByCompany,
   listPostsHistory,
   updateAdCampaignRecord,
+  updatePostRecord,
   upsertAdAccountConfig,
 } from "./store";
 import {
@@ -29,6 +30,8 @@ import {
   AdsAdvisorReport,
   MetaAdObjective,
   ParsedCampaignPlan,
+  PostChannelOrganicMetrics,
+  PostOrganicMetrics,
 } from "./types";
 
 const ALLOWED_OBJECTIVES: MetaAdObjective[] = [
@@ -1263,4 +1266,171 @@ export class CampaignOrchestratorService {
   static refreshMetricsNow = MetricsFetcherWorker.syncCompanyCampaignMetrics;
   static getOptimizationAdvice =
     BudgetAndCreativeAdvisor.generateAdvisorRecommendations;
+
+  static async syncOrganicPostMetrics(companyId: string, limit = 25): Promise<{
+    syncedCount: number;
+    updatedPosts: Record<string, PostOrganicMetrics>;
+    permissions: {
+      has_instagram_manage_insights: boolean;
+      has_read_insights: boolean;
+      has_pages_read_engagement: boolean;
+      missing_insights_scopes: string[];
+    };
+    errors: string[];
+  }> {
+    const [secrets, allPosts] = await Promise.all([
+      getCompanySecrets(companyId),
+      listPostsHistory(companyId, 120),
+    ]);
+
+    if (!secrets.meta_access_token) {
+      throw new Error(
+        "Token da Meta não configurado nas Integrações desta empresa."
+      );
+    }
+
+    const safeLimit = Math.min(40, Math.max(1, Math.round(limit)));
+    const targetPosts = allPosts
+      .filter(
+        (p) =>
+          p.status === "PUBLISHED" &&
+          (Boolean(p.ig_post_id) || Boolean(p.fb_post_id))
+      )
+      .slice(0, safeLimit);
+
+    const metaAds = new MetaAdsService(secrets.meta_access_token);
+    const permCheck = await metaAds.checkAdsPermissions().catch(() => null);
+
+    const hasIgInsights = permCheck
+      ? permCheck.has_instagram_manage_insights
+      : true;
+    const hasFbInsights = permCheck ? permCheck.has_read_insights : true;
+    const hasPagesEngagement = permCheck
+      ? permCheck.has_pages_read_engagement
+      : true;
+
+    const missingScopes: string[] = [];
+    if (
+      permCheck &&
+      !permCheck.has_instagram_manage_insights &&
+      targetPosts.some((p) => Boolean(p.ig_post_id))
+    ) {
+      missingScopes.push("instagram_manage_insights");
+    }
+    if (
+      permCheck &&
+      !permCheck.has_read_insights &&
+      targetPosts.some((p) => Boolean(p.fb_post_id))
+    ) {
+      missingScopes.push("read_insights");
+    }
+
+    const hasAnyFb = targetPosts.some((p) => Boolean(p.fb_post_id));
+    const fbPageToken =
+      hasAnyFb && secrets.fb_page_id
+        ? await metaAds.resolvePageAccessToken(secrets.fb_page_id)
+        : null;
+
+    const updatedPosts: Record<string, PostOrganicMetrics> = {};
+    const errors: string[] = [];
+    let syncedCount = 0;
+
+    const sumNullable = (...vals: Array<number | null | undefined>): number | null => {
+      const nums = vals.filter(
+        (v): v is number => typeof v === "number" && Number.isFinite(v)
+      );
+      if (nums.length === 0) return null;
+      return nums.reduce((acc, cur) => acc + cur, 0);
+    };
+
+    const batchSize = 5;
+    for (let i = 0; i < targetPosts.length; i += batchSize) {
+      const chunk = targetPosts.slice(i, i + batchSize);
+      await Promise.all(
+        chunk.map(async (post) => {
+          let ig: PostChannelOrganicMetrics | null = null;
+          let fb: PostChannelOrganicMetrics | null = null;
+
+          if (post.ig_post_id) {
+            try {
+              ig = await metaAds.fetchInstagramPostMetrics(
+                post.ig_post_id,
+                hasIgInsights
+              );
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              errors.push(`IG (${post.headline.slice(0, 24)}): ${msg}`);
+              ig = post.organic_metrics?.ig || null;
+            }
+          }
+
+          if (post.fb_post_id) {
+            try {
+              fb = await metaAds.fetchFacebookPostMetrics({
+                fbPageId: secrets.fb_page_id,
+                fbPostId: post.fb_post_id,
+                pageAccessToken: fbPageToken,
+                tryInsights: hasFbInsights,
+              });
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              errors.push(`FB (${post.headline.slice(0, 24)}): ${msg}`);
+              fb = post.organic_metrics?.fb || null;
+            }
+          }
+
+          if (!ig && !fb) return;
+
+          const total_likes = (ig?.likes || 0) + (fb?.likes || 0);
+          const total_comments = (ig?.comments || 0) + (fb?.comments || 0);
+          const total_views = sumNullable(ig?.views, fb?.views);
+          const total_reach = sumNullable(ig?.reach, fb?.reach);
+          const total_saved = ig?.saved ?? null;
+          const total_shares = sumNullable(ig?.shares, fb?.shares);
+          const engagement_score =
+            total_likes +
+            total_comments * 2 +
+            (total_saved || 0) * 3 +
+            (total_shares || 0) * 3 +
+            Math.round((total_views || total_reach || 0) / 100);
+
+          const organicMetrics: PostOrganicMetrics = {
+            ig,
+            fb,
+            total_likes,
+            total_comments,
+            total_views,
+            total_reach,
+            total_saved,
+            total_shares,
+            engagement_score,
+            synced_at: new Date().toISOString(),
+          };
+
+          await updatePostRecord(post.id, {
+            content_json: {
+              ...post.content_json,
+              organic_metrics: organicMetrics,
+            },
+            organic_metrics: organicMetrics,
+          });
+
+          updatedPosts[post.id] = organicMetrics;
+          syncedCount += 1;
+        })
+      );
+    }
+
+    return {
+      syncedCount,
+      updatedPosts,
+      permissions: {
+        has_instagram_manage_insights: hasIgInsights,
+        has_read_insights: hasFbInsights,
+        has_pages_read_engagement: hasPagesEngagement,
+        missing_insights_scopes: missingScopes,
+      },
+      errors: errors.slice(0, 6),
+    };
+  }
 }

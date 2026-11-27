@@ -20,6 +20,7 @@ import {
 import {
   BoostCampaignModal,
   CampaignsPanel,
+  PostOrganicMetricsBar,
 } from "./components/CampaignsModule";
 import {
   AdAccountConfig,
@@ -38,6 +39,7 @@ import {
   Plan,
   PostFormat,
   PostHistoryItem,
+  PostOrganicMetrics,
   PublishTargets,
   Topic,
   TopicPhoto,
@@ -1330,6 +1332,86 @@ export default function SaasAppPage() {
     []
   );
   const [campaignsRefreshKey, setCampaignsRefreshKey] = useState(0);
+  const [syncingPostEngagement, setSyncingPostEngagement] = useState(false);
+  const [historySortBy, setHistorySortBy] = useState<"RECENT" | "ENGAGEMENT">(
+    "RECENT"
+  );
+  const [engagementPermWarning, setEngagementPermWarning] = useState<
+    string | null
+  >(null);
+
+  const mergePostsOrganicMetrics = useCallback(
+    (updatedPosts: Record<string, PostOrganicMetrics>) => {
+      setWorkspace((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          posts: prev.posts.map((p) => {
+            const m = updatedPosts[p.id];
+            if (!m) return p;
+            return {
+              ...p,
+              organic_metrics: m,
+              content_json: {
+                ...p.content_json,
+                organic_metrics: m,
+              },
+            };
+          }),
+        };
+      });
+    },
+    []
+  );
+
+  async function handleSyncHistoryEngagement() {
+    if (!workspace) return;
+    setSyncingPostEngagement(true);
+    setGlobalNotice(null);
+    setEngagementPermWarning(null);
+    try {
+      const res = await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "sync_post_engagement",
+          companyId: workspace.company.id,
+          limit: 25,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(
+          data.error || "Erro ao buscar engajamento orgânico na Meta."
+        );
+      }
+      if (data.updatedPosts) {
+        mergePostsOrganicMetrics(
+          data.updatedPosts as Record<string, PostOrganicMetrics>
+        );
+      }
+      const missing: string[] = data.permissions?.missing_insights_scopes || [];
+      if (missing.length > 0) {
+        setEngagementPermWarning(
+          `Curtidas e comentários já estão sendo exibidos. Para liberar Visualizações/Alcance detalhados, adicione os escopos ${missing.join(", ")} ao token Meta.`
+        );
+      }
+      setGlobalNotice({
+        type: "success",
+        text: `Engajamento atualizado em ${data.syncedCount || 0} post(s) publicado(s)!`,
+      });
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text:
+          err instanceof Error
+            ? err.message
+            : "Erro ao sincronizar engajamento na Meta.",
+      });
+    } finally {
+      setSyncingPostEngagement(false);
+    }
+  }
 
   async function handleOpenBoostModal(post: PostHistoryItem) {
     setBoostModalPost(post);
@@ -7466,13 +7548,30 @@ export default function SaasAppPage() {
                   return true;
                 });
 
-                const visiblePosts = filteredPosts.slice(
+                const sortedFilteredPosts =
+                  historySortBy === "ENGAGEMENT"
+                    ? [...filteredPosts].sort((a, b) => {
+                        const diff =
+                          (b.organic_metrics?.engagement_score ?? -1) -
+                          (a.organic_metrics?.engagement_score ?? -1);
+                        if (diff !== 0) return diff;
+                        return b.created_at.localeCompare(a.created_at);
+                      })
+                    : filteredPosts;
+
+                const topHistoryScore = filteredPosts.reduce(
+                  (max, p) =>
+                    Math.max(max, p.organic_metrics?.engagement_score || 0),
+                  0
+                );
+
+                const visiblePosts = sortedFilteredPosts.slice(
                   0,
                   historyVisibleCount
                 );
                 const remainingCount = Math.max(
                   0,
-                  filteredPosts.length - visiblePosts.length
+                  sortedFilteredPosts.length - visiblePosts.length
                 );
 
                 return (
@@ -7484,27 +7583,69 @@ export default function SaasAppPage() {
                         </h2>
                         <p className="text-xs text-slate-500">
                           Exibindo <strong>{visiblePosts.length}</strong> de{" "}
-                          <strong>{filteredPosts.length}</strong> post(s)
+                          <strong>{sortedFilteredPosts.length}</strong> post(s)
                           {hasActiveFilters ? " filtrados" : " mais recentes"} (20
                           por página)
                         </p>
                       </div>
-                      {hasActiveFilters && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 text-[11px]">
+                          <button
+                            type="button"
+                            onClick={() => setHistorySortBy("RECENT")}
+                            className={`rounded-lg px-2.5 py-1 font-bold ${
+                              historySortBy === "RECENT"
+                                ? "bg-slate-900 text-white"
+                                : "text-slate-600 hover:bg-white"
+                            }`}
+                          >
+                            Mais Recentes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setHistorySortBy("ENGAGEMENT")}
+                            className={`rounded-lg px-2.5 py-1 font-bold ${
+                              historySortBy === "ENGAGEMENT"
+                                ? "bg-amber-500 text-white"
+                                : "text-slate-600 hover:bg-white"
+                            }`}
+                          >
+                            🔥 Melhor Engajamento
+                          </button>
+                        </div>
                         <button
                           type="button"
-                          onClick={() => {
-                            setHistoryDateFrom("");
-                            setHistoryDateTo("");
-                            setHistorySearch("");
-                            setHistoryStatusFilter("ALL");
-                            setHistoryVisibleCount(20);
-                          }}
-                          className="rounded-xl border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-200"
+                          disabled={syncingPostEngagement}
+                          onClick={() => void handleSyncHistoryEngagement()}
+                          className="rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-extrabold text-cyan-800 hover:bg-cyan-100 disabled:opacity-60"
                         >
-                          Limpar Filtros
+                          {syncingPostEngagement
+                            ? "Sincronizando Meta..."
+                            : "Atualizar Engajamento (Meta)"}
                         </button>
-                      )}
+                        {hasActiveFilters && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setHistoryDateFrom("");
+                              setHistoryDateTo("");
+                              setHistorySearch("");
+                              setHistoryStatusFilter("ALL");
+                              setHistoryVisibleCount(20);
+                            }}
+                            className="rounded-xl border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-200"
+                          >
+                            Limpar Filtros
+                          </button>
+                        )}
+                      </div>
                     </div>
+
+                    {engagementPermWarning && (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-semibold text-amber-900">
+                        {engagementPermWarning}
+                      </div>
+                    )}
 
                     {/* Barra de Filtros por Data, Status e Texto */}
                     <div className="grid grid-cols-1 gap-2.5 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 sm:grid-cols-2 lg:grid-cols-4">
@@ -7678,6 +7819,20 @@ export default function SaasAppPage() {
                                     {p.fb_post_id || "—"} | TikTok:{" "}
                                     {p.tiktok_post_id || "—"}
                                   </p>
+                                  {p.status === "PUBLISHED" &&
+                                    (p.ig_post_id || p.fb_post_id) && (
+                                      <div className="pt-1">
+                                        <PostOrganicMetricsBar
+                                          metrics={p.organic_metrics}
+                                          isTopPerformer={
+                                            topHistoryScore > 0 &&
+                                            (p.organic_metrics
+                                              ?.engagement_score || 0) ===
+                                              topHistoryScore
+                                          }
+                                        />
+                                      </div>
+                                    )}
                                 </div>
                               </div>
 
@@ -7768,11 +7923,13 @@ export default function SaasAppPage() {
             {clientTab === "campaigns" && (
               <CampaignsPanel
                 companyId={workspace.company.id}
+                companyName={workspace.company.name}
                 publishedPosts={workspace.posts}
                 refreshKey={campaignsRefreshKey}
                 onOpenBoostModal={(post) => void handleOpenBoostModal(post)}
                 onOpenIntegrations={() => setClientTab("integrations")}
                 onAccountsLoaded={setCompanyAdAccounts}
+                onPostsEngagementSynced={mergePostsOrganicMetrics}
                 onUseHookInStudio={(hookPrompt) => {
                   setStudioTopicId("__free__");
                   setStudioTitle("");

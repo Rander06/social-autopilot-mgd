@@ -168,6 +168,31 @@ export interface GeneratedSlideContent {
   highlight?: string;
 }
 
+export interface PostChannelOrganicMetrics {
+  likes: number;
+  comments: number;
+  views?: number | null;
+  reach?: number | null;
+  saved?: number | null;
+  shares?: number | null;
+  permalink?: string | null;
+  insights_available: boolean;
+  error?: string | null;
+}
+
+export interface PostOrganicMetrics {
+  ig?: PostChannelOrganicMetrics | null;
+  fb?: PostChannelOrganicMetrics | null;
+  total_likes: number;
+  total_comments: number;
+  total_views: number | null;
+  total_reach: number | null;
+  total_saved: number | null;
+  total_shares: number | null;
+  engagement_score: number;
+  synced_at: string;
+}
+
 export interface GeneratedContentPayload {
   tema_visual: string;
   headline_arte: string;
@@ -183,6 +208,7 @@ export interface GeneratedContentPayload {
   story_image_urls?: string[];
   publish_targets?: PublishTargets;
   image_provider_used?: string | null;
+  organic_metrics?: PostOrganicMetrics | null;
 }
 
 export interface PostHistoryItem {
@@ -199,6 +225,7 @@ export interface PostHistoryItem {
   image_urls_json: string[];
   story_image_urls_json?: string[];
   publish_targets?: PublishTargets;
+  organic_metrics?: PostOrganicMetrics | null;
   ig_post_id?: string | null;
   fb_post_id?: string | null;
   tiktok_post_id?: string | null;
@@ -251,6 +278,17 @@ export type AdCampaignStatus =
 export type AdDecisionVerdict = "ESCALAR" | "MANTER" | "PAUSAR";
 export type AdInsightsWindow = "4d" | "7d" | "14d" | "30d";
 
+export interface AdInsightsDailyPoint {
+  date: string; // YYYY-MM-DD
+  spend: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  revenue: number;
+  ctr: number;
+  cpc: number;
+}
+
 export interface AdInsightsWindowMetrics {
   spend: number;
   impressions: number;
@@ -260,6 +298,7 @@ export interface AdInsightsWindowMetrics {
   cpm: number;
   frequency: number;
   conversions: number;
+  revenue?: number;
   cpl: number | null;
   cpa: number | null;
   roas: number | null;
@@ -274,11 +313,13 @@ export interface AdInsightsSnapshot {
   cpm?: number;
   frequency?: number;
   conversions?: number;
+  revenue?: number;
   cpl?: number | null;
   cpa?: number | null;
   roas?: number | null;
   creative_fatigue?: boolean;
   windows?: Partial<Record<AdInsightsWindow, AdInsightsWindowMetrics>>;
+  daily?: AdInsightsDailyPoint[];
   raw_actions?: Array<{ action_type: string; value: string }>;
 }
 

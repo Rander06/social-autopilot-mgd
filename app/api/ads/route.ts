@@ -203,6 +203,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ advice });
     }
 
+    if (action === "sync_post_engagement") {
+      const limit =
+        body.limit !== undefined ? Number(body.limit) || 25 : 25;
+      const result = await CampaignOrchestratorService.syncOrganicPostMetrics(
+        companyId,
+        limit
+      );
+      return NextResponse.json(result);
+    }
+
     return NextResponse.json({ error: "Ação inválida." }, { status: 400 });
   } catch (err) {
     return NextResponse.json(
