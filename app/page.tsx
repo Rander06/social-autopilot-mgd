@@ -20,6 +20,7 @@ import {
 import {
   BoostCampaignModal,
   CampaignsPanel,
+  PostExternalLinks,
   PostOrganicMetricsBar,
 } from "./components/CampaignsModule";
 import {
@@ -7856,6 +7857,19 @@ export default function SaasAppPage() {
                                       Impulsionar / Criar Campanha
                                     </button>
                                   )}
+                                {p.status === "PUBLISHED" && (
+                                  <PostExternalLinks
+                                    companyId={workspace.company.id}
+                                    post={p}
+                                    onPermalinkResolved={(postId, metrics) => {
+                                      if (metrics) {
+                                        mergePostsOrganicMetrics({
+                                          [postId]: metrics,
+                                        });
+                                      }
+                                    }}
+                                  />
+                                )}
                                 {p.status === "PENDING_APPROVAL" && (
                                   <>
                                     <button

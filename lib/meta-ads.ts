@@ -501,6 +501,38 @@ export class MetaAdsService {
     return metrics;
   }
 
+  async fetchInstagramPermalink(igMediaId: string): Promise<string | null> {
+    const cleanId = igMediaId.trim();
+    if (!cleanId) return null;
+    const data = await this.request<{ permalink?: string }>(`/${cleanId}`, {
+      query: { fields: "permalink" },
+    });
+    return data.permalink?.trim() || null;
+  }
+
+  async fetchFacebookPermalink(params: {
+    fbPageId?: string | null;
+    fbPostId: string;
+    pageAccessToken?: string | null;
+  }): Promise<string> {
+    const storyId = normalizeFbObjectStoryId(
+      params.fbPageId || "",
+      params.fbPostId
+    );
+    const fallbackUrl = `https://www.facebook.com/${storyId}`;
+    const token = params.pageAccessToken?.trim() || this.accessToken;
+    try {
+      const data = await this.requestWithToken<{ permalink_url?: string }>(
+        `/${storyId}`,
+        token,
+        { fields: "permalink_url" }
+      );
+      return data.permalink_url?.trim() || fallbackUrl;
+    } catch {
+      return fallbackUrl;
+    }
+  }
+
   async listAdAccounts(): Promise<MetaAdAccountSummary[]> {
     const data = await this.request<{
       data?: Array<{

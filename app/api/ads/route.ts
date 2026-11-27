@@ -213,6 +213,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(result);
     }
 
+    if (action === "resolve_post_permalink") {
+      const postId = String(body.postId || "").trim();
+      const rawChannel = String(body.channel || "").trim().toUpperCase();
+      if (
+        !postId ||
+        (rawChannel !== "INSTAGRAM" &&
+          rawChannel !== "FACEBOOK" &&
+          rawChannel !== "TIKTOK")
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Informe postId e channel válido (INSTAGRAM, FACEBOOK ou TIKTOK).",
+          },
+          { status: 400 }
+        );
+      }
+
+      const result = await CampaignOrchestratorService.resolvePostPermalink({
+        companyId,
+        postId,
+        channel: rawChannel as AdChannel,
+      });
+      return NextResponse.json(result);
+    }
+
     return NextResponse.json({ error: "Ação inválida." }, { status: 400 });
   } catch (err) {
     return NextResponse.json(

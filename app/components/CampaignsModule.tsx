@@ -86,6 +86,142 @@ export function PostOrganicMetricsBar({
   );
 }
 
+export function PostExternalLinks({
+  companyId,
+  post,
+  onPermalinkResolved,
+}: {
+  companyId: string;
+  post: PostHistoryItem;
+  onPermalinkResolved?: (
+    postId: string,
+    organicMetrics?: PostOrganicMetrics | null
+  ) => void;
+}) {
+  const [resolvingChannel, setResolvingChannel] = useState<
+    "INSTAGRAM" | "TIKTOK" | null
+  >(null);
+
+  if (!post.ig_post_id && !post.fb_post_id && !post.tiktok_post_id) {
+    return null;
+  }
+
+  const igPermalink = post.organic_metrics?.ig?.permalink?.trim() || null;
+  const fbHref =
+    post.organic_metrics?.fb?.permalink?.trim() ||
+    (post.fb_post_id ? `https://www.facebook.com/${post.fb_post_id}` : null);
+  const rawTikTok = post.tiktok_post_id?.trim() || "";
+  const directTikTokHref = /^\d{15,}$/.test(rawTikTok)
+    ? `https://www.tiktok.com/@/video/${rawTikTok}`
+    : null;
+
+  async function handleResolveAndOpen(channel: "INSTAGRAM" | "TIKTOK") {
+    const popup =
+      typeof window !== "undefined" ? window.open("about:blank", "_blank") : null;
+    setResolvingChannel(channel);
+    try {
+      const res = await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "resolve_post_permalink",
+          companyId,
+          postId: post.id,
+          channel,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) {
+        throw new Error(data.error || "Não foi possível abrir o post.");
+      }
+      if (data.organic_metrics) {
+        onPermalinkResolved?.(
+          post.id,
+          data.organic_metrics as PostOrganicMetrics
+        );
+      }
+      if (popup) {
+        popup.location.href = data.url;
+      } else if (typeof window !== "undefined") {
+        window.open(data.url, "_blank", "noopener,noreferrer");
+      }
+    } catch (err) {
+      if (popup) popup.close();
+      if (typeof window !== "undefined") {
+        window.alert(
+          err instanceof Error
+            ? err.message
+            : "Erro ao abrir o post na rede social."
+        );
+      }
+    } finally {
+      setResolvingChannel(null);
+    }
+  }
+
+  return (
+    <>
+      {post.ig_post_id &&
+        (igPermalink ? (
+          <a
+            href={igPermalink}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Abrir publicação no Instagram"
+            className="inline-flex items-center gap-1 rounded-lg border border-pink-200 bg-pink-50 px-2.5 py-1 text-[11px] font-bold text-pink-700 hover:bg-pink-100"
+          >
+            Instagram ↗
+          </a>
+        ) : (
+          <button
+            type="button"
+            disabled={resolvingChannel !== null}
+            onClick={() => void handleResolveAndOpen("INSTAGRAM")}
+            title="Buscar link oficial e abrir publicação no Instagram"
+            className="inline-flex items-center gap-1 rounded-lg border border-pink-200 bg-pink-50 px-2.5 py-1 text-[11px] font-bold text-pink-700 hover:bg-pink-100 disabled:opacity-60"
+          >
+            {resolvingChannel === "INSTAGRAM" ? "Abrindo..." : "Instagram ↗"}
+          </button>
+        ))}
+
+      {fbHref && (
+        <a
+          href={fbHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Abrir publicação no Facebook"
+          className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700 hover:bg-blue-100"
+        >
+          Facebook ↗
+        </a>
+      )}
+
+      {post.tiktok_post_id &&
+        (directTikTokHref ? (
+          <a
+            href={directTikTokHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Abrir vídeo no TikTok"
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-800 hover:bg-slate-200"
+          >
+            TikTok ↗
+          </a>
+        ) : (
+          <button
+            type="button"
+            disabled={resolvingChannel !== null}
+            onClick={() => void handleResolveAndOpen("TIKTOK")}
+            title="Abrir publicação no TikTok"
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-800 hover:bg-slate-200 disabled:opacity-60"
+          >
+            {resolvingChannel === "TIKTOK" ? "Abrindo..." : "TikTok ↗"}
+          </button>
+        ))}
+    </>
+  );
+}
+
 interface RemoteMetaAdAccount {
   id: string;
   name: string;
@@ -1401,13 +1537,24 @@ export function CampaignsPanel({
                       metrics={p.organic_metrics}
                       isTopPerformer={isTop}
                     />
-                    <button
-                      type="button"
-                      onClick={() => onOpenBoostModal(p)}
-                      className="rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-indigo-700"
-                    >
-                      Criar Campanha
-                    </button>
+                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => onOpenBoostModal(p)}
+                        className="rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-indigo-700"
+                      >
+                        Criar Campanha
+                      </button>
+                      <PostExternalLinks
+                        companyId={companyId}
+                        post={p}
+                        onPermalinkResolved={(postId, metrics) => {
+                          if (metrics) {
+                            onPostsEngagementSynced?.({ [postId]: metrics });
+                          }
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
               );

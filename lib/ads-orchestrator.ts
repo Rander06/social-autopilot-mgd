@@ -5,6 +5,7 @@ import {
   MetaAdsService,
   MetaTargetingInput,
   normalizeAdAccountId,
+  normalizeFbObjectStoryId,
 } from "./meta-ads";
 import {
   appendAuditLog,
@@ -1431,6 +1432,187 @@ export class CampaignOrchestratorService {
         missing_insights_scopes: missingScopes,
       },
       errors: errors.slice(0, 6),
+    };
+  }
+
+  static async resolvePostPermalink(params: {
+    companyId: string;
+    postId: string;
+    channel: AdChannel;
+  }): Promise<{
+    url: string;
+    cached: boolean;
+    note?: string;
+    organic_metrics?: PostOrganicMetrics | null;
+  }> {
+    const [secrets, posts] = await Promise.all([
+      getCompanySecrets(params.companyId),
+      listPostsHistory(params.companyId, 200),
+    ]);
+
+    const post = posts.find((p) => p.id === params.postId);
+    if (!post) {
+      throw new Error("Post orgânico não encontrado para esta empresa.");
+    }
+
+    const baseMetrics: PostOrganicMetrics = post.organic_metrics || {
+      ig: null,
+      fb: null,
+      total_likes: 0,
+      total_comments: 0,
+      total_views: null,
+      total_reach: null,
+      total_saved: null,
+      total_shares: null,
+      engagement_score: 0,
+      synced_at: new Date().toISOString(),
+    };
+
+    if (params.channel === "FACEBOOK") {
+      const cachedUrl = post.organic_metrics?.fb?.permalink?.trim();
+      if (cachedUrl) {
+        return { url: cachedUrl, cached: true, organic_metrics: post.organic_metrics };
+      }
+      if (!post.fb_post_id) {
+        throw new Error("Este post não possui ID publicado no Facebook.");
+      }
+
+      const storyId = normalizeFbObjectStoryId(
+        secrets.fb_page_id || "",
+        post.fb_post_id
+      );
+      let url = `https://www.facebook.com/${storyId}`;
+      if (secrets.meta_access_token) {
+        const metaAds = new MetaAdsService(secrets.meta_access_token);
+        const fbPageToken = secrets.fb_page_id
+          ? await metaAds.resolvePageAccessToken(secrets.fb_page_id)
+          : null;
+        url = await metaAds.fetchFacebookPermalink({
+          fbPageId: secrets.fb_page_id,
+          fbPostId: post.fb_post_id,
+          pageAccessToken: fbPageToken,
+        });
+      }
+
+      const nextMetrics: PostOrganicMetrics = {
+        ...baseMetrics,
+        fb: {
+          likes: baseMetrics.fb?.likes || 0,
+          comments: baseMetrics.fb?.comments || 0,
+          views: baseMetrics.fb?.views ?? null,
+          reach: baseMetrics.fb?.reach ?? null,
+          saved: baseMetrics.fb?.saved ?? null,
+          shares: baseMetrics.fb?.shares ?? null,
+          insights_available: baseMetrics.fb?.insights_available ?? false,
+          error: baseMetrics.fb?.error ?? null,
+          permalink: url,
+        },
+      };
+
+      await updatePostRecord(post.id, {
+        content_json: {
+          ...post.content_json,
+          organic_metrics: nextMetrics,
+        },
+        organic_metrics: nextMetrics,
+      });
+
+      return { url, cached: false, organic_metrics: nextMetrics };
+    }
+
+    if (params.channel === "INSTAGRAM") {
+      const cachedUrl = post.organic_metrics?.ig?.permalink?.trim();
+      if (cachedUrl) {
+        return { url: cachedUrl, cached: true, organic_metrics: post.organic_metrics };
+      }
+      if (!post.ig_post_id) {
+        throw new Error("Este post não possui ID publicado no Instagram.");
+      }
+      if (!secrets.meta_access_token) {
+        throw new Error(
+          "Token da Meta não configurado para consultar o link do Instagram."
+        );
+      }
+
+      const metaAds = new MetaAdsService(secrets.meta_access_token);
+      const url = await metaAds.fetchInstagramPermalink(post.ig_post_id);
+      if (!url) {
+        throw new Error(
+          "Não foi possível obter o link público deste post no Instagram."
+        );
+      }
+
+      const nextMetrics: PostOrganicMetrics = {
+        ...baseMetrics,
+        ig: {
+          likes: baseMetrics.ig?.likes || 0,
+          comments: baseMetrics.ig?.comments || 0,
+          views: baseMetrics.ig?.views ?? null,
+          reach: baseMetrics.ig?.reach ?? null,
+          saved: baseMetrics.ig?.saved ?? null,
+          shares: baseMetrics.ig?.shares ?? null,
+          insights_available: baseMetrics.ig?.insights_available ?? false,
+          error: baseMetrics.ig?.error ?? null,
+          permalink: url,
+        },
+      };
+
+      await updatePostRecord(post.id, {
+        content_json: {
+          ...post.content_json,
+          organic_metrics: nextMetrics,
+        },
+        organic_metrics: nextMetrics,
+      });
+
+      return { url, cached: false, organic_metrics: nextMetrics };
+    }
+
+    // TIKTOK
+    const rawTikTokId = post.tiktok_post_id?.trim() || "";
+    if (!rawTikTokId) {
+      throw new Error("Este post não possui ID publicado no TikTok.");
+    }
+    if (/^\d{15,}$/.test(rawTikTokId)) {
+      return {
+        url: `https://www.tiktok.com/@/video/${rawTikTokId}`,
+        cached: true,
+      };
+    }
+
+    if (secrets.tiktok_access_token) {
+      try {
+        const res = await fetch(
+          "https://open.tiktokapis.com/v2/post/publish/status/fetch/",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${secrets.tiktok_access_token.trim()}`,
+              "Content-Type": "application/json; charset=UTF-8",
+            },
+            body: JSON.stringify({ publish_id: rawTikTokId }),
+            signal: AbortSignal.timeout(8000),
+          }
+        );
+        const statusData = (await res.json()) as {
+          data?: { publicaly_available_post_id?: string[] };
+        };
+        const publicId = statusData.data?.publicaly_available_post_id?.[0];
+        if (publicId) {
+          return {
+            url: `https://www.tiktok.com/@/video/${publicId}`,
+            cached: false,
+          };
+        }
+      } catch {
+        // segue para o fallback do TikTok Studio
+      }
+    }
+
+    return {
+      url: "https://www.tiktok.com/tiktokstudio/content",
+      cached: false,
+      note: "Post do TikTok em modo Sandbox/privado: abrindo o TikTok Studio para visualização.",
     };
   }
 }
