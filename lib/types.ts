@@ -374,6 +374,24 @@ export interface AdCampaignRecord {
   updated_at: string;
 }
 
+export interface AdGeoLocationSelection {
+  label: string;
+  type:
+    | "country"
+    | "region"
+    | "city"
+    | "neighborhood"
+    | "subcity"
+    | "zip"
+    | "custom_pin";
+  key?: string;
+  country_code?: string;
+  region?: string;
+  latitude?: number;
+  longitude?: number;
+  radius_km?: number;
+}
+
 export interface ParsedCampaignPlan {
   name: string;
   objective: MetaAdObjective;
@@ -382,10 +400,19 @@ export interface ParsedCampaignPlan {
   daily_budget_cents: number;
   duration_days: number | null;
   location_query: string;
+  location_radius_km?: number | null;
+  selected_location?: AdGeoLocationSelection | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  no_end_date?: boolean;
   age_min: number;
   age_max: number;
   genders: Array<1 | 2>;
   destination_url: string | null;
+  welcome_greeting?: string | null;
+  welcome_autofill?: string | null;
+  pixel_id?: string | null;
+  url_tags?: string | null;
   reasoning: string;
   parser_provider: string;
 }

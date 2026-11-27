@@ -31,6 +31,65 @@ export function normalizeFbObjectStoryId(
   return `${cleanPage}_${cleanPost}`;
 }
 
+export function isBrokenFacebookPermalink(url?: string | null): boolean {
+  const clean = url?.trim();
+  if (!clean) return true;
+  if (/\/\d+_\d+\/?$/.test(clean)) return true;
+  if (/^https?:\/\/(?:www\.|m\.)?facebook\.com\/\d+\/posts\/\d+\/?$/i.test(clean)) {
+    return true;
+  }
+  if (/permalink\.php\?story_fbid=\d+&id=\d+/i.test(clean)) {
+    return true;
+  }
+  return false;
+}
+
+interface FacebookPostPermalinkFields {
+  permalink_url?: string;
+  attachments?: {
+    data?: Array<{
+      url?: string;
+      unshimmed_url?: string;
+      target?: { url?: string };
+      subattachments?: {
+        data?: Array<{
+          url?: string;
+          unshimmed_url?: string;
+          target?: { url?: string };
+        }>;
+      };
+    }>;
+  };
+}
+
+function extractFacebookWorkingUrl(
+  data?: FacebookPostPermalinkFields | null
+): string | null {
+  if (!data) return null;
+  if (data.permalink_url && !isBrokenFacebookPermalink(data.permalink_url)) {
+    return data.permalink_url.trim();
+  }
+
+  for (const att of data.attachments?.data || []) {
+    for (const candidate of [att.url, att.unshimmed_url, att.target?.url]) {
+      const clean = candidate?.trim();
+      if (clean && /^https:\/\//i.test(clean) && !isBrokenFacebookPermalink(clean)) {
+        return clean;
+      }
+    }
+    for (const sub of att.subattachments?.data || []) {
+      for (const candidate of [sub.url, sub.unshimmed_url, sub.target?.url]) {
+        const clean = candidate?.trim();
+        if (clean && /^https:\/\//i.test(clean) && !isBrokenFacebookPermalink(clean)) {
+          return clean;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 export function getMinimumDailyBudgetCents(currency = "BRL"): number {
   const code = currency.trim().toUpperCase();
   if (code === "USD" || code === "EUR") return 100;
@@ -82,6 +141,12 @@ export interface MetaAdAccountSummary {
   is_active: boolean;
 }
 
+export interface MetaAdPixelSummary {
+  id: string;
+  name: string;
+  is_unavailable: boolean;
+}
+
 export interface MetaGeoLocationResult {
   key: string;
   name: string;
@@ -102,6 +167,16 @@ export interface MetaTargetingInput {
       distance_unit?: "kilometer" | "mile";
     }>;
     regions?: Array<{ key: string }>;
+    neighborhoods?: Array<{ key: string }>;
+    subcities?: Array<{ key: string }>;
+    zips?: Array<{ key: string }>;
+    custom_locations?: Array<{
+      latitude: number;
+      longitude: number;
+      radius: number;
+      distance_unit: "kilometer" | "mile";
+      name?: string;
+    }>;
   };
   age_min?: number;
   age_max?: number;
@@ -121,12 +196,23 @@ export interface CreateMetaCampaignInput {
   dailyBudgetCents: number;
   currency?: string;
   durationDays?: number | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  noEndDate?: boolean;
   targeting?: MetaTargetingInput;
   fbPageId?: string | null;
   fbPostId?: string | null;
   igUserId?: string | null;
   igMediaId?: string | null;
   destinationUrl?: string | null;
+  postImageUrl?: string | null;
+  postStoryImageUrl?: string | null;
+  postHeadline?: string | null;
+  postCaption?: string | null;
+  welcomeGreeting?: string | null;
+  welcomeAutofill?: string | null;
+  pixelId?: string | null;
+  urlTags?: string | null;
 }
 
 export interface CreateMetaCampaignResult {
@@ -441,12 +527,13 @@ export class MetaAdsService {
     const basic = await this.requestWithToken<{
       id: string;
       permalink_url?: string;
+      attachments?: FacebookPostPermalinkFields["attachments"];
       shares?: { count?: number };
       reactions?: { summary?: { total_count?: number } };
       comments?: { summary?: { total_count?: number } };
     }>(`/${storyId}`, token, {
       fields:
-        "id,permalink_url,shares,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)",
+        "id,permalink_url,attachments{url,unshimmed_url,target{url},subattachments{url,unshimmed_url,target{url}}},shares,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)",
     });
 
     const metrics: PostChannelOrganicMetrics = {
@@ -459,7 +546,7 @@ export class MetaAdsService {
         basic.shares?.count !== undefined
           ? Number(basic.shares.count || 0)
           : null,
-      permalink: basic.permalink_url || null,
+      permalink: extractFacebookWorkingUrl(basic),
       insights_available: false,
       error: null,
     };
@@ -519,18 +606,72 @@ export class MetaAdsService {
       params.fbPageId || "",
       params.fbPostId
     );
-    const fallbackUrl = `https://www.facebook.com/${storyId}`;
+    const underscoreIdx = storyId.indexOf("_");
+    const pagePart =
+      underscoreIdx > 0 ? storyId.slice(0, underscoreIdx) : "";
+    const postPart =
+      underscoreIdx > 0 ? storyId.slice(underscoreIdx + 1) : storyId;
+    const fallbackUrl = pagePart
+      ? `https://www.facebook.com/${encodeURIComponent(pagePart)}`
+      : `https://www.facebook.com/photo/?fbid=${encodeURIComponent(storyId)}`;
     const token = params.pageAccessToken?.trim() || this.accessToken;
+
+    // Tentativa 1: Post node + attachments (photo.php?fbid=... abre com HTTP 200 em Páginas NPE)
     try {
-      const data = await this.requestWithToken<{ permalink_url?: string }>(
+      const data = await this.requestWithToken<FacebookPostPermalinkFields>(
         `/${storyId}`,
         token,
-        { fields: "permalink_url" }
+        {
+          fields:
+            "permalink_url,attachments{url,unshimmed_url,target{url},subattachments{url,unshimmed_url,target{url}}}",
+        }
       );
-      return data.permalink_url?.trim() || fallbackUrl;
+      const working = extractFacebookWorkingUrl(data);
+      if (working) {
+        return working;
+      }
     } catch {
-      return fallbackUrl;
+      // tenta node alternativo da foto/post abaixo
     }
+
+    // Tentativa 2: Photo node / postPart
+    if (postPart) {
+      try {
+        const photoData = await this.requestWithToken<{
+          link?: string;
+          permalink_url?: string;
+          page_story_id?: string;
+        }>(`/${postPart}`, token, {
+          fields: "link,permalink_url,page_story_id",
+        });
+        if (
+          photoData.permalink_url &&
+          !isBrokenFacebookPermalink(photoData.permalink_url)
+        ) {
+          return photoData.permalink_url.trim();
+        }
+        if (photoData.link && !isBrokenFacebookPermalink(photoData.link)) {
+          return photoData.link.trim();
+        }
+        if (photoData.page_story_id?.trim()) {
+          const storyData = await this.requestWithToken<{
+            permalink_url?: string;
+          }>(`/${photoData.page_story_id.trim()}`, token, {
+            fields: "permalink_url",
+          });
+          if (
+            storyData.permalink_url &&
+            !isBrokenFacebookPermalink(storyData.permalink_url)
+          ) {
+            return storyData.permalink_url.trim();
+          }
+        }
+      } catch {
+        // segue para fallback seguro da Página
+      }
+    }
+
+    return fallbackUrl;
   }
 
   async listAdAccounts(): Promise<MetaAdAccountSummary[]> {
@@ -565,7 +706,9 @@ export class MetaAdsService {
   async searchGeoLocations(
     query: string,
     options: {
-      locationTypes?: Array<"city" | "region" | "country">;
+      locationTypes?: Array<
+        "city" | "region" | "country" | "neighborhood" | "subcity" | "zip"
+      >;
       countryCode?: string;
       limit?: number;
     } = {}
@@ -598,6 +741,10 @@ export class MetaAdsService {
     const hasCustomGeo = Boolean(
       (rawGeo?.cities && rawGeo.cities.length > 0) ||
         (rawGeo?.regions && rawGeo.regions.length > 0) ||
+        (rawGeo?.neighborhoods && rawGeo.neighborhoods.length > 0) ||
+        (rawGeo?.subcities && rawGeo.subcities.length > 0) ||
+        (rawGeo?.zips && rawGeo.zips.length > 0) ||
+        (rawGeo?.custom_locations && rawGeo.custom_locations.length > 0) ||
         (rawGeo?.countries && rawGeo.countries.length > 0)
     );
 
@@ -619,6 +766,75 @@ export class MetaAdsService {
     }
 
     return targeting;
+  }
+
+  async checkPageWhatsappNumber(fbPageId: string): Promise<string | null> {
+    const cleanPage = fbPageId.trim();
+    if (!cleanPage) return null;
+    try {
+      const data = await this.request<{ whatsapp_number?: string }>(
+        `/${cleanPage}`,
+        { query: { fields: "whatsapp_number" } }
+      );
+      return data.whatsapp_number?.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async listAdPixels(adAccountId: string): Promise<MetaAdPixelSummary[]> {
+    const cleanAccountId = normalizeAdAccountId(adAccountId);
+    if (!cleanAccountId) return [];
+    const data = await this.request<{
+      data?: Array<{
+        id?: string;
+        name?: string;
+        is_unavailable?: boolean;
+      }>;
+    }>(`/${cleanAccountId}/adspixels`, {
+      query: { fields: "id,name,is_unavailable", limit: 50 },
+    });
+
+    return (data.data || [])
+      .filter((px) => Boolean(px.id))
+      .map((px) => ({
+        id: String(px.id),
+        name: px.name?.trim() || `Pixel ${px.id}`,
+        is_unavailable: Boolean(px.is_unavailable),
+      }));
+  }
+
+  async uploadAdImageFromUrl(
+    adAccountId: string,
+    imageUrl: string
+  ): Promise<string | null> {
+    const cleanAccountId = normalizeAdAccountId(adAccountId);
+    const cleanUrl = imageUrl.trim();
+    if (!cleanAccountId || !cleanUrl) return null;
+
+    try {
+      const imgRes = await fetch(cleanUrl, {
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!imgRes.ok) return null;
+      const arrBuf = await imgRes.arrayBuffer();
+      const base64 = Buffer.from(arrBuf).toString("base64");
+      if (!base64) return null;
+
+      const uploadRes = await this.request<{
+        images?: Record<string, { hash?: string }>;
+      }>(`/${cleanAccountId}/adimages`, {
+        method: "POST",
+        body: { bytes: base64 },
+      });
+
+      const firstEntry = uploadRes.images
+        ? Object.values(uploadRes.images).find((item) => Boolean(item?.hash))
+        : null;
+      return firstEntry?.hash?.trim() || null;
+    } catch {
+      return null;
+    }
   }
 
   async createCampaignFromExistingPost(
@@ -643,31 +859,50 @@ export class MetaAdsService {
     const igUserId = input.igUserId?.trim() || "";
     const igMediaId = input.igMediaId?.trim() || "";
 
+    if (!fbPageId) {
+      throw new Error(
+        "Página do Facebook (fb_page_id) não configurada nas Integrações desta empresa."
+      );
+    }
+
     let sourceStoryId = "";
-    if (input.channel === "FACEBOOK") {
-      if (!fbPageId || !fbPostId) {
-        throw new Error(
-          "Post orgânico sem fb_page_id ou fb_post_id para impulsionar no Facebook."
-        );
-      }
+    if (fbPostId) {
       sourceStoryId = normalizeFbObjectStoryId(fbPageId, fbPostId);
-    } else {
-      if (!fbPageId || !igUserId || !igMediaId) {
-        throw new Error(
-          "Post orgânico sem fb_page_id, ig_user_id ou ig_post_id para impulsionar no Instagram."
-        );
-      }
+    } else if (igMediaId) {
       sourceStoryId = igMediaId;
     }
 
     const stepsLog: string[] = [];
+    let effectiveObjective: MetaAdObjective = input.objective;
+    let effectiveGoal = input.optimizationGoal || "LINK_CLICKS";
+    let effectiveDestination = input.destinationType?.trim().toUpperCase() || null;
+    const cleanDestUrl = input.destinationUrl?.trim() || null;
+
+    if (effectiveDestination === "WHATSAPP") {
+      // Na API v26.0, Click-to-WhatsApp exige OUTCOME_ENGAGEMENT + CONVERSATIONS.
+      // Não bloqueamos previamente por fields=whatsapp_number porque o token pode omitir esse campo mesmo quando a Página já tem WhatsApp vinculado.
+      effectiveObjective = "OUTCOME_ENGAGEMENT";
+      effectiveGoal = "CONVERSATIONS";
+    }
+
+    if (effectiveObjective === "OUTCOME_TRAFFIC" && !cleanDestUrl) {
+      throw new Error(
+        "Para campanhas de Tráfego, informe o Link Destino (site ou https://wa.me/55...) antes de criar a campanha."
+      );
+    }
+
     const partialIds: {
       campaignId?: string;
       adsetId?: string;
       creativeId?: string;
     } = {};
 
-    const attachPartialIds = (err: unknown): never => {
+    const attachPartialIds = async (err: unknown): Promise<never> => {
+      if (partialIds.campaignId) {
+        await this.toggleEntityStatus(partialIds.campaignId, "ARCHIVED").catch(
+          () => null
+        );
+      }
       if (err instanceof MetaAdsApiError) {
         err.partialIds = { ...partialIds };
         throw err;
@@ -679,126 +914,523 @@ export class MetaAdsService {
       });
     };
 
-    // Passo 1 — Criar Campanha (sempre PAUSED por segurança)
-    const campaignRes = await this.request<{ id: string }>(
-      `/${adAccountId}/campaigns`,
-      {
-        method: "POST",
-        body: {
-          name: input.name.trim(),
-          objective: input.objective,
-          status: "PAUSED",
-          special_ad_categories: [],
-          is_adset_budget_sharing_enabled: false,
-        },
-      }
-    );
-    partialIds.campaignId = campaignRes.id;
-    stepsLog.push(`Passo 1 concluído: Campaign ${campaignRes.id} (PAUSED)`);
-
-    // Passo 2 — Criar Conjunto de Anúncios (AdSet PAUSED)
-    const adsetPayload: Record<string, unknown> = {
-      name: `${input.name.trim()} — AdSet`,
-      campaign_id: campaignRes.id,
-      daily_budget: String(budgetCents),
-      billing_event: "IMPRESSIONS",
-      optimization_goal: input.optimizationGoal || "LINK_CLICKS",
-      bid_strategy: "LOWEST_COST_WITHOUT_CAP",
-      targeting: this.normalizeTargeting(input.targeting),
-      status: "PAUSED",
-    };
-
-    if (input.destinationType?.trim()) {
-      adsetPayload.destination_type = input.destinationType.trim();
-    }
-
-    const needsPagePromotedObject =
-      input.objective === "OUTCOME_LEADS" ||
-      input.objective === "OUTCOME_ENGAGEMENT" ||
-      input.destinationType === "WHATSAPP" ||
-      input.destinationType === "MESSENGER" ||
-      input.destinationType === "INSTAGRAM_DIRECT";
-
-    if (needsPagePromotedObject && fbPageId) {
-      adsetPayload.promoted_object = { page_id: fbPageId };
-    }
-
-    if (input.durationDays && input.durationDays > 0) {
-      const start = new Date();
-      const end = new Date(
-        start.getTime() + Math.round(input.durationDays) * 24 * 60 * 60 * 1000
+    const createCampaignAndAdSet = async (): Promise<{
+      campaignId: string;
+      adsetId: string;
+    }> => {
+      const cRes = await this.request<{ id: string }>(
+        `/${adAccountId}/campaigns`,
+        {
+          method: "POST",
+          body: {
+            name: input.name.trim(),
+            objective: effectiveObjective,
+            status: "PAUSED",
+            special_ad_categories: [],
+            is_adset_budget_sharing_enabled: false,
+          },
+        }
       );
-      adsetPayload.start_time = start.toISOString();
-      adsetPayload.end_time = end.toISOString();
-    }
+      partialIds.campaignId = cRes.id;
+      stepsLog.push(
+        `Passo 1 concluído: Campaign ${cRes.id} (${effectiveObjective} • PAUSED)`
+      );
 
-    let adsetRes: { id: string };
-    try {
-      adsetRes = await this.request<{ id: string }>(`/${adAccountId}/adsets`, {
+      const adsetPayload: Record<string, unknown> = {
+        name: `${input.name.trim()} — AdSet`,
+        campaign_id: cRes.id,
+        daily_budget: String(budgetCents),
+        billing_event: "IMPRESSIONS",
+        optimization_goal: effectiveGoal,
+        bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+        targeting: this.normalizeTargeting(input.targeting),
+        status: "PAUSED",
+      };
+
+      if (effectiveDestination) {
+        adsetPayload.destination_type = effectiveDestination;
+      }
+
+      const needsPagePromotedObject =
+        effectiveObjective === "OUTCOME_LEADS" ||
+        effectiveObjective === "OUTCOME_ENGAGEMENT" ||
+        effectiveDestination === "WHATSAPP" ||
+        effectiveDestination === "MESSENGER" ||
+        effectiveDestination === "INSTAGRAM_DIRECT";
+
+      if (needsPagePromotedObject && fbPageId) {
+        adsetPayload.promoted_object = { page_id: fbPageId };
+      }
+
+      const parsedStart = input.startTime?.trim()
+        ? new Date(input.startTime.trim())
+        : null;
+      const validStart =
+        parsedStart && !Number.isNaN(parsedStart.getTime()) ? parsedStart : null;
+      const parsedEnd = input.endTime?.trim()
+        ? new Date(input.endTime.trim())
+        : null;
+      const validEnd =
+        parsedEnd && !Number.isNaN(parsedEnd.getTime()) ? parsedEnd : null;
+
+      if (input.noEndDate) {
+        if (validStart) {
+          adsetPayload.start_time = validStart.toISOString();
+        }
+      } else if (validEnd) {
+        const effectiveStart = validStart || new Date();
+        if (validEnd.getTime() <= effectiveStart.getTime() + 60_000) {
+          throw new Error(
+            "A data/hora de término deve ser posterior à data/hora de início."
+          );
+        }
+        adsetPayload.start_time = effectiveStart.toISOString();
+        adsetPayload.end_time = validEnd.toISOString();
+      } else if (input.durationDays && input.durationDays > 0) {
+        const effectiveStart = validStart || new Date();
+        const end = new Date(
+          effectiveStart.getTime() +
+            Math.round(input.durationDays) * 24 * 60 * 60 * 1000
+        );
+        adsetPayload.start_time = effectiveStart.toISOString();
+        adsetPayload.end_time = end.toISOString();
+      } else if (validStart) {
+        adsetPayload.start_time = validStart.toISOString();
+      }
+
+      const aRes = await this.request<{ id: string }>(`/${adAccountId}/adsets`, {
         method: "POST",
         body: adsetPayload,
       });
+      return { campaignId: cRes.id, adsetId: aRes.id };
+    };
+
+    let campaignRes: { id: string };
+    let adsetRes: { id: string };
+    try {
+      const pair = await createCampaignAndAdSet();
+      campaignRes = { id: pair.campaignId };
+      adsetRes = { id: pair.adsetId };
     } catch (err) {
-      return attachPartialIds(err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isWhatsappLinkIssue =
+        effectiveDestination === "WHATSAPP" &&
+        /whatsapp|phone|telefone|número|numero/i.test(errMsg);
+
+      if (isWhatsappLinkIssue && cleanDestUrl) {
+        if (partialIds.campaignId) {
+          await this.toggleEntityStatus(partialIds.campaignId, "ARCHIVED").catch(
+            () => null
+          );
+          partialIds.campaignId = undefined;
+        }
+        effectiveObjective = "OUTCOME_TRAFFIC";
+        effectiveGoal = "LINK_CLICKS";
+        effectiveDestination = "WEBSITE";
+        stepsLog.push(
+          "WhatsApp Business nativo indisponível na Página: recriando como Tráfego para o Link Destino informado."
+        );
+        try {
+          const fallbackPair = await createCampaignAndAdSet();
+          campaignRes = { id: fallbackPair.campaignId };
+          adsetRes = { id: fallbackPair.adsetId };
+        } catch (fallbackErr) {
+          return await attachPartialIds(fallbackErr);
+        }
+      } else if (isWhatsappLinkIssue && !cleanDestUrl) {
+        if (partialIds.campaignId) {
+          await this.toggleEntityStatus(partialIds.campaignId, "ARCHIVED").catch(
+            () => null
+          );
+          partialIds.campaignId = undefined;
+        }
+        throw new Error(
+          `A Meta informou que a Página ainda não liberou o WhatsApp Business para anúncios (${errMsg}). Preencha o campo 'Link Destino' com https://wa.me/55... para rodar apontando direto para seu WhatsApp.`
+        );
+      } else {
+        return await attachPartialIds(err);
+      }
     }
+
     partialIds.adsetId = adsetRes.id;
     stepsLog.push(`Passo 2 concluído: AdSet ${adsetRes.id} (PAUSED)`);
 
-    // Passo 3 — Criar AdCreative reaproveitando o post orgânico (zero re-upload)
-    const creativePayload: Record<string, unknown> =
-      input.channel === "FACEBOOK"
-        ? {
-            name: `${input.name.trim()} — Creative FB`,
-            object_story_id: sourceStoryId,
-          }
-        : {
-            name: `${input.name.trim()} — Creative IG`,
-            object_id: fbPageId,
-            instagram_user_id: igUserId,
-            source_instagram_media_id: igMediaId,
-          };
+    // Passo 3 & 4 — AdCreative + Ad compatíveis com o objetivo ODAX v26.0
+    const isMessagingDest =
+      effectiveDestination === "WHATSAPP" ||
+      effectiveDestination === "MESSENGER" ||
+      effectiveDestination === "INSTAGRAM_DIRECT";
+    const isPureEngagement =
+      effectiveObjective === "OUTCOME_ENGAGEMENT" && !isMessagingDest;
+    const postImg = input.postImageUrl?.trim() || "";
 
-    if (
-      input.destinationUrl?.trim() &&
-      input.objective === "OUTCOME_TRAFFIC" &&
-      input.channel === "INSTAGRAM"
-    ) {
-      creativePayload.call_to_action = {
-        type: "LEARN_MORE",
-        value: { link: input.destinationUrl.trim() },
+    const cleanUrlTags = input.urlTags?.trim() || "";
+
+    const buildLinkSpecCreativePayload = (
+      welcomePlacement: "link_data" | "story_spec" | "none" = "link_data"
+    ): Record<string, unknown> => {
+      const targetLink =
+        effectiveDestination === "WHATSAPP"
+          ? "https://api.whatsapp.com/send"
+          : cleanDestUrl || "https://www.facebook.com/";
+      const cta =
+        effectiveDestination === "WHATSAPP"
+          ? {
+              type: "WHATSAPP_MESSAGE",
+              value: {
+                app_destination: "WHATSAPP",
+                link: "https://api.whatsapp.com/send",
+              },
+            }
+          : {
+              type: "LEARN_MORE",
+              value: { link: targetLink },
+            };
+
+      const linkData: Record<string, unknown> = {
+        link: targetLink,
+        message: (input.postCaption || input.postHeadline || input.name).trim(),
+        name: (input.postHeadline || input.name).trim().slice(0, 90),
+        call_to_action: cta,
       };
-    }
+      if (postImg) {
+        linkData.picture = postImg;
+      }
+
+      const greeting = input.welcomeGreeting?.trim() || "";
+      const autofill = input.welcomeAutofill?.trim() || "";
+      const shouldSendWelcome =
+        welcomePlacement !== "none" &&
+        effectiveDestination === "WHATSAPP" &&
+        Boolean(greeting || autofill);
+
+      const serializedWelcome = shouldSendWelcome
+        ? JSON.stringify({
+            type: "VISUAL_EDITOR",
+            version: 2,
+            landing_screen_type: "welcome_message",
+            media_type: "text",
+            text_format: {
+              customer_action_type: "autofill_message",
+              message: {
+                text: greeting || "Oi! Como podemos ajudar?",
+                autofill_message: {
+                  content:
+                    autofill ||
+                    "Olá! Gostaria de mais informações sobre este anúncio.",
+                },
+              },
+            },
+          })
+        : null;
+
+      if (serializedWelcome && welcomePlacement === "link_data") {
+        linkData.page_welcome_message = serializedWelcome;
+      }
+
+      return {
+        name: `${input.name.trim()} — Creative Link`,
+        ...(cleanUrlTags ? { url_tags: cleanUrlTags } : {}),
+        object_story_spec: {
+          page_id: fbPageId,
+          ...(igUserId ? { instagram_user_id: igUserId } : {}),
+          ...(serializedWelcome && welcomePlacement === "story_spec"
+            ? { page_welcome_message: serializedWelcome }
+            : {}),
+          link_data: linkData,
+        },
+      };
+    };
+
+    const createLinkSpecCreativeSafe = async (): Promise<{ id: string }> => {
+      const hasWelcome =
+        effectiveDestination === "WHATSAPP" &&
+        Boolean(
+          input.welcomeGreeting?.trim() || input.welcomeAutofill?.trim()
+        );
+      if (!hasWelcome) {
+        return await this.request<{ id: string }>(`/${adAccountId}/adcreatives`, {
+          method: "POST",
+          body: buildLinkSpecCreativePayload("none"),
+        });
+      }
+
+      try {
+        return await this.request<{ id: string }>(`/${adAccountId}/adcreatives`, {
+          method: "POST",
+          body: buildLinkSpecCreativePayload("link_data"),
+        });
+      } catch {
+        try {
+          return await this.request<{ id: string }>(`/${adAccountId}/adcreatives`, {
+            method: "POST",
+            body: buildLinkSpecCreativePayload("story_spec"),
+          });
+        } catch {
+          stepsLog.push(
+            "Aviso: Meta rejeitou page_welcome_message personalizado; recriando criativo com mensagem padrão de conversa."
+          );
+          return await this.request<{ id: string }>(`/${adAccountId}/adcreatives`, {
+            method: "POST",
+            body: buildLinkSpecCreativePayload("none"),
+          });
+        }
+      }
+    };
+
+    const createAdWithTracking = async (
+      creativeId: string
+    ): Promise<{ id: string }> => {
+      const cleanPixel = input.pixelId?.trim() || "";
+      const baseAdBody: Record<string, unknown> = {
+        name: `${input.name.trim()} — Ad`,
+        adset_id: adsetRes.id,
+        creative: { creative_id: creativeId },
+        status: "PAUSED",
+      };
+
+      if (!cleanPixel) {
+        return await this.request<{ id: string }>(`/${adAccountId}/ads`, {
+          method: "POST",
+          body: baseAdBody,
+        });
+      }
+
+      try {
+        const res = await this.request<{ id: string }>(`/${adAccountId}/ads`, {
+          method: "POST",
+          body: {
+            ...baseAdBody,
+            tracking_specs: [
+              {
+                "action.type": ["offsite_conversion"],
+                fb_pixel: [cleanPixel],
+              },
+            ],
+          },
+        });
+        stepsLog.push(
+          `Rastreamento vinculado: Pixel ${cleanPixel}${
+            cleanUrlTags ? " + UTM tags" : ""
+          }`
+        );
+        return res;
+      } catch {
+        stepsLog.push(
+          `Aviso: Meta não aplicou tracking_specs do Pixel ${cleanPixel}; anúncio criado sem pixel explícito.`
+        );
+        return await this.request<{ id: string }>(`/${adAccountId}/ads`, {
+          method: "POST",
+          body: baseAdBody,
+        });
+      }
+    };
+
+    const buildOrganicCreativePayload = (): Record<string, unknown> => {
+      if (fbPostId) {
+        return {
+          name: `${input.name.trim()} — Creative Meta`,
+          object_story_id: normalizeFbObjectStoryId(fbPageId, fbPostId),
+          ...(cleanUrlTags ? { url_tags: cleanUrlTags } : {}),
+        };
+      }
+
+      if (igUserId && igMediaId) {
+        const payload: Record<string, unknown> = {
+          name: `${input.name.trim()} — Creative IG`,
+          object_id: fbPageId,
+          instagram_user_id: igUserId,
+          source_instagram_media_id: igMediaId,
+          ...(cleanUrlTags ? { url_tags: cleanUrlTags } : {}),
+        };
+
+        if (!isPureEngagement) {
+          if (effectiveDestination === "WHATSAPP") {
+            payload.call_to_action = {
+              type: "WHATSAPP_MESSAGE",
+              value: {
+                app_destination: "WHATSAPP",
+                link: "https://api.whatsapp.com/send",
+              },
+            };
+          } else if (cleanDestUrl && effectiveObjective === "OUTCOME_TRAFFIC") {
+            payload.call_to_action = {
+              type: "LEARN_MORE",
+              value: { link: cleanDestUrl },
+            };
+          }
+        }
+        return payload;
+      }
+
+      throw new Error(
+        "Post orgânico sem publicação vinculada no Facebook/Instagram para campanha de engajamento puro."
+      );
+    };
+
+    const postStoryImg = input.postStoryImageUrl?.trim() || "";
+    const preferLinkSpecDirect = !isPureEngagement && Boolean(postImg);
+
+    const tryCreatePlacementCustomizedCreative = async (): Promise<{
+      creativeRes: { id: string };
+      adRes: { id: string };
+    } | null> => {
+      if (
+        !preferLinkSpecDirect ||
+        effectiveDestination === "WHATSAPP" ||
+        !postStoryImg ||
+        postStoryImg === postImg
+      ) {
+        return null;
+      }
+
+      const [feedHash, storyHash] = await Promise.all([
+        this.uploadAdImageFromUrl(adAccountId, postImg),
+        this.uploadAdImageFromUrl(adAccountId, postStoryImg),
+      ]);
+
+      if (!feedHash || !storyHash) {
+        return null;
+      }
+
+      try {
+        const customCreative = await this.request<{ id: string }>(
+          `/${adAccountId}/adcreatives`,
+          {
+            method: "POST",
+            body: {
+              name: `${input.name.trim()} — Creative Placement (Feed + Story)`,
+              ...(cleanUrlTags ? { url_tags: cleanUrlTags } : {}),
+              object_story_spec: {
+                page_id: fbPageId,
+                ...(igUserId ? { instagram_user_id: igUserId } : {}),
+              },
+              asset_feed_spec: {
+                ad_formats: ["SINGLE_IMAGE"],
+                call_to_action_types: ["LEARN_MORE"],
+                link_urls: [
+                  {
+                    website_url: cleanDestUrl || "https://www.facebook.com/",
+                  },
+                ],
+                images: [
+                  {
+                    hash: feedHash,
+                    adlabels: [{ name: "pf_feed" }],
+                  },
+                  {
+                    hash: storyHash,
+                    adlabels: [{ name: "pf_story" }],
+                  },
+                ],
+                titles: [
+                  {
+                    text: (input.postHeadline || input.name)
+                      .trim()
+                      .slice(0, 90),
+                  },
+                ],
+                bodies: [
+                  {
+                    text: (
+                      input.postCaption ||
+                      input.postHeadline ||
+                      input.name
+                    ).trim(),
+                  },
+                ],
+                asset_customization_rules: [
+                  {
+                    priority: 1,
+                    customization_spec: {
+                      publisher_platforms: ["facebook", "instagram"],
+                      facebook_positions: ["story", "facebook_reels"],
+                      instagram_positions: ["story", "reels"],
+                    },
+                    image_label: { name: "pf_story" },
+                  },
+                  {
+                    priority: 2,
+                    customization_spec: {},
+                    image_label: { name: "pf_feed" },
+                  },
+                ],
+              },
+            },
+          }
+        );
+
+        partialIds.creativeId = customCreative.id;
+        const customAd = await createAdWithTracking(customCreative.id);
+        stepsLog.push(
+          `Passo 3 concluído: AdCreative ${customCreative.id} (Personalização por Posicionamento Feed 4:5 + Story 9:16)`
+        );
+        return { creativeRes: customCreative, adRes: customAd };
+      } catch {
+        partialIds.creativeId = undefined;
+        stepsLog.push(
+          "Aviso: Personalização por Posicionamento recusada pela Meta para este objetivo; aplicando criativo padrão unificado."
+        );
+        return null;
+      }
+    };
 
     let creativeRes: { id: string };
-    try {
-      creativeRes = await this.request<{ id: string }>(
-        `/${adAccountId}/adcreatives`,
-        {
-          method: "POST",
-          body: creativePayload,
-        }
-      );
-    } catch (err) {
-      return attachPartialIds(err);
-    }
-    partialIds.creativeId = creativeRes.id;
-    stepsLog.push(`Passo 3 concluído: AdCreative ${creativeRes.id} (prova social preservada)`);
-
-    // Passo 4 — Criar Anúncio (Ad PAUSED)
     let adRes: { id: string };
-    try {
-      adRes = await this.request<{ id: string }>(`/${adAccountId}/ads`, {
-        method: "POST",
-        body: {
-          name: `${input.name.trim()} — Ad`,
-          adset_id: adsetRes.id,
-          creative: { creative_id: creativeRes.id },
-          status: "PAUSED",
-        },
-      });
-    } catch (err) {
-      return attachPartialIds(err);
+
+    if (preferLinkSpecDirect) {
+      try {
+        const placementCustomized =
+          await tryCreatePlacementCustomizedCreative();
+        if (placementCustomized) {
+          creativeRes = placementCustomized.creativeRes;
+          adRes = placementCustomized.adRes;
+        } else {
+          creativeRes = await createLinkSpecCreativeSafe();
+          partialIds.creativeId = creativeRes.id;
+          stepsLog.push(
+            `Passo 3 concluído: AdCreative ${creativeRes.id} (link_data com CTA compatível)`
+          );
+
+          adRes = await createAdWithTracking(creativeRes.id);
+        }
+      } catch (err) {
+        return await attachPartialIds(err);
+      }
+    } else {
+      try {
+        creativeRes = await this.request<{ id: string }>(
+          `/${adAccountId}/adcreatives`,
+          {
+            method: "POST",
+            body: buildOrganicCreativePayload(),
+          }
+        );
+        partialIds.creativeId = creativeRes.id;
+        stepsLog.push(
+          `Passo 3 concluído: AdCreative ${creativeRes.id} (prova social preservada)`
+        );
+
+        adRes = await createAdWithTracking(creativeRes.id);
+      } catch (primaryErr) {
+        if (!isPureEngagement && Boolean(postImg)) {
+          try {
+            creativeRes = await createLinkSpecCreativeSafe();
+            partialIds.creativeId = creativeRes.id;
+            stepsLog.push(
+              `Passo 3 fallback concluído: AdCreative ${creativeRes.id} (link_data compatível com objetivo)`
+            );
+
+            adRes = await createAdWithTracking(creativeRes.id);
+          } catch (fallbackErr) {
+            return await attachPartialIds(fallbackErr);
+          }
+        } else {
+          return await attachPartialIds(primaryErr);
+        }
+      }
     }
+
     stepsLog.push(`Passo 4 concluído: Ad ${adRes.id} (PAUSED)`);
 
     return {

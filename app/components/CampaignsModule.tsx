@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AdAccountConfig,
   AdCampaignRecord,
   AdChannel,
+  AdGeoLocationSelection,
   AdInsightsWindow,
+  AdProvider,
   AdsAdvisorReport,
   MetaAdObjective,
   ParsedCampaignPlan,
@@ -99,7 +101,7 @@ export function PostExternalLinks({
   ) => void;
 }) {
   const [resolvingChannel, setResolvingChannel] = useState<
-    "INSTAGRAM" | "TIKTOK" | null
+    "INSTAGRAM" | "FACEBOOK" | "TIKTOK" | null
   >(null);
 
   if (!post.ig_post_id && !post.fb_post_id && !post.tiktok_post_id) {
@@ -107,15 +109,23 @@ export function PostExternalLinks({
   }
 
   const igPermalink = post.organic_metrics?.ig?.permalink?.trim() || null;
-  const fbHref =
-    post.organic_metrics?.fb?.permalink?.trim() ||
-    (post.fb_post_id ? `https://www.facebook.com/${post.fb_post_id}` : null);
+  const rawFbPermalink = post.organic_metrics?.fb?.permalink?.trim() || null;
+  const isBrokenFb =
+    !rawFbPermalink ||
+    /\/\d+_\d+\/?$/.test(rawFbPermalink) ||
+    /^https?:\/\/(?:www\.|m\.)?facebook\.com\/\d+\/posts\/\d+\/?$/i.test(
+      rawFbPermalink
+    ) ||
+    /permalink\.php\?story_fbid=\d+&id=\d+/i.test(rawFbPermalink);
+  const fbPermalink = isBrokenFb ? null : rawFbPermalink;
   const rawTikTok = post.tiktok_post_id?.trim() || "";
   const directTikTokHref = /^\d{15,}$/.test(rawTikTok)
     ? `https://www.tiktok.com/@/video/${rawTikTok}`
     : null;
 
-  async function handleResolveAndOpen(channel: "INSTAGRAM" | "TIKTOK") {
+  async function handleResolveAndOpen(
+    channel: "INSTAGRAM" | "FACEBOOK" | "TIKTOK"
+  ) {
     const popup =
       typeof window !== "undefined" ? window.open("about:blank", "_blank") : null;
     setResolvingChannel(channel);
@@ -184,17 +194,28 @@ export function PostExternalLinks({
           </button>
         ))}
 
-      {fbHref && (
-        <a
-          href={fbHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          title="Abrir publicação no Facebook"
-          className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700 hover:bg-blue-100"
-        >
-          Facebook ↗
-        </a>
-      )}
+      {post.fb_post_id &&
+        (fbPermalink ? (
+          <a
+            href={fbPermalink}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Abrir publicação no Facebook"
+            className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700 hover:bg-blue-100"
+          >
+            Facebook ↗
+          </a>
+        ) : (
+          <button
+            type="button"
+            disabled={resolvingChannel !== null}
+            onClick={() => void handleResolveAndOpen("FACEBOOK")}
+            title="Buscar link oficial e abrir publicação no Facebook"
+            className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700 hover:bg-blue-100 disabled:opacity-60"
+          >
+            {resolvingChannel === "FACEBOOK" ? "Abrindo..." : "Facebook ↗"}
+          </button>
+        ))}
 
       {post.tiktok_post_id &&
         (directTikTokHref ? (
@@ -255,6 +276,66 @@ function formatMoney(value: number | null | undefined, currency = "BRL"): string
   return `${prefix} ${Number(value).toFixed(2).replace(".", ",")}`;
 }
 
+function toLocalDateTimeInputValue(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate()
+  )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function stripAdAccountPrefix(accountId: string): string {
+  return accountId.trim().replace(/^act_/i, "");
+}
+
+function buildCampaignAdLink(cmp: AdCampaignRecord): {
+  label: string;
+  url: string;
+  className: string;
+  title: string;
+} | null {
+  const cleanAct = stripAdAccountPrefix(cmp.ad_account_id || "");
+  if (!cleanAct) return null;
+
+  if (cmp.provider === "META") {
+    const url =
+      cmp.meta_campaign_id && cmp.meta_ad_id
+        ? `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${encodeURIComponent(
+            cleanAct
+          )}&selected_campaign_ids=${encodeURIComponent(
+            cmp.meta_campaign_id
+          )}&selected_ad_ids=${encodeURIComponent(cmp.meta_ad_id)}`
+        : cmp.meta_campaign_id
+        ? `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${encodeURIComponent(
+            cleanAct
+          )}&selected_campaign_ids=${encodeURIComponent(cmp.meta_campaign_id)}`
+        : `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${encodeURIComponent(
+            cleanAct
+          )}`;
+
+    return {
+      label: "Ver Anúncio ↗",
+      url,
+      className:
+        "inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100",
+      title: `Abrir anúncio na conta ${cmp.ad_account_id} do Gerenciador de Anúncios da Meta`,
+    };
+  }
+
+  if (cmp.provider === "TIKTOK") {
+    return {
+      label: "Ver Anúncio ↗",
+      url: `https://ads.tiktok.com/i18n/perf/campaign?aadvid=${encodeURIComponent(
+        cleanAct
+      )}`,
+      className:
+        "inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-1.5 text-[11px] font-bold text-slate-800 hover:bg-slate-200",
+      title: `Abrir anúncio no TikTok Ads Manager (Conta ${cmp.ad_account_id})`,
+    };
+  }
+
+  return null;
+}
+
 export function BoostCampaignModal({
   companyId,
   post,
@@ -272,8 +353,11 @@ export function BoostCampaignModal({
   onCreated: (campaign: AdCampaignRecord) => void;
   onOpenAccountSetup: () => void;
 }) {
-  const initialChannel: AdChannel = post.ig_post_id ? "INSTAGRAM" : "FACEBOOK";
-  const [channel, setChannel] = useState<AdChannel>(initialChannel);
+  const channel: AdChannel = "FACEBOOK";
+  const storyImageUrl =
+    post.story_image_urls_json?.[0] ||
+    post.content_json?.story_image_urls?.[0] ||
+    null;
   const [selectedAccountId, setSelectedAccountId] = useState<string>(
     defaultAccountId ||
       adAccounts.find((a) => a.is_default)?.ad_account_id ||
@@ -285,6 +369,24 @@ export function BoostCampaignModal({
   );
   const [plan, setPlan] = useState<ParsedCampaignPlan | null>(null);
   const [budgetReaisInput, setBudgetReaisInput] = useState("30.00");
+  const [ageMinInput, setAgeMinInput] = useState("22");
+  const [ageMaxInput, setAgeMaxInput] = useState("55");
+  const [genderFilter, setGenderFilter] = useState<"ALL" | "WOMEN" | "MEN">(
+    "ALL"
+  );
+  const ageTouchedRef = useRef(false);
+  const genderTouchedRef = useRef(false);
+  const [welcomeGreeting, setWelcomeGreeting] = useState("");
+  const [welcomeAutofill, setWelcomeAutofill] = useState(
+    `Olá! Vi o anúncio "${post.headline.slice(0, 55)}" e gostaria de mais informações.`
+  );
+  const [availablePixels, setAvailablePixels] = useState<
+    Array<{ id: string; name: string; is_unavailable: boolean }>
+  >([]);
+  const [selectedPixelId, setSelectedPixelId] = useState("");
+  const [urlTags, setUrlTags] = useState(
+    "utm_source=meta_ads&utm_medium=cpc&utm_campaign={{campaign.name}}&utm_content={{ad.name}}"
+  );
   const [loadingStep, setLoadingStep] = useState<"idle" | "preview" | "create">(
     "idle"
   );
@@ -293,6 +395,73 @@ export function BoostCampaignModal({
   const selectedAccount =
     adAccounts.find((a) => a.ad_account_id === selectedAccountId) || null;
   const currency = selectedAccount?.currency || "BRL";
+  const [destinationUrlInput, setDestinationUrlInput] = useState(
+    selectedAccount?.link_destino_padrao || ""
+  );
+  const [locationInput, setLocationInput] = useState(
+    selectedAccount?.localizacao_base || "Brasil"
+  );
+  const [locationRadiusKm, setLocationRadiusKm] = useState("20");
+  const [selectedLocation, setSelectedLocation] =
+    useState<AdGeoLocationSelection | null>(null);
+  const [geoResults, setGeoResults] = useState<AdGeoLocationSelection[]>([]);
+  const [searchingGeo, setSearchingGeo] = useState(false);
+  const locationTouchedRef = useRef(false);
+  const [startDateTimeInput, setStartDateTimeInput] = useState("");
+  const [noEndDate, setNoEndDate] = useState(true);
+  const [endDateTimeInput, setEndDateTimeInput] = useState("");
+  const scheduleTouchedRef = useRef(false);
+  const previewBoxRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (selectedAccount?.link_destino_padrao) {
+      setDestinationUrlInput((prev) =>
+        prev.trim() ? prev : selectedAccount.link_destino_padrao || ""
+      );
+    }
+    if (selectedAccount?.localizacao_base && !locationTouchedRef.current) {
+      setLocationInput(selectedAccount.localizacao_base);
+    }
+  }, [
+    selectedAccount?.ad_account_id,
+    selectedAccount?.link_destino_padrao,
+    selectedAccount?.localizacao_base,
+  ]);
+
+  useEffect(() => {
+    if (!selectedAccountId) {
+      setAvailablePixels([]);
+      return;
+    }
+    let cancelled = false;
+    fetch("/api/ads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "list_ad_pixels",
+        companyId,
+        adAccountId: selectedAccountId,
+      }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled || !Array.isArray(data.pixels)) return;
+        const list = data.pixels as Array<{
+          id: string;
+          name: string;
+          is_unavailable: boolean;
+        }>;
+        setAvailablePixels(list);
+        const activeOnes = list.filter((px) => !px.is_unavailable);
+        if (activeOnes.length === 1) {
+          setSelectedPixelId((prev) => prev || activeOnes[0].id);
+        }
+      })
+      .catch(() => null);
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, selectedAccountId]);
 
   async function handlePreviewPlan() {
     setLoadingStep("preview");
@@ -315,12 +484,87 @@ export function BoostCampaignModal({
         throw new Error(data.error || "Falha ao analisar comando com IA.");
       }
       const nextPlan = data.plan as ParsedCampaignPlan;
+      if (!ageTouchedRef.current) {
+        setAgeMinInput(String(nextPlan.age_min ?? 22));
+        setAgeMaxInput(String(nextPlan.age_max ?? 55));
+      } else {
+        const minAge = Math.max(
+          18,
+          Math.min(65, Math.round(Number(ageMinInput) || 22))
+        );
+        const maxAge = Math.max(
+          minAge,
+          Math.min(65, Math.round(Number(ageMaxInput) || 55))
+        );
+        nextPlan.age_min = minAge;
+        nextPlan.age_max = maxAge;
+      }
+
+      if (!genderTouchedRef.current) {
+        if (nextPlan.genders?.length === 1 && nextPlan.genders[0] === 2) {
+          setGenderFilter("WOMEN");
+        } else if (nextPlan.genders?.length === 1 && nextPlan.genders[0] === 1) {
+          setGenderFilter("MEN");
+        } else {
+          setGenderFilter("ALL");
+        }
+      } else {
+        nextPlan.genders =
+          genderFilter === "WOMEN" ? [2] : genderFilter === "MEN" ? [1] : [];
+      }
+
+      if (!locationTouchedRef.current && nextPlan.location_query) {
+        setLocationInput(nextPlan.location_query);
+      } else {
+        nextPlan.location_query = locationInput.trim() || "Brasil";
+      }
+
       setPlan(nextPlan);
       setBudgetReaisInput((nextPlan.daily_budget_cents / 100).toFixed(2));
+      if (nextPlan.destination_url && !destinationUrlInput.trim()) {
+        setDestinationUrlInput(nextPlan.destination_url);
+      }
+      if (typeof window !== "undefined") {
+        window.requestAnimationFrame(() => {
+          previewBoxRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "nearest",
+          });
+        });
+      }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Erro ao gerar prévia.");
     } finally {
       setLoadingStep("idle");
+    }
+  }
+
+  async function handleSearchGeoLocations() {
+    const q = locationInput.trim();
+    if (!q) return;
+    setSearchingGeo(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "search_geo_locations",
+          companyId,
+          query: q,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao buscar localizações.");
+      }
+      setGeoResults((data.locations || []) as AdGeoLocationSelection[]);
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : "Erro ao buscar localizações."
+      );
+    } finally {
+      setSearchingGeo(false);
     }
   }
 
@@ -329,15 +573,70 @@ export function BoostCampaignModal({
     setErrorMsg(null);
     try {
       const parsedBudget = Number(budgetReaisInput.replace(",", "."));
-      const overridePlan: Partial<ParsedCampaignPlan> | undefined = plan
+      const cleanDest = destinationUrlInput.trim() || null;
+      const parsedMinAge = Math.max(
+        18,
+        Math.min(65, Math.round(Number(ageMinInput) || 22))
+      );
+      const parsedMaxAge = Math.max(
+        parsedMinAge,
+        Math.min(65, Math.round(Number(ageMaxInput) || 55))
+      );
+      const genders: Array<1 | 2> =
+        genderFilter === "WOMEN" ? [2] : genderFilter === "MEN" ? [1] : [];
+
+      const parsedRadius = Math.max(
+        1,
+        Math.min(80, Math.round(Number(locationRadiusKm) || 20))
+      );
+      const startIso = startDateTimeInput.trim()
+        ? new Date(startDateTimeInput).toISOString()
+        : null;
+      const endIso =
+        !noEndDate && endDateTimeInput.trim()
+          ? new Date(endDateTimeInput).toISOString()
+          : null;
+
+      if (!noEndDate && endIso) {
+        const startMs = startIso ? new Date(startIso).getTime() : Date.now();
+        if (new Date(endIso).getTime() <= startMs + 60_000) {
+          throw new Error(
+            "A data/hora de término deve ser posterior à data/hora de início."
+          );
+        }
+      }
+
+      const extraOverrides: Partial<ParsedCampaignPlan> = {
+        age_min: parsedMinAge,
+        age_max: parsedMaxAge,
+        genders,
+        location_query: locationInput.trim() || "Brasil",
+        location_radius_km: parsedRadius,
+        selected_location: selectedLocation
+          ? { ...selectedLocation, radius_km: parsedRadius }
+          : null,
+        start_time: startIso,
+        end_time: endIso,
+        no_end_date: noEndDate,
+        welcome_greeting: welcomeGreeting.trim() || null,
+        welcome_autofill: welcomeAutofill.trim() || null,
+        pixel_id: selectedPixelId.trim() || null,
+        url_tags: urlTags.trim() || null,
+      };
+      const overridePlan: Partial<ParsedCampaignPlan> = plan
         ? {
             ...plan,
+            ...extraOverrides,
             daily_budget_cents:
               Number.isFinite(parsedBudget) && parsedBudget > 0
                 ? Math.round(parsedBudget * 100)
                 : plan.daily_budget_cents,
+            destination_url: cleanDest ?? plan.destination_url ?? null,
           }
-        : undefined;
+        : {
+            ...extraOverrides,
+            ...(cleanDest ? { destination_url: cleanDest } : {}),
+          };
 
       const res = await fetch("/api/ads", {
         method: "POST",
@@ -349,7 +648,8 @@ export function BoostCampaignModal({
           channel,
           userPrompt,
           adAccountId: selectedAccountId || null,
-          overridePlan,
+          overridePlan:
+            Object.keys(overridePlan).length > 0 ? overridePlan : undefined,
         }),
       });
       const data = await res.json();
@@ -411,44 +711,17 @@ export function BoostCampaignModal({
           {/* Canal */}
           <div>
             <label className="block text-xs font-bold text-slate-700">
-              Rede / Canal de Impulsionamento
+              Canal de Anúncios
             </label>
-            <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <button
-                type="button"
-                disabled={!post.ig_post_id}
-                onClick={() => setChannel("INSTAGRAM")}
-                title={
-                  post.ig_post_id
-                    ? "Impulsionar post orgânico do Instagram"
-                    : "Este post não possui ID publicado no Instagram"
-                }
-                className={`rounded-xl border px-3 py-2 text-xs font-bold transition ${
-                  channel === "INSTAGRAM"
-                    ? "border-indigo-500 bg-indigo-50 text-indigo-800"
-                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                } disabled:cursor-not-allowed disabled:opacity-45`}
-              >
-                Instagram {!post.ig_post_id ? "(Sem ID)" : ""}
-              </button>
-
-              <button
-                type="button"
-                disabled={!post.fb_post_id}
-                onClick={() => setChannel("FACEBOOK")}
-                title={
-                  post.fb_post_id
-                    ? "Impulsionar post orgânico do Facebook"
-                    : "Este post não possui ID publicado no Facebook"
-                }
-                className={`rounded-xl border px-3 py-2 text-xs font-bold transition ${
-                  channel === "FACEBOOK"
-                    ? "border-indigo-500 bg-indigo-50 text-indigo-800"
-                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                } disabled:cursor-not-allowed disabled:opacity-45`}
-              >
-                Facebook {!post.fb_post_id ? "(Sem ID)" : ""}
-              </button>
+            <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="rounded-xl border border-indigo-500 bg-indigo-50 px-3 py-2 text-left text-indigo-900">
+                <p className="text-xs font-extrabold">
+                  Meta Ads (Facebook &amp; Instagram)
+                </p>
+                <p className="mt-0.5 text-[11px] font-medium text-indigo-700">
+                  Veiculação unificada em Feed, Stories e Reels
+                </p>
+              </div>
 
               <button
                 type="button"
@@ -462,6 +735,15 @@ export function BoostCampaignModal({
                 </span>
               </button>
             </div>
+            {storyImageUrl && (
+              <p className="mt-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-800">
+                Arte 9:16 de Story detectada: quando compatível com o objetivo,
+                será aplicada automaticamente via{" "}
+                <strong>Personalização por Posicionamento</strong> (ou
+                redimensionada automaticamente pela Meta em campanhas de
+                WhatsApp).
+              </p>
+            )}
           </div>
 
           {/* Conta de Anúncios */}
@@ -515,9 +797,9 @@ export function BoostCampaignModal({
             />
             <div className="mt-1.5 flex flex-wrap gap-1.5">
               {[
+                "Rodar R$ 20/dia por 7 dias focando em engajamento e alcance do post",
                 "Rodar R$ 30/dia por 7 dias focando em WhatsApp",
                 "Rodar R$ 40/dia por 7 dias focando em tráfego para o site",
-                "Rodar R$ 50/dia para leads em Uberaba por 10 dias",
               ].map((preset) => (
                 <button
                   key={preset}
@@ -531,9 +813,327 @@ export function BoostCampaignModal({
             </div>
           </div>
 
+          <div>
+            <label className="block text-xs font-bold text-slate-700">
+              Link Destino (WhatsApp https://wa.me/55... ou Site)
+            </label>
+            <input
+              value={destinationUrlInput}
+              onChange={(e) => setDestinationUrlInput(e.target.value)}
+              placeholder="https://wa.me/5534999999999 ou https://seusite.com.br"
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-500"
+            />
+            <p className="mt-1 text-[10px] text-slate-500">
+              Necessário para campanhas de Tráfego ou WhatsApp quando a Página não
+              tem WhatsApp Business vinculado. Opcional para engajamento.
+            </p>
+          </div>
+
+          {/* Público: Idade e Gênero */}
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-700">
+                Idade Mínima (18–65)
+              </label>
+              <input
+                type="number"
+                min={18}
+                max={65}
+                value={ageMinInput}
+                onChange={(e) => {
+                  ageTouchedRef.current = true;
+                  setAgeMinInput(e.target.value);
+                }}
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700">
+                Idade Máxima (18–65)
+              </label>
+              <input
+                type="number"
+                min={18}
+                max={65}
+                value={ageMaxInput}
+                onChange={(e) => {
+                  ageTouchedRef.current = true;
+                  setAgeMaxInput(e.target.value);
+                }}
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700">
+                Gênero do Público
+              </label>
+              <select
+                value={genderFilter}
+                onChange={(e) => {
+                  genderTouchedRef.current = true;
+                  setGenderFilter(
+                    e.target.value as "ALL" | "WOMEN" | "MEN"
+                  );
+                }}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"
+              >
+                <option value="ALL">Todos</option>
+                <option value="WOMEN">Mulheres</option>
+                <option value="MEN">Homens</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Localização Precisa (Cidade, Bairro ou Pino com Raio) */}
+          <div className="space-y-2.5 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-extrabold text-slate-800">
+                Localização Precisa (Cidade, Bairro, CEP ou Pino)
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    locationTouchedRef.current = true;
+                    setLocationInput("Brasil");
+                    setSelectedLocation({
+                      label: "País: Brasil (Todo o Brasil)",
+                      type: "country",
+                      country_code: "BR",
+                    });
+                    setGeoResults([]);
+                  }}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700"
+                >
+                  Brasil inteiro
+                </button>
+                {selectedLocation && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedLocation(null);
+                      setGeoResults([]);
+                    }}
+                    className="text-[10px] font-bold text-rose-600 hover:underline"
+                  >
+                    Limpar seleção
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_110px]">
+              <input
+                value={locationInput}
+                onChange={(e) => {
+                  locationTouchedRef.current = true;
+                  setSelectedLocation(null);
+                  setLocationInput(e.target.value);
+                }}
+                placeholder="Ex: Uberaba, Centro Uberaba, Copacabana RJ ou CEP"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-500"
+              />
+              <button
+                type="button"
+                disabled={searchingGeo || !locationInput.trim()}
+                onClick={() => void handleSearchGeoLocations()}
+                className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
+              >
+                {searchingGeo ? "Buscando..." : "Buscar local"}
+              </button>
+              <div>
+                <input
+                  type="number"
+                  min={1}
+                  max={80}
+                  value={locationRadiusKm}
+                  onChange={(e) => setLocationRadiusKm(e.target.value)}
+                  title="Raio em km (Cidades: 17–80 km • Pino Exato: 1–80 km)"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold outline-none focus:border-indigo-500"
+                />
+                <span className="mt-0.5 block text-center text-[9px] text-slate-500">
+                  Raio (km)
+                </span>
+              </div>
+            </div>
+
+            {selectedLocation && (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-900">
+                Local selecionado: {selectedLocation.label}
+                {(selectedLocation.type === "city" ||
+                  selectedLocation.type === "custom_pin") &&
+                  ` • Raio ${locationRadiusKm} km`}
+              </div>
+            )}
+
+            {geoResults.length > 0 && (
+              <div className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2">
+                {geoResults.map((item, idx) => (
+                  <button
+                    key={`${item.type}-${item.key || item.latitude}-${idx}`}
+                    type="button"
+                    onClick={() => {
+                      locationTouchedRef.current = true;
+                      setSelectedLocation(item);
+                      setLocationInput(
+                        item.label
+                          .replace(/^(?:País|Cidade|Bairro|Estado|CEP|Sub-região|📍\s*Pino Exato):\s*/i, "")
+                      );
+                      if (item.type === "custom_pin") {
+                        setLocationRadiusKm(String(item.radius_km ?? 5));
+                      } else if (item.type === "city") {
+                        setLocationRadiusKm(String(item.radius_km ?? 20));
+                      }
+                      setGeoResults([]);
+                    }}
+                    className="block w-full rounded-md px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-indigo-50 hover:text-indigo-800"
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            <p className="text-[10px] text-slate-500">
+              Para anunciar em um bairro ou endereço exato com raio menor (1 a 16
+              km), busque e escolha a opção{" "}
+              <strong>📍 Pino Exato</strong>.
+            </p>
+          </div>
+
+          {/* Agendamento: Início e Término */}
+          <div className="space-y-2.5 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5">
+            <p className="text-xs font-extrabold text-slate-800">
+              Agendamento (Início e Término)
+            </p>
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-600">
+                  Data e Hora de Início (opcional)
+                </label>
+                <input
+                  type="datetime-local"
+                  value={startDateTimeInput}
+                  onChange={(e) => {
+                    scheduleTouchedRef.current = true;
+                    setStartDateTimeInput(e.target.value);
+                  }}
+                  className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+                />
+                <span className="mt-0.5 block text-[9px] text-slate-500">
+                  Vazio = começa imediatamente ao clicar em Ativar.
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-600">
+                  Data e Hora de Término
+                </label>
+                {noEndDate ? (
+                  <div className="mt-0.5 rounded-lg border border-dashed border-slate-300 bg-white px-2.5 py-2 text-[11px] font-semibold text-slate-600">
+                    Contínua (sem data de término definida)
+                  </div>
+                ) : (
+                  <input
+                    type="datetime-local"
+                    value={endDateTimeInput}
+                    onChange={(e) => {
+                      scheduleTouchedRef.current = true;
+                      setEndDateTimeInput(e.target.value);
+                    }}
+                    className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+                  />
+                )}
+              </div>
+            </div>
+            <label className="flex items-center gap-2 text-[11px] font-bold text-slate-700">
+              <input
+                type="checkbox"
+                checked={noEndDate}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  scheduleTouchedRef.current = true;
+                  setNoEndDate(checked);
+                  if (!checked && !endDateTimeInput.trim()) {
+                    const base = startDateTimeInput.trim()
+                      ? new Date(startDateTimeInput)
+                      : new Date();
+                    const plus7 = new Date(
+                      base.getTime() + 7 * 24 * 60 * 60 * 1000
+                    );
+                    setEndDateTimeInput(toLocalDateTimeInputValue(plus7));
+                  }
+                }}
+              />
+              Sem data de término (campanha contínua — as regras de pausa
+              automática continuam ativas)
+            </label>
+          </div>
+
+          {/* Conversas (WhatsApp) & Rastreamento (Pixel / UTM) */}
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5">
+            <p className="text-xs font-extrabold text-slate-800">
+              Conversas (WhatsApp) &amp; Rastreamento (Pixel / URL)
+            </p>
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-600">
+                  Mensagem de Boas-vindas (opcional)
+                </label>
+                <input
+                  value={welcomeGreeting}
+                  onChange={(e) => setWelcomeGreeting(e.target.value)}
+                  placeholder="Deixar vazio se usar CRM / IA"
+                  className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-600">
+                  Mensagem Pronta do Cliente (preenchida ao clicar)
+                </label>
+                <input
+                  value={welcomeAutofill}
+                  onChange={(e) => setWelcomeAutofill(e.target.value)}
+                  placeholder="Olá! Posso ter mais informações sobre isso?"
+                  className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-600">
+                  Eventos do Site (Meta Pixel)
+                </label>
+                <select
+                  value={selectedPixelId}
+                  onChange={(e) => setSelectedPixelId(e.target.value)}
+                  className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold"
+                >
+                  <option value="">Não rastrear eventos do site</option>
+                  {availablePixels.map((px) => (
+                    <option key={px.id} value={px.id}>
+                      {px.name} ({px.id})
+                      {px.is_unavailable ? " — Indisponível" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-600">
+                  Parâmetros de URL (UTMs)
+                </label>
+                <input
+                  value={urlTags}
+                  onChange={(e) => setUrlTags(e.target.value)}
+                  placeholder="utm_source=meta_ads&utm_medium=cpc"
+                  className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-[11px]"
+                />
+              </div>
+            </div>
+          </div>
+
           {/* Prévia estruturada pela IA */}
           {plan && (
-            <div className="space-y-3 rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 text-xs">
+            <div
+              ref={previewBoxRef}
+              className="space-y-3 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 text-xs"
+            >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-extrabold text-indigo-900">
                   Parâmetros Estruturados (Editáveis antes de criar)
@@ -568,10 +1168,18 @@ export function BoostCampaignModal({
                     }
                     className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold"
                   >
-                    <option value="OUTCOME_TRAFFIC">OUTCOME_TRAFFIC (Tráfego)</option>
-                    <option value="OUTCOME_LEADS">OUTCOME_LEADS (Leads / Mensagens)</option>
-                    <option value="OUTCOME_SALES">OUTCOME_SALES (Vendas)</option>
-                    <option value="OUTCOME_ENGAGEMENT">OUTCOME_ENGAGEMENT (Engajamento)</option>
+                    <option value="OUTCOME_ENGAGEMENT">
+                      OUTCOME_ENGAGEMENT (Engajamento / WhatsApp)
+                    </option>
+                    <option value="OUTCOME_TRAFFIC">
+                      OUTCOME_TRAFFIC (Tráfego)
+                    </option>
+                    <option value="OUTCOME_LEADS">
+                      OUTCOME_LEADS (Leads / Cadastros)
+                    </option>
+                    <option value="OUTCOME_SALES">
+                      OUTCOME_SALES (Vendas)
+                    </option>
                   </select>
                 </div>
                 <div>
@@ -581,36 +1189,6 @@ export function BoostCampaignModal({
                   <input
                     value={budgetReaisInput}
                     onChange={(e) => setBudgetReaisInput(e.target.value)}
-                    className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-600">
-                    Localização / Cidade
-                  </label>
-                  <input
-                    value={plan.location_query}
-                    onChange={(e) =>
-                      setPlan({ ...plan, location_query: e.target.value })
-                    }
-                    className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-600">
-                    Duração (dias)
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={90}
-                    value={plan.duration_days ?? 7}
-                    onChange={(e) =>
-                      setPlan({
-                        ...plan,
-                        duration_days: Number(e.target.value) || 7,
-                      })
-                    }
                     className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold"
                   />
                 </div>
@@ -627,6 +1205,33 @@ export function BoostCampaignModal({
                   />
                 </div>
               </div>
+
+              <p className="rounded-lg border border-indigo-200/70 bg-white/80 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700">
+                Público &amp; Agenda:{" "}
+                <strong>
+                  {selectedLocation?.label || locationInput || "Brasil"}
+                </strong>{" "}
+                • Idade{" "}
+                <strong>
+                  {ageMinInput}–{ageMaxInput} anos
+                </strong>{" "}
+                •{" "}
+                <strong>
+                  {genderFilter === "WOMEN"
+                    ? "Mulheres"
+                    : genderFilter === "MEN"
+                      ? "Homens"
+                      : "Todos os gêneros"}
+                </strong>{" "}
+                •{" "}
+                <strong>
+                  {noEndDate
+                    ? "Contínua (sem data de término)"
+                    : endDateTimeInput
+                      ? `Até ${new Date(endDateTimeInput).toLocaleString("pt-BR")}`
+                      : "Com data de término"}
+                </strong>
+              </p>
 
               <p className="text-[11px] text-indigo-900/80">{plan.reasoning}</p>
             </div>
@@ -709,6 +1314,8 @@ export function CampaignsPanel({
   );
   const [advisor, setAdvisor] = useState<AdsAdvisorReport | null>(null);
   const [selectedWindow, setSelectedWindow] = useState<AdInsightsWindow>("7d");
+  const [accountFilter, setAccountFilter] = useState<string>("ALL");
+  const [providerFilter, setProviderFilter] = useState<"ALL" | AdProvider>("ALL");
   const [postSortBy, setPostSortBy] = useState<"RECENT" | "ENGAGEMENT">(
     "RECENT"
   );
@@ -972,6 +1579,42 @@ export function CampaignsPanel({
     }
   }
 
+  async function handleDeleteCampaign(cmp: AdCampaignRecord) {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(`Remover o registro "${cmp.name}" do painel?`)
+    ) {
+      return;
+    }
+    setBusyAction(`delete-${cmp.id}`);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "delete_campaign",
+          companyId,
+          campaignId: cmp.id,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro ao excluir registro.");
+      await fetchAdsState();
+      setNotice({
+        type: "success",
+        text: `Registro "${cmp.name}" removido do painel.`,
+      });
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro ao excluir.",
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function handleSyncPostEngagement() {
     setBusyAction("sync_engagement");
     setNotice(null);
@@ -1148,16 +1791,30 @@ export function CampaignsPanel({
               IA e o monitoramento automático.
             </p>
           </div>
-          <button
-            type="button"
-            disabled={busyAction !== null}
-            onClick={handleListRemoteAccounts}
-            className="rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
-          >
-            {busyAction === "list_remote"
-              ? "Buscando..."
-              : "Buscar Contas na Meta"}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {accId.trim() && (
+              <a
+                href={`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${encodeURIComponent(
+                  stripAdAccountPrefix(accId)
+                )}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100"
+              >
+                Abrir Conta no Meta Ads ↗
+              </a>
+            )}
+            <button
+              type="button"
+              disabled={busyAction !== null}
+              onClick={handleListRemoteAccounts}
+              className="rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
+            >
+              {busyAction === "list_remote"
+                ? "Buscando..."
+                : "Buscar Contas na Meta"}
+            </button>
+          </div>
         </div>
 
         {permissions &&
@@ -1243,6 +1900,10 @@ export function CampaignsPanel({
               placeholder="Ex: Brasil ou Uberaba"
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs"
             />
+            <p className="mt-1 text-[10px] leading-snug text-slate-500">
+              Padrão sugerido para novas campanhas. Ao criar cada campanha, você
+              pode ajustar cidade, bairro ou pino com raio.
+            </p>
           </div>
           <div>
             <label className="block text-[11px] font-bold text-slate-600">
@@ -1564,43 +2225,105 @@ export function CampaignsPanel({
       </div>
 
       {/* Lista de Campanhas Criadas */}
+      {(() => {
+        const allCampaigns = state?.campaigns || [];
+        const accountNameMap = new Map<string, string>();
+        for (const acc of state?.ad_accounts || []) {
+          accountNameMap.set(
+            acc.ad_account_id,
+            acc.account_name || acc.ad_account_id
+          );
+        }
+        const distinctAccountIds = Array.from(
+          new Set([
+            ...(state?.ad_accounts || []).map((a) => a.ad_account_id),
+            ...allCampaigns.map((c) => c.ad_account_id),
+          ])
+        ).filter(Boolean);
+
+        const filteredCampaigns = allCampaigns.filter((cmp) => {
+          if (accountFilter !== "ALL" && cmp.ad_account_id !== accountFilter) {
+            return false;
+          }
+          if (providerFilter !== "ALL" && cmp.provider !== providerFilter) {
+            return false;
+          }
+          return true;
+        });
+
+        return (
       <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-extrabold text-slate-900">
-            Campanhas &amp; Performance ({state?.campaigns.length || 0})
+            Campanhas &amp; Performance ({filteredCampaigns.length}
+            {filteredCampaigns.length !== allCampaigns.length
+              ? ` de ${allCampaigns.length}`
+              : ""}
+            )
           </h3>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-bold text-slate-500">
-              Janela:
-            </span>
-            {(["4d", "7d", "14d", "30d"] as AdInsightsWindow[]).map((win) => (
-              <button
-                key={win}
-                type="button"
-                onClick={() => setSelectedWindow(win)}
-                className={`rounded-lg px-2.5 py-1 text-[11px] font-bold ${
-                  selectedWindow === win
-                    ? "bg-indigo-600 text-white"
-                    : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                }`}
+          <div className="flex flex-wrap items-center gap-2">
+            {distinctAccountIds.length > 0 && (
+              <select
+                value={accountFilter}
+                onChange={(e) => setAccountFilter(e.target.value)}
+                aria-label="Filtrar por conta de anúncios"
+                className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-700"
               >
-                {win.replace("d", " dias")}
-              </button>
-            ))}
+                <option value="ALL">
+                  Todas as Contas ({distinctAccountIds.length})
+                </option>
+                {distinctAccountIds.map((id) => (
+                  <option key={id} value={id}>
+                    {accountNameMap.get(id) || id} ({id})
+                  </option>
+                ))}
+              </select>
+            )}
+            <select
+              value={providerFilter}
+              onChange={(e) =>
+                setProviderFilter(e.target.value as "ALL" | AdProvider)
+              }
+              aria-label="Filtrar por rede de anúncios"
+              className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-700"
+            >
+              <option value="ALL">Todas as Redes</option>
+              <option value="META">Meta Ads (IG &amp; FB)</option>
+              <option value="TIKTOK">TikTok Ads (Em breve)</option>
+            </select>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-bold text-slate-500">
+                Janela:
+              </span>
+              {(["4d", "7d", "14d", "30d"] as AdInsightsWindow[]).map((win) => (
+                <button
+                  key={win}
+                  type="button"
+                  onClick={() => setSelectedWindow(win)}
+                  className={`rounded-lg px-2.5 py-1 text-[11px] font-bold ${
+                    selectedWindow === win
+                      ? "bg-indigo-600 text-white"
+                      : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  {win.replace("d", " dias")}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         {loading && !state ? (
           <p className="text-xs text-slate-500">Carregando campanhas...</p>
-        ) : !state || state.campaigns.length === 0 ? (
+        ) : !state || filteredCampaigns.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-xs text-slate-500">
-            Nenhuma campanha criada ainda. Clique em{" "}
-            <strong>Criar Campanha</strong> acima ou em{" "}
-            <strong>Impulsionar / Criar Campanha</strong> no Histórico de Posts.
+            {allCampaigns.length === 0
+              ? "Nenhuma campanha criada ainda. Clique em Criar Campanha acima ou em Impulsionar / Criar Campanha no Histórico de Posts."
+              : "Nenhuma campanha encontrada para os filtros selecionados."}
           </div>
         ) : (
           <div className="space-y-3">
-            {state.campaigns.map((cmp) => {
+            {filteredCampaigns.map((cmp) => {
               const winMetrics =
                 cmp.last_insights_json?.windows?.[selectedWindow] ||
                 cmp.last_insights_json;
@@ -1614,6 +2337,9 @@ export function CampaignsPanel({
               const conversions = winMetrics?.conversions;
               const cpa = winMetrics?.cpa;
               const roas = winMetrics?.roas;
+              const adManagerLink = buildCampaignAdLink(cmp);
+              const accountLabel =
+                accountNameMap.get(cmp.ad_account_id) || cmp.ad_account_id;
 
               return (
                 <div
@@ -1636,9 +2362,20 @@ export function CampaignsPanel({
                         >
                           {cmp.status}
                         </span>
-                        <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-800">
-                          {cmp.channel}
-                        </span>
+                        {cmp.provider === "META" ? (
+                          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-800">
+                            Meta (FB + IG)
+                          </span>
+                        ) : (
+                          <>
+                            <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-700">
+                              {cmp.provider}
+                            </span>
+                            <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-800">
+                              {cmp.channel}
+                            </span>
+                          </>
+                        )}
                         {cmp.last_verdict && (
                           <span
                             className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
@@ -1667,25 +2404,37 @@ export function CampaignsPanel({
                           {formatMoney(cmp.daily_budget_cents / 100, cmp.currency)}
                           /dia
                         </strong>{" "}
-                        • Conta {cmp.ad_account_id}
+                        • Conta <strong>{accountLabel}</strong>{" "}
+                        <span className="font-mono text-[10px] text-slate-500">
+                          ({cmp.ad_account_id})
+                        </span>
                       </p>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-1.5">
-                      {cmp.status !== "ACTIVE" &&
-                        cmp.status !== "ARCHIVED" &&
-                        cmp.meta_campaign_id && (
-                          <button
-                            type="button"
-                            disabled={busyAction !== null}
-                            onClick={() =>
-                              handleToggleCampaignStatus(cmp, "ACTIVE")
-                            }
-                            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
-                          >
-                            Ativar
-                          </button>
-                        )}
+                      {adManagerLink && (
+                        <a
+                          href={adManagerLink.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={adManagerLink.title}
+                          className={adManagerLink.className}
+                        >
+                          {adManagerLink.label}
+                        </a>
+                      )}
+                      {cmp.status === "PAUSED" && cmp.meta_campaign_id && (
+                        <button
+                          type="button"
+                          disabled={busyAction !== null}
+                          onClick={() =>
+                            handleToggleCampaignStatus(cmp, "ACTIVE")
+                          }
+                          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
+                        >
+                          Ativar
+                        </button>
+                      )}
                       {cmp.status === "ACTIVE" && cmp.meta_campaign_id && (
                         <button
                           type="button"
@@ -1698,16 +2447,28 @@ export function CampaignsPanel({
                           Pausar
                         </button>
                       )}
-                      {cmp.status !== "ARCHIVED" && cmp.meta_campaign_id && (
+                      {cmp.status !== "ARCHIVED" &&
+                        cmp.status !== "ERROR" &&
+                        cmp.meta_campaign_id && (
+                          <button
+                            type="button"
+                            disabled={busyAction !== null}
+                            onClick={() =>
+                              handleToggleCampaignStatus(cmp, "ARCHIVED")
+                            }
+                            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-60"
+                          >
+                            Arquivar
+                          </button>
+                        )}
+                      {(cmp.status === "ERROR" || cmp.status === "ARCHIVED") && (
                         <button
                           type="button"
                           disabled={busyAction !== null}
-                          onClick={() =>
-                            handleToggleCampaignStatus(cmp, "ARCHIVED")
-                          }
-                          className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-60"
+                          onClick={() => void handleDeleteCampaign(cmp)}
+                          className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
                         >
-                          Arquivar
+                          Excluir
                         </button>
                       )}
                     </div>
@@ -1798,6 +2559,8 @@ export function CampaignsPanel({
           </div>
         )}
       </div>
+        );
+      })()}
     </div>
   );
 }

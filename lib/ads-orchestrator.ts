@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import {
   getMinimumDailyBudgetCents,
+  isBrokenFacebookPermalink,
   MetaAdsApiError,
   MetaAdsService,
   MetaTargetingInput,
@@ -10,6 +11,7 @@ import {
 import {
   appendAuditLog,
   createAdCampaignRecord,
+  deleteAdCampaignRecord,
   getAdCampaignById,
   getCompanyById,
   getCompanySecrets,
@@ -27,6 +29,7 @@ import {
   AdCampaignRecord,
   AdChannel,
   AdDecisionVerdict,
+  AdGeoLocationSelection,
   AdInsightsSnapshot,
   AdsAdvisorReport,
   MetaAdObjective,
@@ -192,23 +195,38 @@ function deterministicFallbackParse(params: {
 
   const objective: MetaAdObjective = isSales
     ? "OUTCOME_SALES"
-    : isWhatsapp || isLeads
-      ? "OUTCOME_LEADS"
-      : isEngagement
-        ? "OUTCOME_ENGAGEMENT"
+    : isWhatsapp || isEngagement
+      ? "OUTCOME_ENGAGEMENT"
+      : isLeads
+        ? "OUTCOME_LEADS"
         : "OUTCOME_TRAFFIC";
 
   const destinationType = isWhatsapp
     ? "WHATSAPP"
-    : params.adAccount?.link_destino_padrao
-      ? "WEBSITE"
-      : null;
+    : objective === "OUTCOME_ENGAGEMENT"
+      ? null
+      : params.adAccount?.link_destino_padrao
+        ? "WEBSITE"
+        : null;
 
   const optimizationGoal = defaultGoalForObjective(objective, destinationType);
 
   const cityMatch = prompt.match(/\b(?:em|para|na\s+cidade\s+de|regi[ãa]o\s+de)\s+([A-ZÀ-Úa-zà-ú][A-ZÀ-Úa-zà-ú\s-]{2,32})/i);
   const locationQuery =
     cityMatch?.[1]?.trim() || params.adAccount?.localizacao_base || "Brasil";
+
+  const ageMatch = prompt.match(/(\d{2})\s*(?:a|-|at[ée])\s*(\d{2})\s*anos?/i);
+  const ageMin = ageMatch
+    ? Math.max(18, Math.min(65, Number(ageMatch[1])))
+    : 22;
+  const ageMax = ageMatch
+    ? Math.max(ageMin, Math.min(65, Number(ageMatch[2])))
+    : 55;
+  const genders: Array<1 | 2> = /mulher|feminino/i.test(prompt)
+    ? [2]
+    : /homem|masculino/i.test(prompt)
+      ? [1]
+      : [];
 
   const shortTitle = (params.postHeadline || "Impulsionamento")
     .trim()
@@ -222,9 +240,9 @@ function deterministicFallbackParse(params: {
     daily_budget_cents: dailyBudgetCents,
     duration_days: durationDays,
     location_query: locationQuery,
-    age_min: 22,
-    age_max: 55,
-    genders: [],
+    age_min: ageMin,
+    age_max: ageMax,
+    genders,
     destination_url: params.adAccount?.link_destino_padrao || null,
     reasoning:
       "Plano estruturado automaticamente pelo parser determinístico com base no texto informado e metas da conta.",
@@ -236,6 +254,56 @@ function deterministicFallbackParse(params: {
  * Módulo 2 (equiv. meta-campaign-launcher): converte pedido em linguagem natural em JSON estruturado
  * e cria Campanha -> AdSet -> AdCreative (reaproveitando post orgânico) -> Ad sempre em PAUSED.
  */
+async function searchNominatimPins(
+  query: string
+): Promise<AdGeoLocationSelection[]> {
+  const clean = query.trim();
+  if (!clean) return [];
+  try {
+    const url = new URL("https://nominatim.openstreetmap.org/search");
+    url.searchParams.set("format", "json");
+    url.searchParams.set("countrycodes", "br");
+    url.searchParams.set("addressdetails", "1");
+    url.searchParams.set("limit", "3");
+    url.searchParams.set("q", clean);
+
+    const res = await fetch(url.toString(), {
+      headers: {
+        "User-Agent": "SocialPilotFlow/1.0 (https://social.pilotflow.com.br)",
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return [];
+    const items = (await res.json()) as Array<{
+      display_name?: string;
+      lat?: string;
+      lon?: string;
+    }>;
+    return items
+      .map((item) => {
+        const lat = Number(item.lat);
+        const lon = Number(item.lon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+        const shortLabel = (item.display_name || clean)
+          .split(",")
+          .slice(0, 3)
+          .join(", ")
+          .trim();
+        return {
+          label: `📍 Pino Exato: ${shortLabel}`,
+          type: "custom_pin" as const,
+          latitude: Number(lat.toFixed(6)),
+          longitude: Number(lon.toFixed(6)),
+          radius_km: 5,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => Boolean(x));
+  } catch {
+    return [];
+  }
+}
+
 export class CampaignLauncherService {
   static async parseCampaignPromptWithAI(params: {
     companyName: string;
@@ -257,7 +325,9 @@ Regras obrigatórias:
 - objective deve ser exatamente um de: OUTCOME_TRAFFIC, OUTCOME_LEADS, OUTCOME_SALES, OUTCOME_ENGAGEMENT.
 - optimization_goal deve ser compatível com objective (ex: LINK_CLICKS, LANDING_PAGE_VIEWS, CONVERSATIONS, LEAD_GENERATION, OFFSITE_CONVERSIONS, POST_ENGAGEMENT).
 - daily_budget_cents é em centavos inteiros na moeda ${currency} (mínimo ${minCents}). Ex: R$ 40/dia => 4000.
-- Se mencionar WhatsApp ou mensagens/direct, use objective="OUTCOME_LEADS", destination_type="WHATSAPP" e optimization_goal="CONVERSATIONS".
+- Se mencionar WhatsApp ou mensagens/direct, use objective="OUTCOME_ENGAGEMENT", destination_type="WHATSAPP" e optimization_goal="CONVERSATIONS".
+- Se mencionar engajamento, curtidas ou alcance sem WhatsApp, use objective="OUTCOME_ENGAGEMENT", destination_type="" e optimization_goal="POST_ENGAGEMENT".
+- Se mencionar tráfego para site ou link https://wa.me, use objective="OUTCOME_TRAFFIC", destination_type="WEBSITE" e optimization_goal="LINK_CLICKS".
 - Se não mencionar cidade/estado específico, use "${defaultLocation}" em location_query.
 - Idade padrão segura se não informada: age_min=22, age_max=55.`;
 
@@ -378,6 +448,14 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
         ? Math.min(90, Math.round(Number(raw.duration_days)))
         : 7;
 
+    const promptGenders: Array<1 | 2> = /\bmulher(?:es)?\b|\bfeminino\b/i.test(
+      params.userPrompt
+    )
+      ? [2]
+      : /\bhomem\b|\bhomens\b|\bmasculino\b/i.test(params.userPrompt)
+        ? [1]
+        : [];
+
     return {
       name:
         String(raw.name || "").trim() ||
@@ -390,7 +468,7 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
       location_query: String(raw.location_query || defaultLocation).trim() || "Brasil",
       age_min: ageMin,
       age_max: ageMax,
-      genders: [],
+      genders: promptGenders,
       destination_url: params.adAccount?.link_destino_padrao || null,
       reasoning:
         String(raw.reasoning || "").trim() ||
@@ -403,40 +481,125 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
     metaAds: MetaAdsService,
     plan: ParsedCampaignPlan
   ): Promise<MetaTargetingInput> {
-    const query = (plan.location_query || "").trim();
-    const isCountryWide =
-      !query || /^(?:brasil|brazil|todo\s+o\s+brasil|br)$/i.test(query);
-
     let geoLocations: MetaTargetingInput["geo_locations"] = {
       countries: ["BR"],
     };
 
-    if (!isCountryWide) {
-      try {
-        const matches = await metaAds.searchGeoLocations(query, {
-          locationTypes: ["city", "region"],
-          countryCode: "BR",
-          limit: 5,
-        });
-        const cityMatch = matches.find((m) => m.type === "city");
-        const regionMatch = matches.find((m) => m.type === "region");
-        if (cityMatch?.key) {
-          geoLocations = {
-            cities: [
-              {
-                key: cityMatch.key,
-                radius: 25,
-                distance_unit: "kilometer",
-              },
+    const sel = plan.selected_location;
+    if (sel) {
+      const customRadius = Number(plan.location_radius_km ?? sel.radius_km ?? 0);
+      if (sel.type === "city" && sel.key) {
+        geoLocations = {
+          cities: [
+            {
+              key: sel.key,
+              radius: Math.max(17, Math.min(80, Math.round(customRadius || 20))),
+              distance_unit: "kilometer",
+            },
+          ],
+        };
+      } else if (sel.type === "region" && sel.key) {
+        geoLocations = { regions: [{ key: sel.key }] };
+      } else if (sel.type === "neighborhood" && sel.key) {
+        geoLocations = { neighborhoods: [{ key: sel.key }] };
+      } else if (sel.type === "subcity" && sel.key) {
+        geoLocations = { subcities: [{ key: sel.key }] };
+      } else if (sel.type === "zip" && sel.key) {
+        geoLocations = { zips: [{ key: sel.key }] };
+      } else if (
+        sel.type === "custom_pin" &&
+        typeof sel.latitude === "number" &&
+        typeof sel.longitude === "number"
+      ) {
+        geoLocations = {
+          custom_locations: [
+            {
+              latitude: sel.latitude,
+              longitude: sel.longitude,
+              radius: Math.max(1, Math.min(80, Math.round(customRadius || 5))),
+              distance_unit: "kilometer",
+              name: sel.label.replace(/^📍\s*Pino Exato:\s*/i, "").slice(0, 60),
+            },
+          ],
+        };
+      } else if (sel.type === "country") {
+        geoLocations = { countries: [sel.country_code || "BR"] };
+      }
+    } else {
+      const query = (plan.location_query || "").trim();
+      const isCountryWide =
+        !query || /^(?:brasil|brazil|todo\s+o\s+brasil|br)$/i.test(query);
+
+      if (!isCountryWide) {
+        try {
+          const matches = await metaAds.searchGeoLocations(query, {
+            locationTypes: [
+              "city",
+              "neighborhood",
+              "subcity",
+              "region",
+              "zip",
             ],
-          };
-        } else if (regionMatch?.key) {
-          geoLocations = {
-            regions: [{ key: regionMatch.key }],
-          };
+            countryCode: "BR",
+            limit: 6,
+          });
+          const neighborhoodMatch = matches.find(
+            (m) => m.type === "neighborhood"
+          );
+          const subcityMatch = matches.find((m) => m.type === "subcity");
+          const zipMatch = matches.find((m) => m.type === "zip");
+          const cityMatch = matches.find((m) => m.type === "city");
+          const regionMatch = matches.find((m) => m.type === "region");
+          const radiusKm = Math.max(
+            17,
+            Math.min(80, Math.round(Number(plan.location_radius_km) || 20))
+          );
+
+          if (neighborhoodMatch?.key) {
+            geoLocations = { neighborhoods: [{ key: neighborhoodMatch.key }] };
+          } else if (subcityMatch?.key) {
+            geoLocations = { subcities: [{ key: subcityMatch.key }] };
+          } else if (zipMatch?.key) {
+            geoLocations = { zips: [{ key: zipMatch.key }] };
+          } else if (cityMatch?.key) {
+            geoLocations = {
+              cities: [
+                {
+                  key: cityMatch.key,
+                  radius: radiusKm,
+                  distance_unit: "kilometer",
+                },
+              ],
+            };
+          } else if (regionMatch?.key) {
+            geoLocations = { regions: [{ key: regionMatch.key }] };
+          } else {
+            const pins = await searchNominatimPins(query);
+            const pin = pins[0];
+            if (
+              pin &&
+              typeof pin.latitude === "number" &&
+              typeof pin.longitude === "number"
+            ) {
+              geoLocations = {
+                custom_locations: [
+                  {
+                    latitude: pin.latitude,
+                    longitude: pin.longitude,
+                    radius: Math.max(
+                      1,
+                      Math.min(80, Math.round(Number(plan.location_radius_km) || 5))
+                    ),
+                    distance_unit: "kilometer",
+                    name: query.slice(0, 60),
+                  },
+                ],
+              };
+            }
+          }
+        } catch {
+          geoLocations = { countries: ["BR"] };
         }
-      } catch {
-        geoLocations = { countries: ["BR"] };
       }
     }
 
@@ -487,14 +650,9 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
       throw new Error("Post orgânico não encontrado para esta empresa.");
     }
 
-    if (params.channel === "INSTAGRAM" && !post.ig_post_id) {
+    if (!post.fb_post_id && !post.ig_post_id && !post.image_urls_json?.[0]) {
       throw new Error(
-        "Este post não possui ID publicado no Instagram (ig_post_id) para impulsionar."
-      );
-    }
-    if (params.channel === "FACEBOOK" && !post.fb_post_id) {
-      throw new Error(
-        "Este post não possui ID publicado no Facebook (fb_post_id) para impulsionar."
+        "Este post não possui publicação no Facebook/Instagram nem imagem disponível para impulsionar na Meta."
       );
     }
 
@@ -514,7 +672,7 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
       );
     }
 
-    const parsed = await this.parseCampaignPromptWithAI({
+    const parsed = await CampaignLauncherService.parseCampaignPromptWithAI({
       companyName: company?.name || "Empresa",
       userPrompt: params.userPrompt,
       postHeadline: post.headline,
@@ -529,9 +687,32 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
 
     const currency = (selectedAccount?.currency || "BRL").toUpperCase();
     const minCents = getMinimumDailyBudgetCents(currency);
+    const clampedAgeMin = Math.max(
+      18,
+      Math.min(65, Math.round(params.overridePlan?.age_min ?? parsed.age_min ?? 22))
+    );
+    const clampedAgeMax = Math.max(
+      clampedAgeMin,
+      Math.min(65, Math.round(params.overridePlan?.age_max ?? parsed.age_max ?? 55))
+    );
     const plan: ParsedCampaignPlan = {
       ...parsed,
       ...params.overridePlan,
+      location_query:
+        params.overridePlan?.location_query?.trim() || parsed.location_query,
+      location_radius_km:
+        params.overridePlan?.location_radius_km ?? parsed.location_radius_km ?? null,
+      selected_location:
+        params.overridePlan?.selected_location !== undefined
+          ? params.overridePlan.selected_location
+          : parsed.selected_location ?? null,
+      start_time: params.overridePlan?.start_time ?? parsed.start_time ?? null,
+      end_time: params.overridePlan?.end_time ?? parsed.end_time ?? null,
+      no_end_date:
+        params.overridePlan?.no_end_date ?? parsed.no_end_date ?? false,
+      age_min: clampedAgeMin,
+      age_max: clampedAgeMax,
+      genders: params.overridePlan?.genders ?? parsed.genders ?? [],
       objective: normalizeObjective(
         params.overridePlan?.objective || parsed.objective
       ),
@@ -541,10 +722,18 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
           params.overridePlan?.daily_budget_cents ?? parsed.daily_budget_cents
         )
       ),
+      destination_url:
+        params.overridePlan?.destination_url?.trim() ||
+        parsed.destination_url ||
+        selectedAccount?.link_destino_padrao ||
+        null,
     };
 
     const metaAds = new MetaAdsService(secrets.meta_access_token);
-    const targeting = await this.resolveGeoTargeting(metaAds, plan);
+    const targeting = await CampaignLauncherService.resolveGeoTargeting(
+      metaAds,
+      plan
+    );
 
     try {
       const created = await metaAds.createCampaignFromExistingPost({
@@ -556,13 +745,27 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
         destinationType: plan.destination_type,
         dailyBudgetCents: plan.daily_budget_cents,
         currency,
-        durationDays: plan.duration_days,
+        durationDays: plan.no_end_date ? null : plan.duration_days,
+        startTime: plan.start_time,
+        endTime: plan.end_time,
+        noEndDate: Boolean(plan.no_end_date),
         targeting,
         fbPageId: secrets.fb_page_id,
         fbPostId: post.fb_post_id,
         igUserId: secrets.ig_user_id,
         igMediaId: post.ig_post_id,
         destinationUrl: plan.destination_url,
+        postImageUrl: post.image_urls_json?.[0] || null,
+        postStoryImageUrl:
+          post.story_image_urls_json?.[0] ||
+          post.content_json?.story_image_urls?.[0] ||
+          null,
+        postHeadline: post.headline,
+        postCaption: post.content_json?.legenda || "",
+        welcomeGreeting: params.overridePlan?.welcome_greeting ?? null,
+        welcomeAutofill: params.overridePlan?.welcome_autofill ?? null,
+        pixelId: params.overridePlan?.pixel_id ?? null,
+        urlTags: params.overridePlan?.url_tags ?? null,
       });
 
       const saved = await createAdCampaignRecord({
@@ -578,7 +781,7 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
         destination_type: plan.destination_type,
         daily_budget_cents: plan.daily_budget_cents,
         currency,
-        duration_days: plan.duration_days,
+        duration_days: plan.no_end_date ? null : plan.duration_days,
         targeting_json: targeting as Record<string, unknown>,
         source_story_id: created.sourceStoryId,
         meta_campaign_id: created.campaignId,
@@ -880,7 +1083,7 @@ export class MetricsFetcherWorker {
     const errors: string[] = [];
 
     for (const cid of companyIds) {
-      const res = await this.syncCompanyCampaignMetrics(cid);
+      const res = await MetricsFetcherWorker.syncCompanyCampaignMetrics(cid);
       campaignsUpdated += res.campaignsUpdated;
       autoPaused += res.autoPaused;
       errors.push(...res.errors);
@@ -1207,7 +1410,11 @@ export class CampaignOrchestratorService {
     });
   }
 
-  static launchCampaign = CampaignLauncherService.launchFromExistingPost;
+  static async launchCampaign(
+    params: Parameters<typeof CampaignLauncherService.launchFromExistingPost>[0]
+  ) {
+    return CampaignLauncherService.launchFromExistingPost(params);
+  }
 
   static async toggleCampaignStatus(params: {
     companyId: string;
@@ -1264,9 +1471,13 @@ export class CampaignOrchestratorService {
     return updated;
   }
 
-  static refreshMetricsNow = MetricsFetcherWorker.syncCompanyCampaignMetrics;
-  static getOptimizationAdvice =
-    BudgetAndCreativeAdvisor.generateAdvisorRecommendations;
+  static async refreshMetricsNow(companyId: string) {
+    return MetricsFetcherWorker.syncCompanyCampaignMetrics(companyId);
+  }
+
+  static async getOptimizationAdvice(companyId: string) {
+    return BudgetAndCreativeAdvisor.generateAdvisorRecommendations(companyId);
+  }
 
   static async syncOrganicPostMetrics(companyId: string, limit = 25): Promise<{
     syncedCount: number;
@@ -1470,7 +1681,7 @@ export class CampaignOrchestratorService {
 
     if (params.channel === "FACEBOOK") {
       const cachedUrl = post.organic_metrics?.fb?.permalink?.trim();
-      if (cachedUrl) {
+      if (cachedUrl && !isBrokenFacebookPermalink(cachedUrl)) {
         return { url: cachedUrl, cached: true, organic_metrics: post.organic_metrics };
       }
       if (!post.fb_post_id) {
@@ -1481,7 +1692,12 @@ export class CampaignOrchestratorService {
         secrets.fb_page_id || "",
         post.fb_post_id
       );
-      let url = `https://www.facebook.com/${storyId}`;
+      const underscoreIdx = storyId.indexOf("_");
+      const pagePart =
+        underscoreIdx > 0 ? storyId.slice(0, underscoreIdx) : "";
+      let url = pagePart
+        ? `https://www.facebook.com/${encodeURIComponent(pagePart)}`
+        : `https://www.facebook.com/photo/?fbid=${encodeURIComponent(storyId)}`;
       if (secrets.meta_access_token) {
         const metaAds = new MetaAdsService(secrets.meta_access_token);
         const fbPageToken = secrets.fb_page_id
@@ -1614,5 +1830,136 @@ export class CampaignOrchestratorService {
       cached: false,
       note: "Post do TikTok em modo Sandbox/privado: abrindo o TikTok Studio para visualização.",
     };
+  }
+
+  static async listAccountPixels(
+    companyId: string,
+    adAccountId?: string | null
+  ) {
+    const [secrets, defaultAccount] = await Promise.all([
+      getCompanySecrets(companyId),
+      getDefaultAdAccount(companyId, "META"),
+    ]);
+    if (!secrets.meta_access_token) {
+      return { ad_account_id: null, pixels: [] };
+    }
+    const targetAcc =
+      (adAccountId ? normalizeAdAccountId(adAccountId) : "") ||
+      defaultAccount?.ad_account_id ||
+      "";
+    if (!targetAcc) {
+      return { ad_account_id: null, pixels: [] };
+    }
+    const metaAds = new MetaAdsService(secrets.meta_access_token);
+    const pixels = await metaAds.listAdPixels(targetAcc).catch(() => []);
+    return { ad_account_id: targetAcc, pixels };
+  }
+
+  static async deleteCampaignRecord(companyId: string, campaignId: string) {
+    const [secrets, campaign] = await Promise.all([
+      getCompanySecrets(companyId),
+      getAdCampaignById(campaignId, companyId),
+    ]);
+    if (!campaign) {
+      throw new Error("Campanha não encontrada para esta empresa.");
+    }
+    if (campaign.status !== "ERROR" && campaign.status !== "ARCHIVED") {
+      throw new Error(
+        "Por segurança, arquive ou pause a campanha antes de removê-la do painel."
+      );
+    }
+    if (
+      campaign.meta_campaign_id &&
+      campaign.status !== "ARCHIVED" &&
+      secrets.meta_access_token
+    ) {
+      const metaAds = new MetaAdsService(secrets.meta_access_token);
+      await metaAds
+        .toggleEntityStatus(campaign.meta_campaign_id, "ARCHIVED")
+        .catch(() => null);
+    }
+    await deleteAdCampaignRecord(campaign.id, companyId);
+    return { deleted: true, id: campaign.id };
+  }
+
+  static async searchPreciseLocations(
+    companyId: string,
+    query: string
+  ): Promise<AdGeoLocationSelection[]> {
+    const cleanQuery = query.trim();
+    if (!cleanQuery) return [];
+    const isBrazilQuery = /^(?:bra[sz]il|todo\s+o\s+brasil|br)$/i.test(
+      cleanQuery
+    );
+    const secrets = await getCompanySecrets(companyId);
+
+    const metaPromise = secrets.meta_access_token
+      ? new MetaAdsService(secrets.meta_access_token)
+          .searchGeoLocations(cleanQuery, {
+            locationTypes: [
+              "city",
+              "neighborhood",
+              "subcity",
+              "region",
+              "zip",
+            ],
+            countryCode: "BR",
+            limit: 8,
+          })
+          .catch(() => [])
+      : Promise.resolve([]);
+
+    const [metaResults, pinResults] = await Promise.all([
+      metaPromise,
+      searchNominatimPins(cleanQuery),
+    ]);
+
+    const typeLabels: Record<string, string> = {
+      city: "Cidade",
+      neighborhood: "Bairro",
+      subcity: "Sub-região",
+      region: "Estado",
+      zip: "CEP",
+      country: "País",
+    };
+
+    const mappedMeta: AdGeoLocationSelection[] = [];
+    for (const item of metaResults) {
+      const normalizedType = (item.type || "").toLowerCase();
+      if (
+        normalizedType !== "city" &&
+        normalizedType !== "region" &&
+        normalizedType !== "neighborhood" &&
+        normalizedType !== "subcity" &&
+        normalizedType !== "zip" &&
+        normalizedType !== "country"
+      ) {
+        continue;
+      }
+      const badge = typeLabels[normalizedType] || item.type;
+      const suffix = [item.region, item.country_code].filter(Boolean).join(", ");
+      mappedMeta.push({
+        label: `${badge}: ${item.name}${suffix ? ` (${suffix})` : ""}`,
+        type: normalizedType,
+        key: item.key,
+        country_code: item.country_code,
+        region: item.region,
+        radius_km: normalizedType === "city" ? 20 : undefined,
+      });
+    }
+
+    return [
+      ...(isBrazilQuery
+        ? [
+            {
+              label: "País: Brasil (Todo o Brasil)",
+              type: "country" as const,
+              country_code: "BR",
+            },
+          ]
+        : []),
+      ...mappedMeta,
+      ...pinResults,
+    ];
   }
 }

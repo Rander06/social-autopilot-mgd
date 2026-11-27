@@ -112,8 +112,8 @@ export async function POST(request: NextRequest) {
 
     if (action === "preview_campaign") {
       const postId = String(body.postId || "").trim();
-      const channel = (String(body.channel || "INSTAGRAM").toUpperCase() ||
-        "INSTAGRAM") as AdChannel;
+      const channel = (String(body.channel || "FACEBOOK").toUpperCase() ||
+        "FACEBOOK") as AdChannel;
       const userPrompt = String(body.userPrompt || "").trim();
       const adAccountId =
         typeof body.adAccountId === "string" ? body.adAccountId : null;
@@ -137,8 +137,8 @@ export async function POST(request: NextRequest) {
 
     if (action === "create_campaign") {
       const postId = String(body.postId || "").trim();
-      const channel = (String(body.channel || "INSTAGRAM").toUpperCase() ||
-        "INSTAGRAM") as AdChannel;
+      const channel = (String(body.channel || "FACEBOOK").toUpperCase() ||
+        "FACEBOOK") as AdChannel;
       const userPrompt = String(body.userPrompt || "").trim();
       const adAccountId =
         typeof body.adAccountId === "string" ? body.adAccountId : null;
@@ -237,6 +237,43 @@ export async function POST(request: NextRequest) {
         channel: rawChannel as AdChannel,
       });
       return NextResponse.json(result);
+    }
+
+    if (action === "list_ad_pixels") {
+      const adAccountId =
+        typeof body.adAccountId === "string" ? body.adAccountId : null;
+      const result = await CampaignOrchestratorService.listAccountPixels(
+        companyId,
+        adAccountId
+      );
+      return NextResponse.json(result);
+    }
+
+    if (action === "delete_campaign") {
+      const campaignId = String(body.campaignId || "").trim();
+      if (!campaignId) {
+        return NextResponse.json(
+          { error: "Informe campaignId para excluir." },
+          { status: 400 }
+        );
+      }
+      const result = await CampaignOrchestratorService.deleteCampaignRecord(
+        companyId,
+        campaignId
+      );
+      return NextResponse.json(result);
+    }
+
+    if (action === "search_geo_locations") {
+      const query = String(body.query || "").trim();
+      if (!query) {
+        return NextResponse.json({ locations: [] });
+      }
+      const locations = await CampaignOrchestratorService.searchPreciseLocations(
+        companyId,
+        query
+      );
+      return NextResponse.json({ locations });
     }
 
     return NextResponse.json({ error: "Ação inválida." }, { status: 400 });

@@ -3394,3 +3394,30 @@ export async function updateAdCampaignRecord(
   }
   return null;
 }
+
+export async function deleteAdCampaignRecord(
+  campaignId: string,
+  companyId: string
+): Promise<boolean> {
+  let deleted = false;
+  if (isSupabaseConfigured()) {
+    try {
+      await sbRequest(
+        `ad_campaigns?id=eq.${encodeURIComponent(
+          campaignId
+        )}&company_id=eq.${encodeURIComponent(companyId)}`,
+        { method: "DELETE" }
+      );
+      deleted = true;
+    } catch {
+      // fallback para memória
+    }
+  }
+
+  const mem = getMemDb();
+  const before = mem.ad_campaigns.length;
+  mem.ad_campaigns = mem.ad_campaigns.filter(
+    (c) => !(c.id === campaignId && c.company_id === companyId)
+  );
+  return deleted || mem.ad_campaigns.length < before;
+}
