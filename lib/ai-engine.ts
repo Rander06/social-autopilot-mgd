@@ -204,6 +204,8 @@ ASSUNTO DO POST: ${params.topicTitle}
 INSTRUÇÕES E BRIEFING DO CLIENTE:
 ${cleanCreativePrompt(params.promptInstructions)}
 
+REGRA DE FOCO ABSOLUTO: Baseie 100% do título, benefícios, legenda e hashtags EXCLUSIVAMENTE no produto, serviço ou tema descrito no briefing acima. Se o briefing divulgar um produto específico (como calçados, roupas, gastronomia, imóveis, estética etc.), fale 100% sobre esse produto — NUNCA misture com o ramo ou o nome "${params.companyName}" se o briefing não citar isso.
+
 OFERTA / PREÇO EM DESTAQUE: ${params.offerPrice || "Consulte condições especiais"}
 CTA PADRÃO DESEJADO: ${params.ctaDefault}
 ${benefitsBlock}
@@ -213,14 +215,14 @@ FORMATO SOLICITADO: ${params.format === "CAROUSEL"
     }
 ${antiRepeatBlock}${angleRotationHint}
 REGRAS ESTRITAS:
-0. Se as instruções acima citarem explicitamente um título entre aspas para o topo da arte (ex: "CONTROLE TUDO + ATENDIMENTO COM IA"), use EXATAMENTE esse título em "headline_arte".
+0. Se as instruções acima citarem explicitamente um título entre aspas para o topo da arte (ex: um título explícito entre aspas no briefing), use EXATAMENTE esse título em "headline_arte".
 1. NUNCA use emojis nos textos das artes (tema_visual, headline_arte, subtitulo_arte, dor_vs_solucao, destaque_selo, beneficios, slides). Use emojis APENAS no campo "legenda".
 2. tema_visual: Frase curta (2 a 4 palavras) para badge no topo da arte.
 3. headline_arte: De 5 a 8 palavras, forte, publicitária e inédita (ortografia 100% perfeita em português com todos os acentos corretos).
 4. subtitulo_arte: Frase informativa de 8 a 12 palavras explicando a proposta de valor e reforçando o benefício ou preço (${params.offerPrice || ""}).
 5. dor_vs_solucao: Frase persuasiva de 10 a 14 palavras contrastando a dor do cliente com a solução prática.
-6. destaque_selo: Selo em caixa alta de 3 a 6 palavras (ex: "PIX DIRETO NA CONTA • SEM INTERMEDIÁRIOS" ou "0% COMISSÃO • 100% SEU").
-7. beneficios: Array com exatamente 4 diferenciais informativos e completos de **5 a 7 palavras cada** (ex: "Simulador de orçamento em tempo real", "Calendário integrado Airbnb e Booking", "Contrato e recibo digital em PDF", "Atendimento com IA 24h no WhatsApp") escritos com ortografia e acentuação 100% perfeitas em português (não corte para 2 palavras genéricas e não escreva parágrafos longos de várias frases).
+6. destaque_selo: Selo em caixa alta de 3 a 6 palavras (ex: frase curta de destaque fiel ao produto ou serviço descrito acima).
+7. beneficios: Array com exatamente 4 diferenciais informativos e completos de **5 a 7 palavras cada**, 100% fiéis EXCLUSIVAMENTE ao produto, serviço ou tema descrito no briefing do cliente (NUNCA invente recursos de outros segmentos como imóveis, Airbnb, calendário ou WhatsApp se o briefing não falar disso), escritos com ortografia e acentuação 100% perfeitas em português (não corte para 2 palavras genéricas e não escreva parágrafos longos de várias frases).
 8. slides: Array com EXATAMENTE ${params.format === "CAROUSEL" ? params.slidesCount : 1
     } objetos, cada um contendo:
    - badge (ex: "PASSO 01", "DESTAQUE", "OFERTA")
@@ -991,8 +993,16 @@ export async function generateFullCreativeWithAI(params: {
   const hasOfficialLogo = Boolean(
     params.brandLogoUrl?.trim() || params.brandLogoDarkUrl?.trim()
   );
-  const fullBleedAndOrthoRule = `Fundo 100% full-bleed de ponta a ponta até o último pixel superior e inferior — PROIBIDO faixa branca, mancha branca, névoa clara no topo ou borda externa. Posicione o título levemente abaixo da borda sobre o próprio fundo contínuo, sem cortar nenhuma letra. Ortografia e acentuação perfeitas em português do Brasil (ç, ã, á, é, ó), usando tipografia limpa em faixas largas sem espremer letras.`;
-  const cleanedPrompt = hasOfficialLogo
+  const suppressTextOnArt =
+    /\b(?:sem\s+(?:textos?|escrita|palavras)|NÃO escreva nenhum texto)\b/i.test(
+      baseCleanedPrompt
+    );
+  const fullBleedAndOrthoRule = suppressTextOnArt
+    ? `Fundo e enquadramento 100% full-bleed de ponta a ponta — PROIBIDO faixa branca, borda externa, textos, títulos, selos ou marcas d'água na imagem.`
+    : `Fundo 100% full-bleed de ponta a ponta até o último pixel superior e inferior — PROIBIDO faixa branca, mancha branca, névoa clara no topo ou borda externa. Posicione o título levemente abaixo da borda sobre o próprio fundo contínuo, sem cortar nenhuma letra. Ortografia e acentuação perfeitas em português do Brasil (ç, ã, á, é, ó), usando tipografia limpa em faixas largas sem espremer letras.`;
+  const cleanedPrompt = suppressTextOnArt
+    ? `${baseCleanedPrompt}\n\n${fullBleedAndOrthoRule} Não desenhe logotipo nem assinatura em nenhum lugar da imagem.`
+    : hasOfficialLogo
     ? `${baseCleanedPrompt}\n\n${fullBleedAndOrthoRule} Não desenhe logotipo nem assinatura no canto inferior esquerdo; mantenha esse cantinho com apenas o fundo contínuo para aplicar a logomarca PNG oficial.`
     : `${baseCleanedPrompt}\n\n${fullBleedAndOrthoRule} Não invente símbolos ou ícones de logotipo falsos no rodapé.`;
 
@@ -1185,7 +1195,9 @@ export async function generateFullCreativeWithAI(params: {
             });
           }
           parts.push({
-            text: `${cleanedPrompt}\nProporção exata: ${params.aspectRatio}. Fotografia publicitária ultrarrealista full-bleed (luz natural real, câmera DSLR 35mm, cores autênticas — jamais ilustração, desenho ou caixa cinza/branca chapada tampando a foto). Botão CTA centralizado (~55% de largura) deixando o canto inferior esquerdo livre para a logomarca. Renderize na imagem APENAS os textos solicitados, com ortografia e acentuação perfeitas em PT-BR.`,
+            text: suppressTextOnArt
+              ? `${cleanedPrompt}\nProporção exata: ${params.aspectRatio}. Fotografia publicitária ultrarrealista full-bleed (luz natural real, câmera DSLR 35mm, cores autênticas — imagem puramente fotográfica sem nenhum texto, título, botão ou logotipo).`
+              : `${cleanedPrompt}\nProporção exata: ${params.aspectRatio}. Fotografia publicitária ultrarrealista full-bleed (luz natural real, câmera DSLR 35mm, cores autênticas — jamais ilustração, desenho ou caixa cinza/branca chapada tampando a foto). Botão CTA centralizado (~55% de largura) deixando o canto inferior esquerdo livre para a logomarca. Renderize na imagem APENAS os textos solicitados, com ortografia e acentuação perfeitas em PT-BR.`,
           });
 
           const res = await withTimeout(

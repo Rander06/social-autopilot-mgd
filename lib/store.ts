@@ -2365,9 +2365,11 @@ export async function getLastTopicHeadlines(
   topicId?: string | null,
   limit = 10
 ): Promise<string[]> {
-  const posts = await listPostsHistory(companyId, 30);
+  const cleanTopicId = topicId?.trim();
+  if (!cleanTopicId) return [];
+  const posts = await listPostsHistory(companyId, 60);
   return posts
-    .filter((p) => (!topicId || p.topic_id === topicId) && p.headline)
+    .filter((p) => p.topic_id === cleanTopicId && p.headline)
     .slice(0, limit)
     .map((p) => p.headline);
 }

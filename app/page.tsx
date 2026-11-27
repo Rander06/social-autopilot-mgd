@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AI_PHOTO_PROMPT_EXAMPLES,
   LUMINOUS_THEME_PRESETS,
@@ -1317,6 +1317,7 @@ export default function SaasAppPage() {
   >(null);
 
   // Studio Manual
+  const studioInitializedCompanyRef = useRef<string | null>(null);
   const [studioTopicId, setStudioTopicId] = useState<string>("__free__");
   const [studioTitle, setStudioTitle] = useState("");
   const [studioPrompt, setStudioPrompt] = useState("");
@@ -1449,47 +1450,50 @@ export default function SaasAppPage() {
     setIntegMetaToken("");
     setIntegTiktokToken("");
 
-    const activeTopics = ws.topics.filter((t) => t.is_active);
-    if (activeTopics.length > 0) {
-      const first = activeTopics[0];
-      const targets = defaultPublishTargets(
-        first,
-        Boolean(ws.integrations.has_tiktok_token)
-      );
-      setStudioTopicId("__free__");
-      setStudioTitle("");
-      setStudioPrompt("");
-      setStudioPrice("");
-      setStudioFormat(first.post_format);
-      setStudioSlides(first.slides_count);
-      setStudioPublishTargets(targets);
-      setStudioRatio(deriveRatioFromTargets(targets));
-      setStudioPhotoMode(normalizeVisualMode(first.ai_photo_mode));
-      setStudioImageAi(first.preferred_image_ai || "");
-      setStudioPublishToStories(
-        Boolean(targets.ig_stories || targets.fb_stories)
-      );
-      setStudioPhotoPrompt("");
-    } else {
-      const targets: PublishTargets = {
-        ig_feed: true,
-        ig_stories: false,
-        fb_feed: true,
-        fb_stories: false,
-        tiktok_feed: false,
-      };
-      setStudioTopicId("__free__");
-      setStudioTitle("");
-      setStudioPrompt("");
-      setStudioPrice("");
-      setStudioFormat("SINGLE");
-      setStudioSlides(3);
-      setStudioPublishTargets(targets);
-      setStudioRatio("1:1");
-      setStudioPhotoMode("NONE");
-      setStudioImageAi("");
-      setStudioPublishToStories(false);
-      setStudioPhotoPrompt("");
+    if (studioInitializedCompanyRef.current !== ws.company.id) {
+      studioInitializedCompanyRef.current = ws.company.id;
+      const activeTopics = ws.topics.filter((t) => t.is_active);
+      if (activeTopics.length > 0) {
+        const first = activeTopics[0];
+        const targets = defaultPublishTargets(
+          first,
+          Boolean(ws.integrations.has_tiktok_token)
+        );
+        setStudioTopicId("__free__");
+        setStudioTitle("");
+        setStudioPrompt("");
+        setStudioPrice("");
+        setStudioFormat(first.post_format);
+        setStudioSlides(first.slides_count);
+        setStudioPublishTargets(targets);
+        setStudioRatio(deriveRatioFromTargets(targets));
+        setStudioPhotoMode(normalizeVisualMode(first.ai_photo_mode));
+        setStudioImageAi(first.preferred_image_ai || "");
+        setStudioPublishToStories(
+          Boolean(targets.ig_stories || targets.fb_stories)
+        );
+        setStudioPhotoPrompt("");
+      } else {
+        const targets: PublishTargets = {
+          ig_feed: true,
+          ig_stories: false,
+          fb_feed: true,
+          fb_stories: false,
+          tiktok_feed: false,
+        };
+        setStudioTopicId("__free__");
+        setStudioTitle("");
+        setStudioPrompt("");
+        setStudioPrice("");
+        setStudioFormat("SINGLE");
+        setStudioSlides(3);
+        setStudioPublishTargets(targets);
+        setStudioRatio("1:1");
+        setStudioPhotoMode("NONE");
+        setStudioImageAi("");
+        setStudioPublishToStories(false);
+        setStudioPhotoPrompt("");
+      }
     }
   }, []);
 
@@ -2114,7 +2118,7 @@ export default function SaasAppPage() {
     setTopicApproval("AUTO");
     setTopicPhotoMode("NONE");
     setTopicImageAi("");
-    setTopicPhotoPrompt(AI_PHOTO_PROMPT_EXAMPLES[0].prompt);
+    setTopicPhotoPrompt("");
     setTopicDays([1, 3, 5]);
     setTopicTimes(["10:00"]);
     setTopicPublishToStories(false);
@@ -2283,10 +2287,13 @@ export default function SaasAppPage() {
   function handleSelectStudioTopic(topicId: string) {
     setStudioTopicId(topicId);
     setStudioPreview(null);
+    setStudioPhotoBase64(null);
+    setStudioPhotoType("image/jpeg");
     if (topicId === "__free__") {
       setStudioTitle("");
       setStudioPrompt("");
       setStudioPrice("");
+      setStudioPhotoPrompt("");
       return;
     }
     const found = workspace?.topics.find((t) => t.id === topicId);
@@ -2323,6 +2330,18 @@ export default function SaasAppPage() {
     aiPhotoModeOverride?: AIPhotoMode;
   }) {
     if (!workspace) return;
+    const effectiveMode = options.aiPhotoModeOverride || studioPhotoMode;
+    if (
+      studioTopicId === "__free__" &&
+      !studioPrompt.trim() &&
+      effectiveMode !== "RAW_ART"
+    ) {
+      setGlobalNotice({
+        type: "error",
+        text: 'Digite ou cole o prompt no campo "Prompt para a IA" antes de gerar em Prompt Livre Avulso.',
+      });
+      return;
+    }
     const actionKind = !options.previewOnly
       ? "publishing"
       : options.useEditedContent
@@ -2550,9 +2569,7 @@ export default function SaasAppPage() {
     setStudioPhotoMode(
       normalizeVisualMode(matchedTopic?.ai_photo_mode || "NONE")
     );
-    setStudioPhotoPrompt(
-      matchedTopic?.ai_photo_prompt || AI_PHOTO_PROMPT_EXAMPLES[0].prompt
-    );
+    setStudioPhotoPrompt(matchedTopic?.ai_photo_prompt || "");
     setStudioPhotoBase64(null);
 
     const isPendingDraft = post.status === "PENDING_APPROVAL";

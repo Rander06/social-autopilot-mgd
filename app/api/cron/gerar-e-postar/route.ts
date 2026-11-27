@@ -123,8 +123,8 @@ async function runPostPipeline(params: {
     shouldPickQueuedPhoto && topic
       ? pickNextTopicPhoto(params.companyId, topic.id)
       : Promise.resolve(null),
-    !params.editedContent
-      ? getLastTopicHeadlines(params.companyId, topic?.id, 10)
+    !params.editedContent && topic
+      ? getLastTopicHeadlines(params.companyId, topic.id, 10)
       : Promise.resolve([] as string[]),
   ]);
   const format: PostFormat =
@@ -283,9 +283,7 @@ async function runPostPipeline(params: {
     /#[0-9a-f]{6}|\b(?:fundo\s+(?:escuro|claro|preto|branco|azul|verde|roxo|bege|creme|terracota|gradiente|degrad[êe])|paleta\s+de\s+cores|estilo\s+(?:editorial|minimalista|glassmorphism|revista|noturno)|composi[çc][ãa]o\s+em\s+2\s+colunas)\b/i.test(
       text
     );
-  const cleanedVisualPrompt = hasVisualDirectives(cleanedMainPrompt) && !hasVisualDirectives(cleanedPhotoPrompt)
-    ? cleanedMainPrompt
-    : cleanedPhotoPrompt || cleanedMainPrompt;
+  const cleanedVisualPrompt = cleanedMainPrompt || cleanedPhotoPrompt;
 
   if (!params.editedContent) {
     const explicitTitleMatch = cleanedVisualPrompt.match(
@@ -354,6 +352,18 @@ async function runPostPipeline(params: {
     log(`Direção de arte selecionada: ${chosenLayout.id}`);
 
     const userHasCustomLayout = hasVisualDirectives(cleanedVisualPrompt);
+    const userWantsNoText =
+      /\bsem\s+(?:textos?|escrita|palavras|legendas?\s+na\s+imagem)\b/i.test(
+        cleanedVisualPrompt
+      );
+    const userWantsNoLogo =
+      /\bsem\s+(?:logos?|logotipos?|logomarcas?|assinaturas?)\b/i.test(
+        cleanedVisualPrompt
+      );
+    const hasDetailedPhotoScene =
+      /\b(?:imagem\s+de\s+refer[êe]ncia|fidelidade|[âa]ngulo\s+(?:baixo|alto|aberto|fechado)|enquadramento|lente\s+\d+mm|full-?frame|bokeh|desfoque|fotografia\s+(?:publicit[áa]ria|editorial|de\s+est[úu]dio|ultra-?realista)|ilumina[çc][ãa]o\s+natural|piso\s+de|cal[çc]ada|cen[áa]rio\s+de)\b/i.test(
+        cleanedVisualPrompt
+      );
     const layoutDirectiveBlock = userHasCustomLayout
       ? `Estilo visual: respeite as instruções do briefing mantendo composição limpa (${chosenLayout.id}).`
       : `Estilo visual (${chosenLayout.id}): ${chosenLayout.description}`;
@@ -424,9 +434,10 @@ async function runPostPipeline(params: {
     let aiResults: Array<string | null> = [];
     try {
       if (slidesCount === 1) {
-        const sceneContextBlock = userHasCustomLayout
-          ? basePrompt
-          : `Cenário fotográfico ultrarrealista para a empresa "${quota.company.name}" sobre: ${visualSubjectCue}. Mostre fielmente o produto, serviço ou ambiente real descrito acima (ex.: foto real de estúdio/lifestyle do produto quando for item físico, ou do ambiente/serviço quando for negócio local/digital), sem inventar cenários fora do contexto.`;
+        const sceneContextBlock =
+          userHasCustomLayout || hasDetailedPhotoScene
+            ? basePrompt
+            : `Cenário fotográfico ultrarrealista para a empresa "${quota.company.name}" sobre: ${visualSubjectCue}. Mostre fielmente o produto, serviço ou ambiente real descrito acima (ex.: foto real de estúdio/lifestyle do produto quando for item físico, ou do ambiente/serviço quando for negócio local/digital), sem inventar cenários fora do contexto.`;
 
         const benefitsLinesBlock =
           structuredBenefits.length > 0
@@ -435,20 +446,22 @@ async function runPostPipeline(params: {
                 .join("\n")}`
             : "";
 
-        const singleStructuredPrompt = `${sceneContextBlock}
+        const singleStructuredPrompt = userWantsNoText
+          ? `${basePrompt}\n\nREGRA ABSOLUTA: Siga 100% fielmente a cena fotográfica e o produto de referência descritos acima, em composição 100% full-bleed. NÃO escreva nenhum texto, título, preço, botão ou ícone sobre a imagem.`
+          : `${sceneContextBlock}
 
 ${layoutDirectiveBlock}
 
 Textos exatos para renderizar na arte:
 - Título principal no topo: "${content.headline_arte}"${
-          offerPrice
-            ? `\n- Faixa de valor logo abaixo do título: "Por apenas ${offerPrice}"`
-            : ""
-        }${benefitsLinesBlock}${
-          content.destaque_selo
-            ? `\n- Linha de destaque acima do botão: "${content.destaque_selo}"`
-            : ""
-        }
+              offerPrice
+                ? `\n- Faixa de valor logo abaixo do título: "Por apenas ${offerPrice}"`
+                : ""
+            }${benefitsLinesBlock}${
+              content.destaque_selo
+                ? `\n- Linha de destaque acima do botão: "${content.destaque_selo}"`
+                : ""
+            }
 - Botão CTA centralizado (55% de largura, deixando canto inferior esquerdo livre para a logo): "${brand.cta_default}"
 Escreva na imagem APENAS esses textos em português do Brasil com ortografia e acentos perfeitos; nunca imprima instruções internas de briefing.`;
 
@@ -459,8 +472,8 @@ Escreva na imagem APENAS esses textos em português do Brasil com ortografia e a
           preferredImageAI: effectiveImageAI,
           allowFallback: shouldAllowFallback,
           referencePhotoUrl: photoToRender,
-          brandLogoUrl: brand.logo_url,
-          brandLogoDarkUrl: brand.logo_dark_url,
+          brandLogoUrl: userWantsNoLogo ? null : brand.logo_url,
+          brandLogoDarkUrl: userWantsNoLogo ? null : brand.logo_dark_url,
           keys: {
             gemini: secrets.gemini_api_key,
             openai: secrets.openai_api_key,
@@ -546,8 +559,8 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — CONTINUAÇ�
               preferredImageAI: effectiveImageAI,
               allowFallback: shouldAllowFallback,
               referencePhotoUrl: photoToRender,
-              brandLogoUrl: brand.logo_url,
-              brandLogoDarkUrl: brand.logo_dark_url,
+              brandLogoUrl: userWantsNoLogo ? null : brand.logo_url,
+              brandLogoDarkUrl: userWantsNoLogo ? null : brand.logo_dark_url,
               keys: {
                 gemini: secrets.gemini_api_key,
                 openai: secrets.openai_api_key,
