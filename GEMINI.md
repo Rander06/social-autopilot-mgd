@@ -15,3 +15,7 @@
 ## Geração de Imagens e Textos (Google Gemini) — Padrão Aprovado
 - Manter inalterado o padrão atual de geração de imagens do Google Gemini (`gemini-3-pro-image` para imagem única, `gemini-3.1-flash-image` para carrossel, `imageConfig: { aspectRatio, imageSize: "1K" }`, e as direções fotográficas ultrarrealistas full-bleed com CTA centralizado e logo livre no canto inferior esquerdo em `app/api/cron/gerar-e-postar/route.ts` e `lib/ai-engine.ts`).
 - Nunca alterar modelos, parâmetros ou estilo visual dos criativos gerados pelo Gemini a menos que o usuário solicite explicitamente; se houver necessidade técnica de mudança, avisar e confirmar com o usuário antes.
+
+## Módulo de Tráfego Pago (Meta Ads & TikTok) — Arquitetura de Referência
+- Sempre consultar [docs/arquitetura-campanhas-saas.md](docs/arquitetura-campanhas-saas.md) antes de planejar ou implementar qualquer funcionalidade de criação, gestão, monitoramento ou automação de campanhas de tráfego pago neste SaaS.
+- Seguir estritamente as decisões arquiteturais do documento: orquestração 100% no backend Node.js multi-tenant (sem MCP local), reaproveitamento de posts orgânicos existentes (zero re-upload), criação segura como `PAUSED`, IA via Structured Outputs e TikTok Ads bloqueado com feature flag ("Em breve") até aprovação da TikTok Marketing API.

@@ -234,3 +234,81 @@ export interface ImprovementTip {
   client_seen_at?: string | null;
   created_at: string;
 }
+
+export type AdProvider = "META" | "TIKTOK";
+export type AdChannel = "INSTAGRAM" | "FACEBOOK" | "TIKTOK";
+export type MetaAdObjective =
+  | "OUTCOME_TRAFFIC"
+  | "OUTCOME_LEADS"
+  | "OUTCOME_SALES"
+  | "OUTCOME_ENGAGEMENT";
+export type AdCampaignStatus =
+  | "DRAFT"
+  | "PAUSED"
+  | "ACTIVE"
+  | "ARCHIVED"
+  | "ERROR";
+export type AdDecisionVerdict = "ESCALAR" | "MANTER" | "PAUSAR";
+
+export interface AdInsightsSnapshot {
+  spend?: number;
+  impressions?: number;
+  clicks?: number;
+  ctr?: number;
+  cpc?: number;
+  conversions?: number;
+  cpa?: number | null;
+  roas?: number | null;
+  raw_actions?: Array<{ action_type: string; value: string }>;
+}
+
+export interface AdAccountConfig {
+  id: string;
+  company_id: string;
+  provider: AdProvider;
+  ad_account_id: string;
+  account_name: string;
+  currency: string;
+  account_status?: number | null;
+  is_default: boolean;
+  cpa_maximo: number;
+  roas_minimo: number;
+  amostra_minima_cliques: number;
+  link_destino_padrao?: string | null;
+  localizacao_base: string;
+  auto_pause_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdCampaignRecord {
+  id: string;
+  company_id: string;
+  post_id?: string | null;
+  provider: AdProvider;
+  channel: AdChannel;
+  ad_account_id: string;
+  name: string;
+  user_prompt: string;
+  objective: string;
+  optimization_goal: string;
+  destination_type?: string | null;
+  daily_budget_cents: number;
+  currency: string;
+  duration_days?: number | null;
+  targeting_json: Record<string, unknown>;
+  source_story_id?: string | null;
+  meta_campaign_id?: string | null;
+  meta_adset_id?: string | null;
+  meta_creative_id?: string | null;
+  meta_ad_id?: string | null;
+  status: AdCampaignStatus;
+  last_verdict?: AdDecisionVerdict | null;
+  last_verdict_reason?: string | null;
+  last_insights_json: AdInsightsSnapshot;
+  last_insights_at?: string | null;
+  error_message?: string | null;
+  created_by_user_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
