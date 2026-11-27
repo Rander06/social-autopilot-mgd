@@ -1694,6 +1694,21 @@ export async function listPhotosByCompany(
   return getMemDb().photos.filter((p) => p.company_id === companyId);
 }
 
+function unpackPostHistoryRow(p: PostHistoryItem): PostHistoryItem {
+  const storyUrls =
+    Array.isArray(p.story_image_urls_json) && p.story_image_urls_json.length > 0
+      ? p.story_image_urls_json
+      : Array.isArray(p.content_json?.story_image_urls)
+      ? p.content_json.story_image_urls
+      : [];
+  const targets = p.publish_targets || p.content_json?.publish_targets;
+  return {
+    ...p,
+    story_image_urls_json: storyUrls,
+    ...(targets ? { publish_targets: targets } : {}),
+  };
+}
+
 export async function listPostsHistory(
   companyId?: string,
   limit = 250
@@ -1704,9 +1719,10 @@ export async function listPostsHistory(
       const filter = companyId
         ? `company_id=eq.${encodeURIComponent(companyId)}&`
         : "";
-      return await sbRequest<PostHistoryItem[]>(
+      const rows = await sbRequest<PostHistoryItem[]>(
         `posts_history?${filter}order=created_at.desc&limit=${limit}`
       );
+      return rows.map(unpackPostHistoryRow);
     } catch {
       // Fallback
     }
@@ -1715,7 +1731,7 @@ export async function listPostsHistory(
   const filtered = companyId
     ? all.filter((p) => p.company_id === companyId)
     : all;
-  return filtered.slice(0, limit);
+  return filtered.slice(0, limit).map(unpackPostHistoryRow);
 }
 
 export async function listAuditLogs(
@@ -1921,15 +1937,21 @@ export async function saveCompanyIntegrations(
         : Boolean(current.allow_image_ai_fallback),
     gemini_key_enc:
       input.gemini_api_key !== undefined
-        ? encryptSecret(input.gemini_api_key)
+        ? input.gemini_api_key.trim()
+          ? encryptSecret(input.gemini_api_key.trim())
+          : null
         : current.gemini_key_enc,
     openai_key_enc:
       input.openai_api_key !== undefined
-        ? encryptSecret(input.openai_api_key)
+        ? input.openai_api_key.trim()
+          ? encryptSecret(input.openai_api_key.trim())
+          : null
         : current.openai_key_enc,
     anthropic_key_enc:
       input.anthropic_api_key !== undefined
-        ? encryptSecret(input.anthropic_api_key)
+        ? input.anthropic_api_key.trim()
+          ? encryptSecret(input.anthropic_api_key.trim())
+          : null
         : current.anthropic_key_enc,
     meta_token_enc:
       input.meta_access_token !== undefined
@@ -2353,8 +2375,17 @@ export async function getLastTopicHeadlines(
 export async function recordGeneratedPost(
   item: Omit<PostHistoryItem, "id" | "created_at">
 ): Promise<PostHistoryItem> {
+  const enrichedContent = {
+    ...item.content_json,
+    ...(item.story_image_urls_json && item.story_image_urls_json.length > 0
+      ? { story_image_urls: item.story_image_urls_json }
+      : {}),
+    ...(item.publish_targets ? { publish_targets: item.publish_targets } : {}),
+  };
+
   const entry: PostHistoryItem = {
     ...item,
+    content_json: enrichedContent,
     id: generateId("pst"),
     created_at: new Date().toISOString(),
   };
@@ -2369,7 +2400,7 @@ export async function recordGeneratedPost(
       aspect_ratio: entry.aspect_ratio,
       slides_count: entry.slides_count,
       headline: entry.headline,
-      content_json: entry.content_json,
+      content_json: enrichedContent,
       image_urls_json: entry.image_urls_json,
       ig_post_id: entry.ig_post_id ?? null,
       fb_post_id: entry.fb_post_id ?? null,
@@ -2391,7 +2422,7 @@ export async function recordGeneratedPost(
     await incrementCompanyPostUsage(entry.company_id, entry.topic_id);
   }
 
-  return entry;
+  return unpackPostHistoryRow(entry);
 }
 
 export async function updatePostRecord(
@@ -2399,8 +2430,25 @@ export async function updatePostRecord(
   patch: Partial<PostHistoryItem>
 ): Promise<PostHistoryItem | null> {
   if (isSupabaseConfigured()) {
-    const { topic_title: _ignoredTitle, ...dbPatch } = patch;
+    const {
+      topic_title: _ignoredTitle,
+      story_image_urls_json: storyUrls,
+      publish_targets: publishTargets,
+      ...restPatch
+    } = patch;
     void _ignoredTitle;
+
+    const dbPatch: Record<string, unknown> = { ...restPatch };
+    if (patch.content_json) {
+      dbPatch.content_json = {
+        ...patch.content_json,
+        ...(storyUrls && storyUrls.length > 0
+          ? { story_image_urls: storyUrls }
+          : {}),
+        ...(publishTargets ? { publish_targets: publishTargets } : {}),
+      };
+    }
+
     const updated = await sbRequest<PostHistoryItem[]>(
       `posts_history?id=eq.${encodeURIComponent(postId)}`,
       {
@@ -2409,13 +2457,24 @@ export async function updatePostRecord(
         body: JSON.stringify(dbPatch),
       }
     );
-    return updated[0] || null;
+    return updated[0] ? unpackPostHistoryRow(updated[0]) : null;
   }
 
   const found = getMemDb().posts.find((p) => p.id === postId);
   if (!found) return null;
   Object.assign(found, patch);
-  return found;
+  if (patch.content_json || patch.story_image_urls_json || patch.publish_targets) {
+    found.content_json = {
+      ...found.content_json,
+      ...(found.story_image_urls_json && found.story_image_urls_json.length > 0
+        ? { story_image_urls: found.story_image_urls_json }
+        : {}),
+      ...(found.publish_targets
+        ? { publish_targets: found.publish_targets }
+        : {}),
+    };
+  }
+  return unpackPostHistoryRow(found);
 }
 
 export async function deletePostRecord(

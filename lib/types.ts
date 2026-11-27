@@ -180,6 +180,9 @@ export interface GeneratedContentPayload {
   hashtags: string;
   original_photo_url?: string | null;
   enhanced_photo_url?: string | null;
+  story_image_urls?: string[];
+  publish_targets?: PublishTargets;
+  image_provider_used?: string | null;
 }
 
 export interface PostHistoryItem {
@@ -195,6 +198,7 @@ export interface PostHistoryItem {
   content_json: GeneratedContentPayload;
   image_urls_json: string[];
   story_image_urls_json?: string[];
+  publish_targets?: PublishTargets;
   ig_post_id?: string | null;
   fb_post_id?: string | null;
   tiktok_post_id?: string | null;

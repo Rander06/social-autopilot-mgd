@@ -502,7 +502,11 @@ export async function POST(request: NextRequest) {
       if (secrets.meta_access_token) {
         report.meta = await inspectMetaTokenValidity(secrets.meta_access_token);
       } else {
-        report.meta = { valid: false, warning: "Token Meta não configurado." };
+        report.meta = {
+          valid: false,
+          configured: false,
+          warning: "Token Meta não configurado.",
+        };
       }
 
       if (secrets.gemini_api_key) {
@@ -519,32 +523,68 @@ export async function POST(request: NextRequest) {
             message: err instanceof Error ? err.message : "Erro na chave Gemini",
           };
         }
+      } else {
+        report.gemini = {
+          valid: false,
+          configured: false,
+          warning: "Chave Gemini não configurada.",
+        };
       }
 
       if (secrets.openai_api_key) {
-        const res = await fetch("https://api.openai.com/v1/models", {
-          headers: { Authorization: `Bearer ${secrets.openai_api_key}` },
-        });
+        try {
+          const res = await fetch("https://api.openai.com/v1/models", {
+            headers: { Authorization: `Bearer ${secrets.openai_api_key}` },
+          });
+          report.openai = {
+            valid: res.ok,
+            message: res.ok
+              ? "Chave OpenAI ativa."
+              : `Chave OpenAI inválida ou sem permissão (HTTP ${res.status}).`,
+          };
+        } catch (err) {
+          report.openai = {
+            valid: false,
+            message:
+              err instanceof Error ? err.message : "Erro ao validar OpenAI.",
+          };
+        }
+      } else {
         report.openai = {
-          valid: res.ok,
-          message: res.ok
-            ? "Chave OpenAI ativa."
-            : `Erro HTTP ${res.status} na OpenAI.`,
+          valid: false,
+          configured: false,
+          warning: "Chave OpenAI não configurada.",
         };
       }
 
       if (secrets.anthropic_api_key) {
-        const res = await fetch("https://api.anthropic.com/v1/models", {
-          headers: {
-            "x-api-key": secrets.anthropic_api_key,
-            "anthropic-version": "2023-06-01",
-          },
-        });
+        try {
+          const res = await fetch("https://api.anthropic.com/v1/models", {
+            headers: {
+              "x-api-key": secrets.anthropic_api_key,
+              "anthropic-version": "2023-06-01",
+            },
+          });
+          report.claude = {
+            valid: res.ok,
+            message: res.ok
+              ? "Chave Anthropic Claude ativa."
+              : `Chave Anthropic inválida ou sem permissão (HTTP ${res.status}).`,
+          };
+        } catch (err) {
+          report.claude = {
+            valid: false,
+            message:
+              err instanceof Error
+                ? err.message
+                : "Erro ao validar Anthropic Claude.",
+          };
+        }
+      } else {
         report.claude = {
-          valid: res.ok,
-          message: res.ok
-            ? "Chave Anthropic Claude ativa."
-            : `Erro HTTP ${res.status} no Claude.`,
+          valid: false,
+          configured: false,
+          warning: "Chave Anthropic Claude não configurada.",
         };
       }
 
@@ -574,15 +614,22 @@ export async function POST(request: NextRequest) {
             };
             error?: { code?: string; message?: string };
           };
+          const tkValid = tkRes.ok && tkData.error?.code === "ok";
+          const tkRawError = tkData.error?.message || "";
+          const isInvalidTokenErr =
+            tkData.error?.code === "access_token_invalid" ||
+            /access token is invalid|not found in the request/i.test(tkRawError);
           report.tiktok = {
-            valid: tkRes.ok && tkData.error?.code === "ok",
+            valid: tkValid,
             username: tkData.data?.creator_username || null,
             nickname: tkData.data?.creator_nickname || null,
             privacy_level_options: tkData.data?.privacy_level_options || [],
-            message:
-              tkRes.ok && tkData.error?.code === "ok"
-                ? `Conta TikTok @${tkData.data?.creator_username || "conectada"} ativa.`
-                : tkData.error?.message || `Erro HTTP ${tkRes.status} no TikTok.`,
+            raw_error: tkRawError || null,
+            message: tkValid
+              ? `Conta TikTok @${tkData.data?.creator_username || "conectada"} ativa.`
+              : isInvalidTokenErr
+              ? "Token do TikTok inválido ou expirado. Reconecte sua conta do TikTok."
+              : tkRawError || `Erro HTTP ${tkRes.status} no TikTok.`,
           };
         } catch (err) {
           report.tiktok = {
@@ -594,7 +641,8 @@ export async function POST(request: NextRequest) {
       } else {
         report.tiktok = {
           valid: false,
-          warning: "Token TikTok não conectado.",
+          configured: false,
+          warning: "Conta TikTok não conectada.",
         };
       }
 
@@ -780,7 +828,10 @@ export async function POST(request: NextRequest) {
             (u): u is string => typeof u === "string" && u.trim().length > 0
           )
         : [];
-      let finalStoryUrls = bodyStoryUrls;
+      let finalStoryUrls =
+        bodyStoryUrls.length > 0
+          ? bodyStoryUrls
+          : draft.story_image_urls_json || [];
       if (finalStoryUrls.length === 0 && needsVertical) {
         if (draft.aspect_ratio === "9:16") {
           finalStoryUrls = [...finalImageUrls];
@@ -870,20 +921,52 @@ export async function POST(request: NextRequest) {
             (u): u is string => typeof u === "string" && u.trim().length > 0
           )
         : [];
+      const bodyStoryUrls = Array.isArray(body.storyImageUrls)
+        ? body.storyImageUrls.filter(
+            (u): u is string => typeof u === "string" && u.trim().length > 0
+          )
+        : [];
+      const bodyPublishTargets =
+        body.publishTargets && typeof body.publishTargets === "object"
+          ? normalizePublishTargets(
+              body.publishTargets as Record<string, boolean>
+            )
+          : undefined;
+      const bodyLogs = Array.isArray(body.logs)
+        ? body.logs.filter((x): x is string => typeof x === "string")
+        : [];
 
       if (existingDraft) {
-        const editedContent =
+        const rawEditedContent =
           body.editedContent && typeof body.editedContent === "object"
             ? (body.editedContent as GeneratedContentPayload)
             : existingDraft.content_json;
+        const editedContent: GeneratedContentPayload =
+          !rawEditedContent.image_provider_used &&
+          existingDraft.content_json?.image_provider_used
+            ? {
+                ...rawEditedContent,
+                image_provider_used:
+                  existingDraft.content_json.image_provider_used,
+              }
+            : rawEditedContent;
 
         const finalImageUrls =
           bodyImageUrls.length > 0 ? bodyImageUrls : existingDraft.image_urls_json;
+        const finalStoryUrls =
+          bodyStoryUrls.length > 0
+            ? bodyStoryUrls
+            : existingDraft.story_image_urls_json || [];
+        const finalTargets =
+          bodyPublishTargets || existingDraft.publish_targets;
 
         const updated = await updatePostRecord(existingDraft.id, {
           headline: editedContent.headline_arte || existingDraft.headline,
           content_json: editedContent,
           image_urls_json: finalImageUrls,
+          story_image_urls_json: finalStoryUrls,
+          ...(finalTargets ? { publish_targets: finalTargets } : {}),
+          ...(bodyLogs.length > 0 ? { logs_json: bodyLogs } : {}),
         });
 
         await appendAuditLog({
@@ -934,11 +1017,13 @@ export async function POST(request: NextRequest) {
         headline: editedContent.headline_arte || "Rascunho Editado",
         content_json: editedContent,
         image_urls_json: bodyImageUrls,
+        story_image_urls_json: bodyStoryUrls,
+        ...(bodyPublishTargets ? { publish_targets: bodyPublishTargets } : {}),
         ig_post_id: null,
         fb_post_id: null,
         tiktok_post_id: null,
         status: "PENDING_APPROVAL",
-        logs_json: [],
+        logs_json: bodyLogs,
       });
 
       await appendAuditLog({

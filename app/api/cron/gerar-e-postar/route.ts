@@ -280,7 +280,7 @@ async function runPostPipeline(params: {
   const cleanedPhotoPrompt = cleanCreativePrompt(aiPhotoPrompt);
   const cleanedMainPrompt = cleanCreativePrompt(promptInstructions);
   const hasVisualDirectives = (text: string) =>
-    /#[0-9a-f]{6}|fundo\s+|t[íi]tulo\s*:|terracota|creme|mockup|notebook|financeiro|whatsapp|etiqueta|p[íi]lula/i.test(
+    /#[0-9a-f]{6}|\b(?:fundo\s+(?:escuro|claro|preto|branco|azul|verde|roxo|bege|creme|terracota|gradiente|degrad[êe])|paleta\s+de\s+cores|estilo\s+(?:editorial|minimalista|glassmorphism|revista|noturno)|composi[çc][ãa]o\s+em\s+2\s+colunas)\b/i.test(
       text
     );
   const cleanedVisualPrompt = hasVisualDirectives(cleanedMainPrompt) && !hasVisualDirectives(cleanedPhotoPrompt)
@@ -325,24 +325,24 @@ async function runPostPipeline(params: {
 
     const CREATIVE_LAYOUT_DIRECTIONS = [
       {
-        id: "FULL_WIDTH_BANDS",
+        id: "CINEMATIC_FULL_BLEED_HERO",
         description:
-          "Layout publicitário com fotografia luminosa panorâmica no topo e faixas horizontais largas de ponta a ponta abaixo, com ícones nítidos à esquerda de cada faixa (1 linha por diferencial para escrita perfeita e fonte uniforme).",
+          "Fotografia publicitária ultrarrealista 100% full-bleed do produto, serviço ou ambiente real do anúncio (câmera DSLR 35mm, iluminação natural ou de estúdio cinematográfica, texturas reais e profundidade autêntica — jamais ilustração ou cartão cinza/branco cobrindo a foto). Título principal forte no topo em branco com palavra-chave em destaque vibrante e faixa translúcida elegante com o preço em dourado; metade inferior com degradê escuro atmosférico suave sobre a própria foto exibindo os 4 diferenciais em grade 2x2 com ícones modernos nítidos, selo de destaque acima e botão CTA em destaque centralizado (55% de largura) mantendo o canto inferior esquerdo livre.",
       },
       {
-        id: "EDITORIAL_SPLIT",
+        id: "GOLDEN_HOUR_GLASS_OVERLAY",
         description:
-          "Layout editorial limpo em 2 colunas: coluna esquerda sólida/degradê com título, lista vertical espaçada em faixas largas e CTA à direita; metade direita com fotografia luminosa real do ambiente.",
+          "Fotografia editorial ultrarrealista 100% full-bleed adaptada ao segmento (luz quente natural ou iluminação premium de estúdio destacando o produto ou serviço principal, sem molduras ou caixas opacas tampando a cena). Título forte no topo e faixa de valor dourada de alto contraste; metade inferior com degradê escuro suave e 4 faixas translúcidas sutis em vidro fosco bem espaçadas com ícones modernos refinados à esquerda de cada diferencial, selo de destaque e botão CTA centralizado (55% de largura) com canto inferior esquerdo livre.",
       },
       {
-        id: "DARK_ELEGANT_POSTER",
+        id: "PREMIUM_SHOWCASE_EDITORIAL",
         description:
-          "Layout noturno sofisticado com fotografia aconchegante ao entardecer, degradê escuro de alto contraste e faixas horizontais bem espaçadas com tipografia limpa em branco e dourado.",
+          "Fotografia comercial ultrarrealista de alto padrão preenchendo 100% da arte (enquadramento hero do produto físico em destaque ou do ambiente/serviço com mockup limpo SOMENTE quando o anúncio for sobre site, aplicativo ou sistema). Título de agência impactante e faixa de preço dourada no topo sobre área limpa da foto; metade inferior escurecida em degradê suave exibindo os 4 diferenciais com ícones limpos, selo de destaque e botão CTA centralizado (55% de largura) com canto inferior esquerdo livre.",
       },
       {
-        id: "CLEAN_HERO_CARD",
+        id: "HIGH_CONTRAST_AGENCY_FLYER",
         description:
-          "Layout de agência com foto luminosa ocupando a parte superior e um cartão amplo e limpo na metade inferior exibindo os tópicos em linhas largas bem espaçadas e botão CTA.",
+          "Fotografia publicitária panorâmica ultrarrealista full-bleed em iluminação vibrante de revista (qualidade fotográfica real fiel ao produto ou serviço anunciado, jamais desenho ou bloco cinza chapado). Topo limpo com tipografia publicitária grande em branco e cor de destaque + faixa translúcida com o valor em dourado; base com vinheta escura cinematográfica integrando os 4 diferenciais em 2 linhas espaçosas com ícones modernos nítidos, linha de selo/condição e botão CTA centralizado (55% de largura) com canto inferior esquerdo livre.",
       },
     ];
 
@@ -358,16 +358,99 @@ async function runPostPipeline(params: {
       ? `Estilo visual: respeite as instruções do briefing mantendo composição limpa (${chosenLayout.id}).`
       : `Estilo visual (${chosenLayout.id}): ${chosenLayout.description}`;
 
+    const buildVisualSubjectCue = (
+      rawTopicTitle: string,
+      rawPrompt: string,
+      temaVisual: string
+    ): string => {
+      const cleanTopic = cleanCreativePrompt(rawTopicTitle);
+      const hasSpecificTopic =
+        Boolean(cleanTopic) &&
+        !/^(?:campanha especial|post especial|novo assunto)$/i.test(cleanTopic);
+
+      const filteredLines = (rawPrompt || "")
+        .split(/\r?\n/)
+        .map((line) =>
+          line
+            .replace(/\([^)]*(?:n[íi]tido|arte|legenda|mensalidade)[^)]*\)/gi, "")
+            .replace(/^(?:[-•*]\s*)?(?:objetivo\s+do\s+an[úu]ncio|t[íi]tulo\s+no\s+topo(?:\s+da\s+arte)?|valor\s+do(?:\s+\w+)*|principais\s+diferenciais|destaque\s+os\s+principais(?:\s+\w+)*|reforce\s+sempre(?:\s+\w+)*)\s*:?\s*/i, "")
+            .trim()
+        )
+        .filter(
+          (line) =>
+            line.length > 2 &&
+            !/^(?:n[ãa]o\s+use|nunca\s+(?:cite|fale)|regra\s+de\s+texto)/i.test(line)
+        );
+
+      const rawSnippet = cleanCreativePrompt(filteredLines.join(" "));
+      const clippedSnippet =
+        rawSnippet.length > 160
+          ? rawSnippet.slice(0, 160).replace(/\s+\S*$/, "").trim()
+          : rawSnippet;
+
+      const parts: string[] = [];
+      if (hasSpecificTopic) parts.push(cleanTopic);
+      if (temaVisual && !cleanTopic.toLowerCase().includes(temaVisual.toLowerCase())) {
+        parts.push(temaVisual);
+      }
+      if (
+        clippedSnippet &&
+        clippedSnippet.toLowerCase() !== cleanTopic.toLowerCase()
+      ) {
+        parts.push(clippedSnippet);
+      }
+
+      return parts.join(" — ") || cleanTopic || temaVisual || "Produto ou serviço em destaque";
+    };
+
+    const visualSubjectCue = buildVisualSubjectCue(
+      topicTitle,
+      cleanedVisualPrompt || promptInstructions,
+      content.tema_visual
+    );
+
+    const structuredBenefits = (content.beneficios || [])
+      .map((b) =>
+        b
+          .replace(/^[-•*]\s*/, "")
+          .trim()
+          .split(/\s+/)
+          .slice(0, 8)
+          .join(" ")
+      )
+      .filter(Boolean)
+      .slice(0, 4);
+
     let aiResults: Array<string | null> = [];
     try {
       if (slidesCount === 1) {
-        const singleStructuredPrompt = `${basePrompt}
+        const sceneContextBlock = userHasCustomLayout
+          ? basePrompt
+          : `Cenário fotográfico ultrarrealista para a empresa "${quota.company.name}" sobre: ${visualSubjectCue}. Mostre fielmente o produto, serviço ou ambiente real descrito acima (ex.: foto real de estúdio/lifestyle do produto quando for item físico, ou do ambiente/serviço quando for negócio local/digital), sem inventar cenários fora do contexto.`;
+
+        const benefitsLinesBlock =
+          structuredBenefits.length > 0
+            ? `\n- Diferenciais com ícones modernos (renderize exatamente estes itens curtos):\n${structuredBenefits
+                .map((b) => `  • "${b}"`)
+                .join("\n")}`
+            : "";
+
+        const singleStructuredPrompt = `${sceneContextBlock}
 
 ${layoutDirectiveBlock}
 
-Âncora principal da arte:
-- Título em destaque: "${content.headline_arte}"
-${offerPrice ? `- Valor em destaque: "Por apenas ${offerPrice}"\n` : ""}- Botão CTA: "${brand.cta_default}"`;
+Textos exatos para renderizar na arte:
+- Título principal no topo: "${content.headline_arte}"${
+          offerPrice
+            ? `\n- Faixa de valor logo abaixo do título: "Por apenas ${offerPrice}"`
+            : ""
+        }${benefitsLinesBlock}${
+          content.destaque_selo
+            ? `\n- Linha de destaque acima do botão: "${content.destaque_selo}"`
+            : ""
+        }
+- Botão CTA centralizado (55% de largura, deixando canto inferior esquerdo livre para a logo): "${brand.cta_default}"
+Escreva na imagem APENAS esses textos em português do Brasil com ortografia e acentos perfeitos; nunca imprima instruções internas de briefing.`;
 
         const singleUrl = await generateFullCreativeWithAI({
           companyId: params.companyId,
@@ -392,8 +475,13 @@ ${offerPrice ? `- Valor em destaque: "Por apenas ${offerPrice}"\n` : ""}- Botão
           18_000,
           44_000 - (Date.now() - pipelineStartedAt)
         );
-        const paletteSummary = `Paleta obrigatória igual em TODOS os slides: primária ${brand.primary_color}, destaque ${brand.accent_color}, fundo base ${brand.bg_color}.`;
-        const carouselVisualDna = `${basePrompt.slice(0, 380)}\n\n${layoutDirectiveBlock}\n${paletteSummary}`;
+        const paletteSummary = `Paleta da marca consistente em TODOS os slides: cor primária ${brand.primary_color} e destaque ${brand.accent_color} com alto contraste sobre fotografia/cenário publicitário moderno.`;
+        const carouselVisualDna = `Tema visual e produto/serviço da empresa "${quota.company.name}": ${visualSubjectCue}.
+
+${layoutDirectiveBlock}
+${paletteSummary}
+
+IMPORTANTE: Crie arte publicitária visual rica estilo agência mostrando fielmente o produto, serviço ou ambiente real descrito acima (ex.: foto real de estúdio/lifestyle para produto físico, ou ambiente/serviço real para negócio local/digital — PROIBIDO fundo chapado vazio só com texto ou cenário fora do contexto). Escreva NA IMAGEM EXCLUSIVAMENTE os textos entre aspas listados abaixo, respeitando cada acento em PT-BR.`;
         const footerSigRule =
           brand.logo_url || brand.logo_dark_url
             ? `deixe o canto inferior esquerdo livre para a logomarca oficial PNG`
@@ -433,7 +521,7 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE 1/${slidesCount} — CAPA):
               slidePrompt = `${carouselVisualDna}
 
 DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — FECHAMENTO):
-- Mantenha EXATAMENTE a mesma identidade visual, fundo, tipografia e estilo gráfico da capa (sem bordas brancas externas).
+- Mantenha EXATAMENTE a mesma identidade visual, fotografia/cenário, tipografia e estilo gráfico da capa (sem bordas brancas externas).
 - Tag Superior: "${sl.badge || "OFERTA"}"
 - Título Grande: "${sl.title}"
 - Texto Nítido: "${slideBody}"
@@ -444,7 +532,7 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — FECHAMENTO)
               slidePrompt = `${carouselVisualDna}
 
 DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — CONTINUAÇÃO):
-- Mantenha EXATAMENTE a mesma identidade visual, fundo, tipografia e estilo gráfico da capa (sem bordas brancas externas).
+- Mantenha EXATAMENTE a mesma identidade visual, fotografia/cenário, tipografia e estilo gráfico da capa (sem bordas brancas externas).
 - Tag Superior: "${sl.badge}"
 - Título Grande: "${sl.title}"
 - Texto Explicativo Nítido: "${slideBody}"
@@ -603,6 +691,28 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — CONTINUAÇ�
     }
   }
 
+  const formatDetectedModel = (raw: string): string => {
+    const trimmed = raw.trim();
+    if (/^gemini-/i.test(trimmed)) return `GEMINI (${trimmed})`;
+    if (/^OpenAI\s+/i.test(trimmed)) {
+      return `OPENAI (${trimmed.replace(/^OpenAI\s+/i, "").trim()})`;
+    }
+    return trimmed;
+  };
+  const detectedImageProviders = Array.from(
+    new Set(
+      logs
+        .map((l) => l.match(/Criativo 100% IA \(([^)]+)\) concluído:/i)?.[1])
+        .filter((v): v is string => Boolean(v))
+        .map(formatDetectedModel)
+    )
+  );
+  const imageProviderUsed =
+    detectedImageProviders.length > 0
+      ? detectedImageProviders.join(", ")
+      : effectiveImageAI;
+  content.image_provider_used = imageProviderUsed;
+
   if (params.previewOnly) {
     let activeDraftId = params.draftPostId || null;
 
@@ -611,6 +721,8 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — CONTINUAÇ�
         headline: content.headline_arte,
         content_json: content,
         image_urls_json: imageUrls,
+        story_image_urls_json: storyImageUrls,
+        publish_targets: publishTargets,
         format,
         aspect_ratio: aspectRatio,
         slides_count: imageUrls.length,
@@ -635,6 +747,8 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — CONTINUAÇ�
         headline: content.headline_arte,
         content_json: content,
         image_urls_json: imageUrls,
+        story_image_urls_json: storyImageUrls,
+        publish_targets: publishTargets,
         ig_post_id: null,
         fb_post_id: null,
         tiktok_post_id: null,
@@ -652,6 +766,7 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — CONTINUAÇ�
       topicId: topic?.id || null,
       topicTitle,
       providerUsed,
+      imageProviderUsed,
       format,
       aspectRatio,
       slidesCount: imageUrls.length,
@@ -679,6 +794,8 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — CONTINUAÇ�
       headline: content.headline_arte,
       content_json: content,
       image_urls_json: imageUrls,
+      story_image_urls_json: storyImageUrls,
+      publish_targets: publishTargets,
       ig_post_id: null,
       fb_post_id: null,
       tiktok_post_id: null,
@@ -696,6 +813,8 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — CONTINUAÇ�
     return {
       success: true,
       status: "PENDING_APPROVAL",
+      providerUsed,
+      imageProviderUsed,
       postRecord: savedDraft,
       imageUrl: imageUrls[0],
       imageUrls,
@@ -753,6 +872,8 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — CONTINUAÇ�
     headline: content.headline_arte,
     content_json: content,
     image_urls_json: imageUrls,
+    story_image_urls_json: storyImageUrls,
+    publish_targets: publishTargets,
     ig_post_id: instagramPostId,
     fb_post_id: facebookPostId,
     tiktok_post_id: tiktokPostId,
@@ -777,6 +898,8 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — CONTINUAÇ�
     success: true,
     status: "PUBLISHED",
     mode: format === "CAROUSEL" ? "carrossel" : "imagem",
+    providerUsed,
+    imageProviderUsed,
     imageUrl: imageUrls[0],
     imageUrls,
     storyImageUrls,

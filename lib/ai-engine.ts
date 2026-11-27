@@ -195,7 +195,7 @@ function buildCopywritingPrompt(params: {
 
   const angleRotationHint =
     params.previousHeadlines.length > 0
-      ? `\nROTAÇÃO DE ÂNGULO (OBRIGATÓRIO): Escolha UM ângulo/diferencial diferente dos últimos posts (por exemplo: alternar entre 1- Fim dos curiosos/simulador + iCal Airbnb/Booking, 2- PIX direto na conta sem intermediários, 3- Atendimento IA 24h no WhatsApp + contratos PDF automáticos, 4- Controle de aprovação + cronograma de limpeza e financeiro, 5- Site próprio 100% editável pelo dono) para cada post ter chamada e benefícios inéditos.`
+      ? `\nROTAÇÃO DE ÂNGULO (OBRIGATÓRIO): Escolha UM ângulo/diferencial diferente dos últimos posts (alterne entre: dor principal do público, benefício prático do produto/serviço, prova de confiança/qualidade, facilidade no atendimento/entrega e oferta ou condição especial) para cada post ter chamada e benefícios inéditos.`
       : "";
 
   return `Você é o estrategista de marketing e copywriter sênior escrevendo para a empresa "${params.companyName}".
@@ -226,15 +226,14 @@ REGRAS ESTRITAS:
    - badge (ex: "PASSO 01", "DESTAQUE", "OFERTA")
    - title (título curto do slide, máx. 7 palavras)
    - body (frase informativa e clara de 10 a 14 palavras para ficar legível e nítida na arte)
-   - highlight (opcional, dado ou preço curto de até 5 palavras)${
-     params.format === "CAROUSEL"
-       ? `
+   - highlight (opcional, dado ou preço curto de até 5 palavras)${params.format === "CAROUSEL"
+      ? `
    IMPORTANTE PARA CARROSSEL CONTÍNUO: Escreva os ${params.slidesCount} slides como uma HISTÓRIA EM SEQUÊNCIA para a pessoa ir arrastando e lendo:
    * Slide 1: Gancho forte de abertura (dor ou curiosidade) que convida a arrastar para o lado. NÃO despeje todos os benefícios nem o preço completo aqui.
    * Slides intermediários: Continuação lógica passo a passo (cada slide desenvolve 1 ideia conectada ao slide anterior).
    * Último slide (Slide ${params.slidesCount}): Conclusão + oferta/preço (${params.offerPrice || "condição especial"}) + CTA final ("${params.ctaDefault}").`
-       : ""
-   }
+      : ""
+    }
 9. legenda: Copy persuasiva em português do Brasil com parágrafos curtos, emojis estratégicos e CTA final alinhado a "${params.ctaDefault}".
 10. hashtags: Lista de hashtags relevantes separadas por espaço.
 
@@ -309,8 +308,9 @@ async function runGeminiText(
   const candidates = Array.from(
     new Set([
       ...(envModel ? [envModel] : []),
-      "gemini-2.5-flash-lite",
-      "gemini-2.5-flash",
+      "gemini-3.8-flash",
+      "gemini-3.5-flash",
+      "gemini-3.5-flash-lite",
     ])
   );
 
@@ -365,7 +365,7 @@ async function runGeminiText(
             temperature: 0.9,
           },
         }),
-        10_000,
+        15_000,
         `Gemini (${model})`
       );
       if (!response.text) throw new Error("Resposta vazia do Gemini.");
@@ -434,8 +434,7 @@ async function runOpenAIText(
 
       if (!res.ok || !data.choices?.[0]?.message?.content) {
         throw new Error(
-          `OpenAI (${model}) falhou (HTTP ${res.status}): ${
-            data.error?.message || res.statusText
+          `OpenAI (${model}) falhou (HTTP ${res.status}): ${data.error?.message || res.statusText
           }`
         );
       }
@@ -448,8 +447,7 @@ async function runOpenAIText(
       lastError = err;
       appendLog(
         logs,
-        `Multi-IA [OpenAI ${model}] falhou: ${
-          err instanceof Error ? err.message : String(err)
+        `Multi-IA [OpenAI ${model}] falhou: ${err instanceof Error ? err.message : String(err)
         }`
       );
     }
@@ -493,9 +491,25 @@ async function runClaudeText(
 
       const textBlock = data.content?.find((c) => c.type === "text")?.text;
       if (!res.ok || !textBlock) {
-        throw new Error(
-          `Claude HTTP ${res.status}: ${data.error?.message || res.statusText}`
-        );
+        const rawErr = data.error?.message || res.statusText;
+        if (/not scoped to a workspace|anthropic-workspace-id/i.test(rawErr)) {
+          lastErr = new Error(
+            "Claude: chave da Anthropic sem Workspace vinculado. Gere uma chave com escopo de Workspace ou remova a chave na aba Integrações."
+          );
+          appendLog(logs, `Multi-IA [Claude ${model}] falhou: ${lastErr instanceof Error ? lastErr.message : rawErr}`);
+          break;
+        }
+        const err = new Error(`Claude HTTP ${res.status}: ${rawErr}`);
+        lastErr = err;
+        appendLog(logs, `Multi-IA [Claude ${model}] falhou: ${err.message}`);
+        if (
+          res.status === 401 ||
+          res.status === 403 ||
+          /credit|balance|billing|authentication|invalid x-api-key/i.test(rawErr)
+        ) {
+          break;
+        }
+        continue;
       }
 
       return {
@@ -564,7 +578,7 @@ export async function generateContentWithMultiAI(params: {
     );
   }
 
-  let lastError: unknown;
+  const providerErrors: string[] = [];
   for (const provider of available) {
     try {
       let res: { raw: Partial<GeneratedContentPayload>; model: string };
@@ -587,13 +601,16 @@ export async function generateContentWithMultiAI(params: {
       );
       return { content: normalized, providerUsed: res.model };
     } catch (err) {
-      lastError = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      providerErrors.push(`${provider}: ${msg}`);
     }
   }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Falha em todos os provedores de IA disponíveis.");
+  throw new Error(
+    providerErrors.length > 0
+      ? `Falha nas IAs de texto: ${providerErrors.join(" | ")}`
+      : "Falha em todos os provedores de IA disponíveis."
+  );
 }
 
 export async function enhanceProductPhotoWithAI(params: {
@@ -641,11 +658,11 @@ export async function enhanceProductPhotoWithAI(params: {
         params.preferredImageAI === "OPENAI_MINI"
           ? ["gpt-image-1-mini", "gpt-image-1.5", "chatgpt-image-latest"]
           : [
-              "chatgpt-image-latest",
-              "gpt-image-1.5",
-              "gpt-image-2",
-              "gpt-image-1-mini",
-            ];
+            "chatgpt-image-latest",
+            "gpt-image-1.5",
+            "gpt-image-2",
+            "gpt-image-1-mini",
+          ];
       for (const openAiModel of openAiModels) {
         try {
           appendLog(
@@ -701,15 +718,13 @@ export async function enhanceProductPhotoWithAI(params: {
 
           appendLog(
             params.logs,
-            `Ambientação IA (OpenAI ${openAiModel}) ignorada (${
-              data.error?.message || res.statusText
+            `Ambientação IA (OpenAI ${openAiModel}) ignorada (${data.error?.message || res.statusText
             }).`
           );
         } catch (err) {
           appendLog(
             params.logs,
-            `Ambientação IA (OpenAI ${openAiModel}) erro: ${
-              err instanceof Error ? err.message : String(err)
+            `Ambientação IA (OpenAI ${openAiModel}) erro: ${err instanceof Error ? err.message : String(err)
             }`
           );
         }
@@ -718,7 +733,8 @@ export async function enhanceProductPhotoWithAI(params: {
 
     if (params.keys.gemini) {
       const geminiEditModels = [
-        "gemini-3.1-flash-image-preview",
+        "gemini-3.1-flash-image",
+        "gemini-3-pro-image",
         "gemini-2.5-flash-image",
       ];
       for (const editModel of geminiEditModels) {
@@ -747,7 +763,7 @@ export async function enhanceProductPhotoWithAI(params: {
               ],
               config: { responseModalities: ["IMAGE", "TEXT"] },
             }),
-            18_000,
+            25_000,
             `Gemini Image (${editModel})`
           );
 
@@ -998,7 +1014,7 @@ export async function generateFullCreativeWithAI(params: {
 
   const normalizedPref: "GEMINI" | "OPENAI" =
     params.preferredImageAI === "OPENAI" ||
-    params.preferredImageAI === "OPENAI_MINI"
+      params.preferredImageAI === "OPENAI_MINI"
       ? "OPENAI"
       : "GEMINI";
   const otherProvider: "GEMINI" | "OPENAI" =
@@ -1023,8 +1039,8 @@ export async function generateFullCreativeWithAI(params: {
           ? ["gpt-image-1-mini", "chatgpt-image-latest"]
           : ["chatgpt-image-latest", "gpt-image-1-mini"]
         : params.preferredImageAI === "OPENAI_MINI"
-        ? ["gpt-image-1-mini", "gpt-image-1.5", "chatgpt-image-latest"]
-        : [
+          ? ["gpt-image-1-mini", "gpt-image-1.5", "chatgpt-image-latest"]
+          : [
             "chatgpt-image-latest",
             "gpt-image-1.5",
             "gpt-image-2",
@@ -1096,10 +1112,10 @@ export async function generateFullCreativeWithAI(params: {
           if (rawOutBuf) {
             const stampedBuf = hasOfficialLogo
               ? await applyBrandLogoToImageBuffer(
-                  rawOutBuf,
-                  params.brandLogoUrl,
-                  params.brandLogoDarkUrl
-                )
+                rawOutBuf,
+                params.brandLogoUrl,
+                params.brandLogoDarkUrl
+              )
               : rawOutBuf;
             const { buffer: outBuf, ext, mime } = await encodeCreativeJpegBuffer(stampedBuf);
             const url = await uploadBufferToR2(
@@ -1140,15 +1156,20 @@ export async function generateFullCreativeWithAI(params: {
     if (provider === "GEMINI" && params.keys.gemini?.trim()) {
       const ai = new GoogleGenAI({ apiKey: params.keys.gemini.trim() });
       const geminiModels = params.isCarouselSlide
-        ? ["gemini-3.1-flash-image-preview", "gemini-2.5-flash-image"]
+        ? [
+          "gemini-3.1-flash-image",
+          "gemini-3-pro-image",
+          "gemini-nano-banana-2.1",
+          "gemini-2.5-flash-image",
+        ]
         : [
-            "gemini-3.1-flash-image-preview",
-            "gemini-3-pro-image-preview",
-            "gemini-nano-banana-2.1",
-            "gemini-2.5-flash-image",
-          ];
+          "gemini-3-pro-image",
+          "gemini-3.1-flash-image",
+          "gemini-nano-banana-2.1",
+          "gemini-2.5-flash-image",
+        ];
       for (const model of geminiModels) {
-        const remaining = Math.min(20_000, budgetMs - (Date.now() - startedAt));
+        const remaining = Math.min(35_000, budgetMs - (Date.now() - startedAt));
         if (remaining < 5_000) break;
         try {
           appendLog(
@@ -1164,14 +1185,20 @@ export async function generateFullCreativeWithAI(params: {
             });
           }
           parts.push({
-            text: `${cleanedPrompt}\nProporção: ${params.aspectRatio}. Renderize textos nítidos em português do Brasil exatamente como solicitado no prompt.`,
+            text: `${cleanedPrompt}\nProporção exata: ${params.aspectRatio}. Fotografia publicitária ultrarrealista full-bleed (luz natural real, câmera DSLR 35mm, cores autênticas — jamais ilustração, desenho ou caixa cinza/branca chapada tampando a foto). Botão CTA centralizado (~55% de largura) deixando o canto inferior esquerdo livre para a logomarca. Renderize na imagem APENAS os textos solicitados, com ortografia e acentuação perfeitas em PT-BR.`,
           });
 
           const res = await withTimeout(
             ai.models.generateContent({
               model,
               contents: [{ role: "user", parts }],
-              config: { responseModalities: ["IMAGE", "TEXT"] },
+              config: {
+                responseModalities: ["IMAGE", "TEXT"],
+                imageConfig: {
+                  aspectRatio: params.aspectRatio === "9:16" ? "9:16" : "1:1",
+                  imageSize: "1K",
+                },
+              },
             }),
             remaining,
             `Criativo ${model}`
@@ -1182,15 +1209,17 @@ export async function generateFullCreativeWithAI(params: {
             const rawOutBuf = Buffer.from(imgPart.inlineData.data, "base64");
             const stampedBuf = hasOfficialLogo
               ? await applyBrandLogoToImageBuffer(
-                  rawOutBuf,
-                  params.brandLogoUrl,
-                  params.brandLogoDarkUrl
-                )
+                rawOutBuf,
+                params.brandLogoUrl,
+                params.brandLogoDarkUrl
+              )
               : rawOutBuf;
             const { buffer: outBuf, ext, mime } = await encodeCreativeJpegBuffer(stampedBuf);
             const url = await uploadBufferToR2(
               outBuf,
-              `companies/${params.companyId}/ai-creatives/${Date.now()}.${ext}`,
+              `companies/${params.companyId}/ai-creatives/${Date.now()}-${Math.random()
+                .toString(36)
+                .slice(2, 6)}.${ext}`,
               mime,
               params.r2Config
             );
@@ -1540,8 +1569,7 @@ export async function publishToMetaChannels(params: {
           };
           if (!mediaRes.ok || !mediaData.id) {
             throw new Error(
-              `Meta IG /media falhou: ${
-                mediaData.error?.message || mediaRes.statusText
+              `Meta IG /media falhou: ${mediaData.error?.message || mediaRes.statusText
               }`
             );
           }
@@ -1586,8 +1614,7 @@ export async function publishToMetaChannels(params: {
               };
               if (!childRes.ok || !childData.id) {
                 throw new Error(
-                  `Meta IG carrossel slide ${idx + 1} falhou: ${
-                    childData.error?.message || childRes.statusText
+                  `Meta IG carrossel slide ${idx + 1} falhou: ${childData.error?.message || childRes.statusText
                   }`
                 );
               }
@@ -1611,8 +1638,7 @@ export async function publishToMetaChannels(params: {
           };
           if (!carRes.ok || !carData.id) {
             throw new Error(
-              `Meta IG container CAROUSEL falhou: ${
-                carData.error?.message || carRes.statusText
+              `Meta IG container CAROUSEL falhou: ${carData.error?.message || carRes.statusText
               }`
             );
           }
@@ -1675,8 +1701,7 @@ export async function publishToMetaChannels(params: {
               if (!stMediaRes.ok || !stMediaData.id) {
                 appendLog(
                   params.logs,
-                  `Meta IG Stories aviso (Slide ${idx + 1}/${totalStories}): ${
-                    stMediaData.error?.message || stMediaRes.statusText
+                  `Meta IG Stories aviso (Slide ${idx + 1}/${totalStories}): ${stMediaData.error?.message || stMediaRes.statusText
                   }`
                 );
                 return null;
@@ -1685,8 +1710,7 @@ export async function publishToMetaChannels(params: {
             } catch (err) {
               appendLog(
                 params.logs,
-                `Meta IG Stories aviso (Slide ${idx + 1}/${totalStories}): ${
-                  err instanceof Error ? err.message : String(err)
+                `Meta IG Stories aviso (Slide ${idx + 1}/${totalStories}): ${err instanceof Error ? err.message : String(err)
                 }`
               );
               return null;
@@ -1725,8 +1749,7 @@ export async function publishToMetaChannels(params: {
       } catch (err) {
         appendLog(
           params.logs,
-          `Meta IG Stories aviso: ${
-            err instanceof Error ? err.message : String(err)
+          `Meta IG Stories aviso: ${err instanceof Error ? err.message : String(err)
           }`
         );
       }
@@ -1761,8 +1784,7 @@ export async function publishToMetaChannels(params: {
         };
         if (!pageTokenRes.ok || !pageTokenData.access_token) {
           throw new Error(
-            `Meta FB Page Token falhou: ${
-              pageTokenData.error?.message || pageTokenRes.statusText
+            `Meta FB Page Token falhou: ${pageTokenData.error?.message || pageTokenRes.statusText
             }`
           );
         }
@@ -1797,8 +1819,7 @@ export async function publishToMetaChannels(params: {
               const fbPostId = fbData.post_id || fbData.id;
               if (!fbRes.ok || !fbPostId) {
                 throw new Error(
-                  `Meta FB /photos falhou: ${
-                    fbData.error?.message || fbRes.statusText
+                  `Meta FB /photos falhou: ${fbData.error?.message || fbRes.statusText
                   }`
                 );
               }
@@ -1832,8 +1853,7 @@ export async function publishToMetaChannels(params: {
                   };
                   if (!photoRes.ok || !photoData.id) {
                     throw new Error(
-                      `Meta FB slide ${i + 1} (/photos published=false) falhou: ${
-                        photoData.error?.message || photoRes.statusText
+                      `Meta FB slide ${i + 1} (/photos published=false) falhou: ${photoData.error?.message || photoRes.statusText
                       }`
                     );
                   }
@@ -1864,8 +1884,7 @@ export async function publishToMetaChannels(params: {
               } else {
                 appendLog(
                   params.logs,
-                  `Meta FB /feed aviso (${
-                    feedData.error?.message || feedRes.statusText
+                  `Meta FB /feed aviso (${feedData.error?.message || feedRes.statusText
                   }). Executando fallback para foto de capa em /photos...`
                 );
                 const fallbackRes = await fetch(
@@ -1888,8 +1907,7 @@ export async function publishToMetaChannels(params: {
                 const fbPostId = fallbackData.post_id || fallbackData.id;
                 if (!fallbackRes.ok || !fbPostId) {
                   throw new Error(
-                    `Meta FB fallback /photos falhou: ${
-                      fallbackData.error?.message || fallbackRes.statusText
+                    `Meta FB fallback /photos falhou: ${fallbackData.error?.message || fallbackRes.statusText
                     }`
                   );
                 }
@@ -1943,8 +1961,7 @@ export async function publishToMetaChannels(params: {
                   if (!photoRes.ok || !photoData.id) {
                     appendLog(
                       params.logs,
-                      `Meta FB Stories aviso (upload Slide ${idx + 1}/${totalStories}): ${
-                        photoData.error?.message || photoRes.statusText
+                      `Meta FB Stories aviso (upload Slide ${idx + 1}/${totalStories}): ${photoData.error?.message || photoRes.statusText
                       }`
                     );
                     return null;
@@ -1953,8 +1970,7 @@ export async function publishToMetaChannels(params: {
                 } catch (err) {
                   appendLog(
                     params.logs,
-                    `Meta FB Stories aviso (upload Slide ${idx + 1}/${totalStories}): ${
-                      err instanceof Error ? err.message : String(err)
+                    `Meta FB Stories aviso (upload Slide ${idx + 1}/${totalStories}): ${err instanceof Error ? err.message : String(err)
                     }`
                   );
                   return null;
@@ -1990,18 +2006,15 @@ export async function publishToMetaChannels(params: {
                 appendLog(
                   params.logs,
                   totalStories > 1
-                    ? `Meta FB Stories: Slide ${item.idx + 1}/${totalStories} publicado (${
-                        stData.post_id || "OK"
-                      }).`
-                    : `Meta FB Stories: Publicado com sucesso (${
-                        stData.post_id || "OK"
-                      }).`
+                    ? `Meta FB Stories: Slide ${item.idx + 1}/${totalStories} publicado (${stData.post_id || "OK"
+                    }).`
+                    : `Meta FB Stories: Publicado com sucesso (${stData.post_id || "OK"
+                    }).`
                 );
               } else {
                 appendLog(
                   params.logs,
-                  `Meta FB Stories aviso (Slide ${item.idx + 1}/${totalStories}): ${
-                    stData.error?.message || stRes.statusText
+                  `Meta FB Stories aviso (Slide ${item.idx + 1}/${totalStories}): ${stData.error?.message || stRes.statusText
                   }`
                 );
               }
@@ -2012,8 +2025,7 @@ export async function publishToMetaChannels(params: {
           } catch (err) {
             appendLog(
               params.logs,
-              `Meta FB Stories aviso: ${
-                err instanceof Error ? err.message : String(err)
+              `Meta FB Stories aviso: ${err instanceof Error ? err.message : String(err)
               }`
             );
           }

@@ -98,6 +98,7 @@ interface StudioPreviewState {
   topicId: string | null;
   topicTitle: string;
   providerUsed: string;
+  imageProviderUsed?: string;
   format: PostFormat;
   aspectRatio: AspectRatio;
   slidesCount: number;
@@ -288,6 +289,127 @@ function extensionFromMimeOrUrl(mime?: string | null, url?: string): string {
     if (cleanUrl.endsWith(".webp")) return ".webp";
   }
   return ".jpg";
+}
+
+interface IntegTestDisplayItem {
+  key: string;
+  label: string;
+  status: "ok" | "error" | "unconfigured";
+  detail: string;
+}
+
+const INTEG_TEST_ORDER: Array<{ key: string; label: string }> = [
+  { key: "openai", label: "Conexão OpenAI" },
+  { key: "claude", label: "Conexão Anthropic (Claude)" },
+  { key: "gemini", label: "Conexão Google Gemini" },
+  { key: "meta", label: "Conexão Meta (Instagram & Facebook)" },
+  { key: "tiktok", label: "Conexão TikTok" },
+  { key: "cloudflare_r2", label: "Conexão Cloudflare R2" },
+];
+
+function buildIntegTestRows(
+  report: Record<string, unknown>
+): IntegTestDisplayItem[] {
+  const seen = new Set<string>();
+  const orderedKeys = [
+    ...INTEG_TEST_ORDER.map((item) => item.key),
+    ...Object.keys(report).filter(
+      (k) => !INTEG_TEST_ORDER.some((item) => item.key === k)
+    ),
+  ];
+
+  const rows: IntegTestDisplayItem[] = [];
+  for (const key of orderedKeys) {
+    if (seen.has(key) || !(key in report)) continue;
+    seen.add(key);
+
+    const raw = report[key];
+    if (!raw || typeof raw !== "object") continue;
+    const entry = raw as Record<string, unknown>;
+
+    const preset = INTEG_TEST_ORDER.find((item) => item.key === key);
+    const label = preset ? preset.label : `Conexão ${key}`;
+
+    const status: "ok" | "error" | "unconfigured" =
+      entry.valid === true
+        ? "ok"
+        : entry.configured === false
+        ? "unconfigured"
+        : "error";
+
+    let detail = "";
+    if (key === "meta" && status === "ok") {
+      const accountName =
+        typeof entry.name === "string" && entry.name.trim()
+          ? `Conta: ${entry.name.trim()}`
+          : "Conexão ativa.";
+      const expiryInfo =
+        typeof entry.days_remaining === "number"
+          ? `Expira em ${entry.days_remaining} dia(s)`
+          : "Token sem expiração";
+      detail = `${accountName} • ${expiryInfo}`;
+    } else {
+      const rawText =
+        (typeof entry.message === "string" && entry.message.trim()) ||
+        (typeof entry.warning === "string" && entry.warning.trim()) ||
+        (typeof entry.error === "string" && entry.error.trim()) ||
+        "";
+
+      if (
+        /The access token is invalid or not found in the request\./i.test(
+          rawText
+        )
+      ) {
+        detail =
+          "Token do TikTok inválido ou expirado. Reconecte sua conta do TikTok.";
+      } else if (rawText) {
+        detail = rawText;
+      } else if (key === "cloudflare_r2" && status === "ok") {
+        detail =
+          typeof entry.bucket === "string" && entry.bucket
+            ? `Bucket "${entry.bucket}" conectado.`
+            : "Armazenamento conectado.";
+      } else if (status === "ok") {
+        detail = "Conexão ativa.";
+      } else if (status === "unconfigured") {
+        detail = "Não configurada.";
+      } else {
+        detail = "Falha ao conectar.";
+      }
+    }
+
+    rows.push({ key, label, status, detail });
+  }
+
+  return rows;
+}
+
+function formatImageModelTag(raw: string): string {
+  const trimmed = raw.trim();
+  if (/^gemini-/i.test(trimmed)) return `GEMINI (${trimmed})`;
+  if (/^OpenAI\s+/i.test(trimmed)) {
+    return `OPENAI (${trimmed.replace(/^OpenAI\s+/i, "").trim()})`;
+  }
+  return trimmed;
+}
+
+function resolveStudioImageProvider(preview: StudioPreviewState): string {
+  if (preview.imageProviderUsed?.trim()) {
+    return formatImageModelTag(preview.imageProviderUsed);
+  }
+  if (preview.post?.image_provider_used?.trim()) {
+    return formatImageModelTag(preview.post.image_provider_used);
+  }
+  const fromLogs = Array.from(
+    new Set(
+      (preview.logs || [])
+        .map((l) => l.match(/Criativo 100% IA \(([^)]+)\) concluído:/i)?.[1])
+        .filter((v): v is string => Boolean(v))
+        .map(formatImageModelTag)
+    )
+  );
+  if (fromLogs.length > 0) return fromLogs.join(", ");
+  return "—";
 }
 
 function triggerBlobDownload(blob: Blob, filename: string): void {
@@ -1043,7 +1165,9 @@ function ImageModelGuide({
           <option value="OPENAI_MINI">
             OpenAI — Econômica (gpt-image-1-mini • ~4x mais barata)
           </option>
-          <option value="GEMINI">Google Gemini Image</option>
+          <option value="GEMINI">
+            Google Gemini Image (gemini-3-pro-image / gemini-3.1-flash-image)
+          </option>
         </select>
       </div>
       <div className="space-y-1 rounded-md bg-slate-50 p-2.5 text-[11px] leading-relaxed text-slate-600">
@@ -1064,9 +1188,10 @@ function ImageModelGuide({
           artes simples com pouco texto.
         </p>
         <p>
-          <strong>• Google Gemini Image:</strong> boas fotos/artes em português,
-          mas exige faturamento ativo no Google AI Studio (não gera imagem no
-          plano gratuito).
+          <strong>• Google Gemini Image (~US$ 0,067–0,134/img • ~R$ 0,40–0,80):</strong>{" "}
+          fotos ultrarrealistas e artes em português (Flash ~R$ 0,40 em
+          carrosséis; Pro ~R$ 0,80 em imagem única); exige faturamento ativo no
+          Google AI Studio (não gera imagem no plano gratuito).
         </p>
       </div>
     </div>
@@ -1860,10 +1985,80 @@ export default function SaasAppPage() {
     }
   }
 
+  async function handleRemoveAiKey(provider: AIProvider) {
+    if (!workspace || savingInteg) return;
+    const label =
+      provider === "GEMINI"
+        ? "Gemini"
+        : provider === "OPENAI"
+        ? "OpenAI"
+        : "Anthropic Claude";
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Tem certeza que deseja remover a chave da ${label} desta empresa?`
+      )
+    ) {
+      return;
+    }
+    setSavingInteg(true);
+    setGlobalNotice(null);
+    try {
+      const nextPreferred: AIProvider =
+        integTextAi === provider
+          ? provider !== "OPENAI" && workspace.integrations.has_openai_key
+            ? "OPENAI"
+            : provider !== "GEMINI" && workspace.integrations.has_gemini_key
+            ? "GEMINI"
+            : provider === "GEMINI"
+            ? "OPENAI"
+            : "GEMINI"
+          : integTextAi;
+
+      const integrationsPayload: Record<string, unknown> = {
+        preferred_text_ai: nextPreferred,
+      };
+      if (provider === "GEMINI") integrationsPayload.gemini_api_key = "";
+      if (provider === "OPENAI") integrationsPayload.openai_api_key = "";
+      if (provider === "CLAUDE") integrationsPayload.anthropic_api_key = "";
+
+      const res = await fetch("/api/saas/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "save_integrations",
+          companyId: workspace.company.id,
+          integrations: integrationsPayload,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro ao remover chave.");
+
+      setWorkspace({ ...workspace, integrations: data.integrations });
+      setIntegTextAi(nextPreferred);
+      if (provider === "GEMINI") setIntegGeminiKey("");
+      if (provider === "OPENAI") setIntegOpenAiKey("");
+      if (provider === "CLAUDE") setIntegAnthropicKey("");
+
+      setGlobalNotice({
+        type: "success",
+        text: `Chave ${label} removida com sucesso!`,
+      });
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro ao remover chave.",
+      });
+    } finally {
+      setSavingInteg(false);
+    }
+  }
+
   async function handleTestIntegrations() {
     if (!workspace) return;
     setTestingInteg(true);
     setIntegTestReport(null);
+    setGlobalNotice(null);
     try {
       const res = await fetch("/api/saas/state", {
         method: "POST",
@@ -1873,8 +2068,27 @@ export default function SaasAppPage() {
           companyId: workspace.company.id,
         }),
       });
-      const data = await res.json();
+      const rawText = await res.text();
+      let data: { report?: Record<string, unknown>; error?: string } = {};
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        data = {};
+      }
+      if (!res.ok) {
+        throw new Error(
+          data.error || `Erro ao testar conexões (HTTP ${res.status}).`
+        );
+      }
       setIntegTestReport(data.report || {});
+    } catch (err) {
+      setGlobalNotice({
+        type: "error",
+        text:
+          err instanceof Error
+            ? err.message
+            : "Erro ao testar conexões das integrações.",
+      });
     } finally {
       setTestingInteg(false);
     }
@@ -2290,10 +2504,30 @@ export default function SaasAppPage() {
     const matchedTopic = post.topic_id
       ? workspace?.topics.find((t) => t.id === post.topic_id)
       : undefined;
-    const targets = defaultPublishTargets(
-      matchedTopic || { aspect_ratio: post.aspect_ratio },
-      workspace?.integrations.tiktok_enabled
-    );
+    const savedStoryUrls =
+      Array.isArray(post.story_image_urls_json) &&
+      post.story_image_urls_json.length > 0
+        ? post.story_image_urls_json
+        : Array.isArray(post.content_json?.story_image_urls)
+          ? post.content_json.story_image_urls
+          : [];
+    const savedTargets =
+      post.publish_targets || post.content_json?.publish_targets;
+    const targets = savedTargets
+      ? { ...savedTargets }
+      : defaultPublishTargets(
+          matchedTopic || { aspect_ratio: post.aspect_ratio },
+          workspace?.integrations.tiktok_enabled
+        );
+    if (
+      savedStoryUrls.length > 0 &&
+      !targets.ig_stories &&
+      !targets.fb_stories &&
+      !targets.tiktok_feed
+    ) {
+      targets.ig_stories = true;
+      targets.fb_stories = true;
+    }
 
     setStudioTopicId(matchedTopic ? matchedTopic.id : "__free__");
     setStudioTitle(matchedTopic?.title || post.headline || "");
@@ -2329,12 +2563,13 @@ export default function SaasAppPage() {
       topicId: post.topic_id || null,
       topicTitle: matchedTopic?.title || post.topic_title || post.headline,
       providerUsed: post.ai_provider_used || "IA",
+      imageProviderUsed: post.content_json?.image_provider_used || undefined,
       format: post.format,
       aspectRatio: post.aspect_ratio,
       slidesCount: post.slides_count || post.image_urls_json.length || 1,
       imageUrl: post.image_urls_json[0] || "",
       imageUrls: post.image_urls_json || [],
-      storyImageUrls: post.story_image_urls_json || [],
+      storyImageUrls: savedStoryUrls,
       publishTargets: targets,
       post: {
         ...post.content_json,
@@ -2368,11 +2603,15 @@ export default function SaasAppPage() {
     setStudioAction("saving_draft");
     setGlobalNotice(null);
     try {
+      const resolvedImgProvider = resolveStudioImageProvider(studioPreview);
       const cleanPost = {
         ...studioPreview.post,
         beneficios: (studioPreview.post.beneficios || [])
           .map((b) => b.trim())
           .filter(Boolean),
+        ...(resolvedImgProvider !== "—"
+          ? { image_provider_used: resolvedImgProvider }
+          : {}),
       };
       const res = await fetch("/api/saas/state", {
         method: "POST",
@@ -2389,6 +2628,9 @@ export default function SaasAppPage() {
           slidesCount: studioPreview.slidesCount,
           editedContent: cleanPost,
           imageUrls: studioPreview.imageUrls,
+          storyImageUrls: studioPreview.storyImageUrls || [],
+          publishTargets: studioPublishTargets,
+          logs: studioPreview.logs || [],
         }),
       });
       const data = await res.json();
@@ -2397,6 +2639,10 @@ export default function SaasAppPage() {
         setStudioPreview({
           ...studioPreview,
           draftPostId: data.post.id,
+          imageProviderUsed:
+            resolvedImgProvider !== "—"
+              ? resolvedImgProvider
+              : studioPreview.imageProviderUsed,
           post: cleanPost,
         });
       }
@@ -5255,6 +5501,26 @@ export default function SaasAppPage() {
                     </div>
                   ) : (
                     <div className="space-y-4">
+                      <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 p-3 space-y-2">
+                        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                          <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 font-bold text-indigo-800">
+                            IA Texto: {studioPreview.providerUsed}
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-0.5 font-bold text-cyan-800">
+                            IA Imagem: {resolveStudioImageProvider(studioPreview)}
+                          </span>
+                        </div>
+                        {studioPreview.logs && studioPreview.logs.length > 0 && (
+                          <details className="text-[11px] text-slate-600">
+                            <summary className="cursor-pointer font-semibold text-slate-500 hover:text-slate-700">
+                              Ver log técnico da geração ({studioPreview.logs.length} etapas)
+                            </summary>
+                            <pre className="mt-2 max-h-48 overflow-auto rounded-lg bg-slate-900 p-2.5 text-[10px] leading-relaxed text-emerald-300">
+                              {studioPreview.logs.join("\n")}
+                            </pre>
+                          </details>
+                        )}
+                      </div>
                       {(() => {
                         const activeTargets =
                           studioPreview.publishTargets || studioPublishTargets;
@@ -5466,6 +5732,20 @@ export default function SaasAppPage() {
                                 </div>
                               </div>
                             )}
+
+                            {hasVerticalTarget &&
+                              verticalUrls.length === 0 &&
+                              feedUrls.length > 0 && (
+                                <div className="rounded-2xl border border-indigo-200 bg-indigo-50/50 p-3.5 text-xs text-indigo-900">
+                                  <strong>Stories &amp; TikTok (9:16):</strong>{" "}
+                                  Este post antigo foi salvo antes do histórico
+                                  de miniaturas verticais. Ao clicar em{" "}
+                                  <strong>Atualizar Prévia</strong> ou{" "}
+                                  <strong>Publicar</strong>, o sistema gerará
+                                  automaticamente as imagens 1080×1920 a partir
+                                  do Feed acima.
+                                </div>
+                              )}
                           </div>
                         );
                       })()}
@@ -6317,6 +6597,104 @@ export default function SaasAppPage() {
                     </button>
                   </div>
 
+                  {integTestReport && (() => {
+                    const testRows = buildIntegTestRows(integTestReport);
+                    const okCount = testRows.filter(
+                      (r) => r.status === "ok"
+                    ).length;
+                    const errCount = testRows.filter(
+                      (r) => r.status === "error"
+                    ).length;
+                    const unconfiguredCount = testRows.filter(
+                      (r) => r.status === "unconfigured"
+                    ).length;
+
+                    return (
+                      <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-extrabold text-slate-900">
+                              Resultado do Teste de Conexões
+                            </span>
+                            <span className="rounded-full border border-emerald-200 bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">
+                              {okCount} OK
+                            </span>
+                            {errCount > 0 && (
+                              <span className="rounded-full border border-rose-200 bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-800">
+                                {errCount} Erro
+                              </span>
+                            )}
+                            {unconfiguredCount > 0 && (
+                              <span className="rounded-full border border-slate-300/70 bg-slate-200/80 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                                {unconfiguredCount} Não configurada
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setIntegTestReport(null)}
+                            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-100"
+                          >
+                            Fechar
+                          </button>
+                        </div>
+
+                        <div className="space-y-2">
+                          {testRows.map((row) => (
+                            <div
+                              key={row.key}
+                              className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200/80 bg-white px-3.5 py-2.5"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className={`h-2.5 w-2.5 shrink-0 rounded-full ${
+                                      row.status === "ok"
+                                        ? "bg-emerald-500"
+                                        : row.status === "error"
+                                        ? "bg-rose-500"
+                                        : "bg-slate-400"
+                                    }`}
+                                  />
+                                  <p className="text-xs font-bold text-slate-900">
+                                    {row.label}
+                                  </p>
+                                </div>
+                                <p className="mt-0.5 pl-4.5 text-[11px] leading-snug text-slate-600">
+                                  {row.detail}
+                                </p>
+                              </div>
+                              <span
+                                className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-extrabold ${
+                                  row.status === "ok"
+                                    ? "border border-emerald-200 bg-emerald-100 text-emerald-800"
+                                    : row.status === "error"
+                                    ? "border border-rose-200 bg-rose-100 text-rose-800"
+                                    : "border border-slate-300/70 bg-slate-200/80 text-slate-600"
+                                }`}
+                              >
+                                {row.status === "ok"
+                                  ? "OK"
+                                  : row.status === "error"
+                                  ? "Erro"
+                                  : "Não configurada"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <details>
+                          <summary className="cursor-pointer text-[11px] font-semibold text-slate-500 hover:text-slate-700">
+                            Ver detalhes técnicos (JSON)
+                          </summary>
+                          <pre className="mt-2 overflow-x-auto rounded-xl bg-slate-900 p-3 text-[11px] text-emerald-300">
+                            {JSON.stringify(integTestReport, null, 2)}
+                          </pre>
+                        </details>
+                      </div>
+                    );
+                  })()}
+
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div>
                       <label className="block text-xs font-bold text-slate-600">
@@ -6469,14 +6847,26 @@ export default function SaasAppPage() {
                       Provedores de Inteligência Artificial (BYOK)
                     </p>
                     <div>
-                      <label className="block text-xs font-bold text-slate-700">
-                        GEMINI_API_KEY{" "}
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label className="block text-xs font-bold text-slate-700">
+                          GEMINI_API_KEY{" "}
+                          {workspace.integrations.has_gemini_key && (
+                            <span className="ml-1 font-mono text-emerald-700">
+                              (Salva: {workspace.integrations.gemini_key_mask})
+                            </span>
+                          )}
+                        </label>
                         {workspace.integrations.has_gemini_key && (
-                          <span className="ml-1 font-mono text-emerald-700">
-                            (Salva: {workspace.integrations.gemini_key_mask})
-                          </span>
+                          <button
+                            type="button"
+                            disabled={savingInteg}
+                            onClick={() => void handleRemoveAiKey("GEMINI")}
+                            className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+                          >
+                            Remover chave
+                          </button>
                         )}
-                      </label>
+                      </div>
                       <input
                         type="password"
                         value={integGeminiKey}
@@ -6486,14 +6876,26 @@ export default function SaasAppPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-700">
-                        OPENAI_API_KEY (ChatGPT / gpt-image-1){" "}
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label className="block text-xs font-bold text-slate-700">
+                          OPENAI_API_KEY (ChatGPT / gpt-image-1){" "}
+                          {workspace.integrations.has_openai_key && (
+                            <span className="ml-1 font-mono text-emerald-700">
+                              (Salva: {workspace.integrations.openai_key_mask})
+                            </span>
+                          )}
+                        </label>
                         {workspace.integrations.has_openai_key && (
-                          <span className="ml-1 font-mono text-emerald-700">
-                            (Salva: {workspace.integrations.openai_key_mask})
-                          </span>
+                          <button
+                            type="button"
+                            disabled={savingInteg}
+                            onClick={() => void handleRemoveAiKey("OPENAI")}
+                            className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+                          >
+                            Remover chave
+                          </button>
                         )}
-                      </label>
+                      </div>
                       <input
                         type="password"
                         value={integOpenAiKey}
@@ -6503,14 +6905,26 @@ export default function SaasAppPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-700">
-                        ANTHROPIC_API_KEY (Claude){" "}
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label className="block text-xs font-bold text-slate-700">
+                          ANTHROPIC_API_KEY (Claude){" "}
+                          {workspace.integrations.has_anthropic_key && (
+                            <span className="ml-1 font-mono text-emerald-700">
+                              (Salva: {workspace.integrations.anthropic_key_mask})
+                            </span>
+                          )}
+                        </label>
                         {workspace.integrations.has_anthropic_key && (
-                          <span className="ml-1 font-mono text-emerald-700">
-                            (Salva: {workspace.integrations.anthropic_key_mask})
-                          </span>
+                          <button
+                            type="button"
+                            disabled={savingInteg}
+                            onClick={() => void handleRemoveAiKey("CLAUDE")}
+                            className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+                          >
+                            Remover chave
+                          </button>
                         )}
-                      </label>
+                      </div>
                       <input
                         type="password"
                         value={integAnthropicKey}
@@ -6714,12 +7128,6 @@ export default function SaasAppPage() {
                       ? "Criptografando e Salvando..."
                       : "Salvar Credenciais com Criptografia AES-256"}
                   </button>
-
-                  {integTestReport && (
-                    <pre className="overflow-x-auto rounded-xl bg-slate-900 p-4 text-[11px] text-emerald-300">
-                      {JSON.stringify(integTestReport, null, 2)}
-                    </pre>
-                  )}
                 </form>
 
                 {/* Tutorial Guiado para o Cliente */}
