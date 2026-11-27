@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AdAccountConfig,
+  AdCampaignAdRecord,
   AdCampaignRecord,
   AdChannel,
   AdGeoLocationSelection,
   AdInsightsWindow,
   AdProvider,
   AdsAdvisorReport,
+  CreativePostInput,
   MetaAdObjective,
   ParsedCampaignPlan,
   PostHistoryItem,
@@ -297,8 +299,15 @@ function buildCampaignAdLink(cmp: AdCampaignRecord): {
   if (!cleanAct) return null;
 
   if (cmp.provider === "META") {
+    const adCount = cmp.ads?.length || 0;
     const url =
-      cmp.meta_campaign_id && cmp.meta_ad_id
+      adCount > 1 && cmp.meta_campaign_id && cmp.meta_adset_id
+        ? `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${encodeURIComponent(
+            cleanAct
+          )}&selected_campaign_ids=${encodeURIComponent(
+            cmp.meta_campaign_id
+          )}&selected_adset_ids=${encodeURIComponent(cmp.meta_adset_id)}`
+        : cmp.meta_campaign_id && cmp.meta_ad_id
         ? `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${encodeURIComponent(
             cleanAct
           )}&selected_campaign_ids=${encodeURIComponent(
@@ -313,11 +322,11 @@ function buildCampaignAdLink(cmp: AdCampaignRecord): {
           )}`;
 
     return {
-      label: "Ver Anúncio ↗",
+      label: adCount > 1 ? `Ver Anúncios (${adCount}) ↗` : "Ver Anúncio ↗",
       url,
       className:
         "inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100",
-      title: `Abrir anúncio na conta ${cmp.ad_account_id} do Gerenciador de Anúncios da Meta`,
+      title: `Abrir anúncio(s) na conta ${cmp.ad_account_id} do Gerenciador de Anúncios da Meta`,
     };
   }
 
@@ -336,9 +345,17 @@ function buildCampaignAdLink(cmp: AdCampaignRecord): {
   return null;
 }
 
+interface SelectedCreativeDraft {
+  post: PostHistoryItem;
+  headline: string;
+  primaryText: string;
+  editing: boolean;
+}
+
 export function BoostCampaignModal({
   companyId,
   post,
+  availablePosts = [],
   adAccounts,
   defaultAccountId,
   onClose,
@@ -347,6 +364,7 @@ export function BoostCampaignModal({
 }: {
   companyId: string;
   post: PostHistoryItem;
+  availablePosts?: PostHistoryItem[];
   adAccounts: AdAccountConfig[];
   defaultAccountId?: string | null;
   onClose: () => void;
@@ -354,10 +372,31 @@ export function BoostCampaignModal({
   onOpenAccountSetup: () => void;
 }) {
   const channel: AdChannel = "FACEBOOK";
-  const storyImageUrl =
-    post.story_image_urls_json?.[0] ||
-    post.content_json?.story_image_urls?.[0] ||
-    null;
+  const [selectedCreatives, setSelectedCreatives] = useState<
+    SelectedCreativeDraft[]
+  >(() => [
+    {
+      post,
+      headline: post.headline || "",
+      primaryText: post.content_json?.legenda || "",
+      editing: false,
+    },
+  ]);
+  const [showPostPicker, setShowPostPicker] = useState(false);
+
+  const hasAnyStoryImage = selectedCreatives.some((c) =>
+    Boolean(
+      c.post.story_image_urls_json?.[0] ||
+        c.post.content_json?.story_image_urls?.[0]
+    )
+  );
+  const candidatePosts = availablePosts.filter(
+    (p) =>
+      p.status === "PUBLISHED" &&
+      (Boolean(p.fb_post_id) ||
+        Boolean(p.ig_post_id) ||
+        Boolean(p.image_urls_json?.[0]))
+  );
   const [selectedAccountId, setSelectedAccountId] = useState<string>(
     defaultAccountId ||
       adAccounts.find((a) => a.is_default)?.ad_account_id ||
@@ -638,13 +677,22 @@ export function BoostCampaignModal({
             ...(cleanDest ? { destination_url: cleanDest } : {}),
           };
 
+      const creativesPayload: CreativePostInput[] = selectedCreatives.map(
+        (item) => ({
+          postId: item.post.id,
+          headline: item.headline.trim() || null,
+          primaryText: item.primaryText.trim() || null,
+        })
+      );
+
       const res = await fetch("/api/ads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "create_campaign",
           companyId,
-          postId: post.id,
+          postId: selectedCreatives[0]?.post.id || post.id,
+          creatives: creativesPayload,
           channel,
           userPrompt,
           adAccountId: selectedAccountId || null,
@@ -688,24 +736,191 @@ export function BoostCampaignModal({
         </div>
 
         <div className="mt-4 space-y-4">
-          {/* Resumo do post orgânico */}
-          <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-            {post.image_urls_json[0] && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={post.image_urls_json[0]}
-                alt={post.headline}
-                className="h-14 w-14 shrink-0 rounded-lg object-cover"
-              />
-            )}
-            <div className="min-w-0 flex-1 text-xs">
-              <p className="truncate font-extrabold text-slate-900">
-                {post.headline}
-              </p>
-              <p className="mt-0.5 font-mono text-[10px] text-indigo-700">
-                IG: {post.ig_post_id || "—"} • FB: {post.fb_post_id || "—"}
-              </p>
+          {/* Criativos / Anúncios no Conjunto (1-1-N) */}
+          <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-extrabold text-slate-800">
+                  Criativos no Conjunto ({selectedCreatives.length}{" "}
+                  {selectedCreatives.length === 1 ? "anúncio" : "anúncios"})
+                </p>
+                <p className="text-[10px] text-slate-500">
+                  1 Campanha → 1 Conjunto → vários anúncios. Recomendado: 3 a 5
+                  criativos para a Meta otimizar a entrega.
+                </p>
+              </div>
+              {candidatePosts.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setShowPostPicker((prev) => !prev)}
+                  className="rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-[11px] font-bold text-indigo-700 hover:bg-indigo-50"
+                >
+                  {showPostPicker
+                    ? "Fechar lista de posts"
+                    : "+ Adicionar mais posts publicados"}
+                </button>
+              )}
             </div>
+
+            <div className="space-y-2">
+              {selectedCreatives.map((item, idx) => (
+                <div
+                  key={item.post.id}
+                  className="rounded-xl border border-slate-200 bg-white p-2.5"
+                >
+                  <div className="flex items-center gap-2.5">
+                    {item.post.image_urls_json[0] && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={item.post.image_urls_json[0]}
+                        alt={item.headline}
+                        className="h-12 w-12 shrink-0 rounded-lg object-cover"
+                      />
+                    )}
+                    <div className="min-w-0 flex-1 text-xs">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-extrabold text-indigo-700">
+                          Anúncio #{idx + 1}
+                        </span>
+                        <p className="truncate font-extrabold text-slate-900">
+                          {item.headline || item.post.headline}
+                        </p>
+                      </div>
+                      <p className="mt-0.5 font-mono text-[10px] text-slate-500">
+                        IG: {item.post.ig_post_id || "—"} • FB:{" "}
+                        {item.post.fb_post_id || "—"}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedCreatives((prev) =>
+                            prev.map((c, cIdx) =>
+                              cIdx === idx ? { ...c, editing: !c.editing } : c
+                            )
+                          )
+                        }
+                        className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-slate-700 hover:bg-slate-50"
+                      >
+                        {item.editing ? "Ocultar texto" : "Editar Título/Texto"}
+                      </button>
+                      {selectedCreatives.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSelectedCreatives((prev) =>
+                              prev.filter((_, cIdx) => cIdx !== idx)
+                            )
+                          }
+                          className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-100"
+                        >
+                          Remover
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {item.editing && (
+                    <div className="mt-2.5 grid grid-cols-1 gap-2 border-t border-slate-100 pt-2.5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600">
+                          Título (Headline — até 90 caracteres)
+                        </label>
+                        <input
+                          maxLength={90}
+                          value={item.headline}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSelectedCreatives((prev) =>
+                              prev.map((c, cIdx) =>
+                                cIdx === idx ? { ...c, headline: val } : c
+                              )
+                            );
+                          }}
+                          className="mt-0.5 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600">
+                          Texto principal (Legenda do anúncio)
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={item.primaryText}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSelectedCreatives((prev) =>
+                              prev.map((c, cIdx) =>
+                                cIdx === idx ? { ...c, primaryText: val } : c
+                              )
+                            );
+                          }}
+                          className="mt-0.5 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {showPostPicker && (
+              <div className="mt-2 max-h-48 space-y-1.5 overflow-y-auto rounded-xl border border-indigo-200 bg-white p-2">
+                {candidatePosts.map((cand) => {
+                  const alreadyAdded = selectedCreatives.some(
+                    (s) => s.post.id === cand.id
+                  );
+                  return (
+                    <div
+                      key={cand.id}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 px-2 py-1.5 text-xs hover:bg-slate-50"
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        {cand.image_urls_json[0] && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={cand.image_urls_json[0]}
+                            alt={cand.headline}
+                            className="h-9 w-9 shrink-0 rounded object-cover"
+                          />
+                        )}
+                        <div className="min-w-0">
+                          <p className="truncate font-bold text-slate-800">
+                            {cand.headline}
+                          </p>
+                          <p className="text-[10px] text-slate-400">
+                            {new Date(cand.created_at).toLocaleDateString("pt-BR")}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={alreadyAdded || selectedCreatives.length >= 10}
+                        onClick={() => {
+                          setSelectedCreatives((prev) => [
+                            ...prev,
+                            {
+                              post: cand,
+                              headline: cand.headline || "",
+                              primaryText: cand.content_json?.legenda || "",
+                              editing: false,
+                            },
+                          ]);
+                        }}
+                        className={`shrink-0 rounded-lg px-2.5 py-1 text-[10px] font-extrabold ${
+                          alreadyAdded
+                            ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : "bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                        }`}
+                      >
+                        {alreadyAdded ? "Adicionado ✓" : "+ Incluir"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Canal */}
@@ -735,7 +950,7 @@ export function BoostCampaignModal({
                 </span>
               </button>
             </div>
-            {storyImageUrl && (
+            {hasAnyStoryImage && (
               <p className="mt-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-800">
                 Arte 9:16 de Story detectada: quando compatível com o objetivo,
                 será aplicada automaticamente via{" "}
@@ -1277,6 +1492,558 @@ export function BoostCampaignModal({
   );
 }
 
+function AddCreativesModal({
+  companyId,
+  campaign,
+  publishedPosts,
+  onClose,
+  onAdded,
+}: {
+  companyId: string;
+  campaign: AdCampaignRecord;
+  publishedPosts: PostHistoryItem[];
+  onClose: () => void;
+  onAdded: (addedCount: number, failedCount: number) => void;
+}) {
+  const [selected, setSelected] = useState<SelectedCreativeDraft[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const candidates = publishedPosts.filter(
+    (p) =>
+      p.status === "PUBLISHED" &&
+      (Boolean(p.fb_post_id) ||
+        Boolean(p.ig_post_id) ||
+        Boolean(p.image_urls_json?.[0]))
+  );
+  const existingPostIds = new Set(
+    (campaign.ads || [])
+      .map((a) => a.post_id)
+      .filter((id): id is string => Boolean(id))
+  );
+
+  function toggleSelect(post: PostHistoryItem) {
+    setSelected((prev) => {
+      const exists = prev.some((s) => s.post.id === post.id);
+      if (exists) {
+        return prev.filter((s) => s.post.id !== post.id);
+      }
+      if (prev.length >= 10) return prev;
+      return [
+        ...prev,
+        {
+          post,
+          headline: post.headline || "",
+          primaryText: post.content_json?.legenda || "",
+          editing: false,
+        },
+      ];
+    });
+  }
+
+  async function handleSubmit() {
+    if (selected.length === 0) return;
+    setSubmitting(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "add_creatives",
+          companyId,
+          campaignId: campaign.id,
+          creatives: selected.map((s) => ({
+            postId: s.post.id,
+            headline: s.headline.trim() || null,
+            primaryText: s.primaryText.trim() || null,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao adicionar criativos.");
+      }
+      onAdded((data.addedAds || []).length, Number(data.failedCount || 0));
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : "Erro ao adicionar criativos."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-4">
+          <div>
+            <h3 className="text-base font-extrabold text-slate-900">
+              + Adicionar Criativos ao Conjunto
+            </h3>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Campanha: <strong>{campaign.name}</strong> • Novos anúncios entram{" "}
+              <strong>PAUSADOS</strong> no mesmo conjunto (AdSet) para testar
+              criativos lado a lado.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-bold text-slate-600 hover:bg-slate-100"
+          >
+            Fechar
+          </button>
+        </div>
+
+        <div className="mt-4 space-y-4">
+          <div className="max-h-60 space-y-1.5 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-2.5">
+            {candidates.length === 0 ? (
+              <p className="p-3 text-center text-xs text-slate-500">
+                Nenhum post publicado elegível encontrado.
+              </p>
+            ) : (
+              candidates.map((cand) => {
+                const isSel = selected.some((s) => s.post.id === cand.id);
+                const inCampaign = existingPostIds.has(cand.id);
+                return (
+                  <div
+                    key={cand.id}
+                    className={`flex items-center justify-between gap-2 rounded-xl border p-2 text-xs ${
+                      isSel
+                        ? "border-indigo-400 bg-indigo-50/70"
+                        : "border-slate-200 bg-white"
+                    }`}
+                  >
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      {cand.image_urls_json[0] && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={cand.image_urls_json[0]}
+                          alt={cand.headline}
+                          className="h-10 w-10 shrink-0 rounded-lg object-cover"
+                        />
+                      )}
+                      <div className="min-w-0">
+                        <p className="truncate font-bold text-slate-900">
+                          {cand.headline}
+                        </p>
+                        <p className="text-[10px] text-slate-500">
+                          {new Date(cand.created_at).toLocaleDateString("pt-BR")}
+                          {inCampaign ? " • Já possui anúncio neste conjunto" : ""}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleSelect(cand)}
+                      className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-extrabold ${
+                        isSel
+                          ? "bg-indigo-600 text-white"
+                          : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                      }`}
+                    >
+                      {isSel ? "Selecionado ✓" : "+ Selecionar"}
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {selected.length > 0 && (
+            <div className="space-y-2 rounded-xl border border-indigo-200 bg-indigo-50/50 p-3">
+              <p className="text-xs font-extrabold text-indigo-900">
+                Selecionados ({selected.length}) — revise Título e Texto
+                Principal se desejar:
+              </p>
+              {selected.map((item, idx) => (
+                <div
+                  key={item.post.id}
+                  className="rounded-lg border border-indigo-200/70 bg-white p-2.5 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate font-bold text-slate-800">
+                      #{idx + 1}: {item.headline || item.post.headline}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelected((prev) =>
+                          prev.map((s, sIdx) =>
+                            sIdx === idx ? { ...s, editing: !s.editing } : s
+                          )
+                        )
+                      }
+                      className="shrink-0 text-[10px] font-bold text-indigo-700 hover:underline"
+                    >
+                      {item.editing ? "Ocultar campos" : "Editar Título/Texto"}
+                    </button>
+                  </div>
+                  {item.editing && (
+                    <div className="mt-2 space-y-2 border-t border-slate-100 pt-2">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600">
+                          Título (Headline — até 90 caracteres)
+                        </label>
+                        <input
+                          maxLength={90}
+                          value={item.headline}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSelected((prev) =>
+                              prev.map((s, sIdx) =>
+                                sIdx === idx ? { ...s, headline: val } : s
+                              )
+                            );
+                          }}
+                          className="mt-0.5 w-full rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600">
+                          Texto principal (Legenda)
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={item.primaryText}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSelected((prev) =>
+                              prev.map((s, sIdx) =>
+                                sIdx === idx ? { ...s, primaryText: val } : s
+                              )
+                            );
+                          }}
+                          className="mt-0.5 w-full rounded-lg border border-slate-200 px-2.5 py-1 text-xs"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {errorMsg && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-800">
+              {errorMsg}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={submitting || selected.length === 0}
+              onClick={() => void handleSubmit()}
+              className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2 text-xs font-extrabold text-white shadow-md hover:opacity-95 disabled:opacity-60"
+            >
+              {submitting
+                ? "Criando anúncios..."
+                : `Adicionar ${selected.length || ""} criativo(s) (PAUSADOS)`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditCampaignModal({
+  companyId,
+  campaign,
+  onClose,
+  onSaved,
+}: {
+  companyId: string;
+  campaign: AdCampaignRecord;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(campaign.name);
+  const [budgetReais, setBudgetReais] = useState(
+    (campaign.daily_budget_cents / 100).toFixed(2)
+  );
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const cleanName = name.trim();
+    const parsedBudget = Number(budgetReais.replace(",", "."));
+    if (!cleanName) {
+      setErrorMsg("Informe o nome da campanha.");
+      return;
+    }
+    if (!Number.isFinite(parsedBudget) || parsedBudget <= 0) {
+      setErrorMsg("Informe um orçamento diário válido.");
+      return;
+    }
+
+    setSaving(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_campaign",
+          companyId,
+          campaignId: campaign.id,
+          name: cleanName,
+          dailyBudgetCents: Math.round(parsedBudget * 100),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao atualizar campanha na Meta.");
+      }
+      onSaved();
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : "Erro ao atualizar campanha."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+      <form
+        onSubmit={(e) => void handleSubmit(e)}
+        className="w-full max-w-lg space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
+          <div>
+            <h3 className="text-base font-extrabold text-slate-900">
+              Editar Campanha na Meta Ads
+            </h3>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Atualiza diretamente na Meta e no PilotFlow sem recriar a campanha
+              nem perder o aprendizado.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-bold text-slate-600 hover:bg-slate-100"
+          >
+            Fechar
+          </button>
+        </div>
+
+        <div className="space-y-3 text-xs">
+          <div>
+            <label className="block font-bold text-slate-700">
+              Nome da Campanha
+            </label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold outline-none focus:border-indigo-500"
+            />
+          </div>
+          <div>
+            <label className="block font-bold text-slate-700">
+              Orçamento Diário ({campaign.currency})
+            </label>
+            <input
+              value={budgetReais}
+              onChange={(e) => setBudgetReais(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold outline-none focus:border-indigo-500"
+            />
+          </div>
+        </div>
+
+        {errorMsg && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-800">
+            {errorMsg}
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="rounded-xl bg-indigo-600 px-5 py-2 text-xs font-extrabold text-white hover:bg-indigo-700 disabled:opacity-60"
+          >
+            {saving ? "Salvando na Meta..." : "Salvar alterações"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function EditAdModal({
+  companyId,
+  ad,
+  onClose,
+  onSaved,
+}: {
+  companyId: string;
+  ad: AdCampaignAdRecord;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [adName, setAdName] = useState(ad.ad_name || "");
+  const [headline, setHeadline] = useState(ad.headline || "");
+  const [primaryText, setPrimaryText] = useState(ad.primary_text || "");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const creativeChanged =
+    headline.trim() !== (ad.headline || "").trim() ||
+    primaryText.trim() !== (ad.primary_text || "").trim();
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!adName.trim()) {
+      setErrorMsg("Informe o nome do anúncio.");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_ad",
+          companyId,
+          adId: ad.id,
+          adName: adName.trim(),
+          headline: headline.trim(),
+          primaryText: primaryText.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao atualizar anúncio na Meta.");
+      }
+      onSaved();
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : "Erro ao atualizar anúncio."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+      <form
+        onSubmit={(e) => void handleSubmit(e)}
+        className="max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
+          <div>
+            <h3 className="text-base font-extrabold text-slate-900">
+              Editar Anúncio na Meta Ads
+            </h3>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Altera o nome e/ou os textos do criativo diretamente no anúncio
+              existente.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-bold text-slate-600 hover:bg-slate-100"
+          >
+            Fechar
+          </button>
+        </div>
+
+        <div className="space-y-3 text-xs">
+          <div>
+            <label className="block font-bold text-slate-700">
+              Nome do Anúncio (identificação interna e na Meta)
+            </label>
+            <input
+              maxLength={120}
+              value={adName}
+              onChange={(e) => setAdName(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold outline-none focus:border-indigo-500"
+            />
+          </div>
+          <div>
+            <label className="block font-bold text-slate-700">
+              Título (Headline — até 90 caracteres)
+            </label>
+            <input
+              maxLength={90}
+              value={headline}
+              onChange={(e) => setHeadline(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold outline-none focus:border-indigo-500"
+            />
+          </div>
+          <div>
+            <label className="block font-bold text-slate-700">
+              Texto principal (Legenda do anúncio)
+            </label>
+            <textarea
+              rows={4}
+              value={primaryText}
+              onChange={(e) => setPrimaryText(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-500"
+            />
+          </div>
+
+          {creativeChanged && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">
+              <strong>Aviso:</strong> Ao alterar Título ou Texto Principal, a
+              Meta cria um novo AdCreative vinculado a este anúncio e ele passa
+              novamente por revisão automática (se mudar apenas o Nome do
+              Anúncio, não entra em revisão).
+            </div>
+          )}
+        </div>
+
+        {errorMsg && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-800">
+            {errorMsg}
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="rounded-xl bg-indigo-600 px-5 py-2 text-xs font-extrabold text-white hover:bg-indigo-700 disabled:opacity-60"
+          >
+            {saving ? "Atualizando na Meta..." : "Salvar anúncio"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export function CampaignsPanel({
   companyId,
   companyName,
@@ -1301,6 +2068,13 @@ export function CampaignsPanel({
   const [state, setState] = useState<AdsDashboardStateResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [addCreativesTarget, setAddCreativesTarget] =
+    useState<AdCampaignRecord | null>(null);
+  const [editCampaignTarget, setEditCampaignTarget] =
+    useState<AdCampaignRecord | null>(null);
+  const [editAdTarget, setEditAdTarget] = useState<AdCampaignAdRecord | null>(
+    null
+  );
   const [notice, setNotice] = useState<{
     type: "success" | "error";
     text: string;
@@ -1483,6 +2257,7 @@ export function CampaignsPanel({
       }
       const sum = data.summary as {
         campaignsUpdated?: number;
+        metadataSynced?: number;
         autoPaused?: number;
         errors?: string[];
       };
@@ -1490,8 +2265,8 @@ export function CampaignsPanel({
         type: sum?.errors?.length ? "error" : "success",
         text:
           sum?.errors?.length
-            ? `Métricas atualizadas (${sum.campaignsUpdated || 0}), avisos: ${sum.errors.join("; ")}`
-            : `Métricas atualizadas (${sum?.campaignsUpdated || 0} campanha(s); ${sum?.autoPaused || 0} auto-pausada(s)).`,
+            ? `Sincronização concluída (${sum.campaignsUpdated || 0} campanhas, ${sum.metadataSynced || 0} atualizações cadastrais), avisos: ${sum.errors.join("; ")}`
+            : `Sincronizado com a Meta (${sum?.metadataSynced || 0} ajuste(s) cadastrais, ${sum?.campaignsUpdated || 0} campanha(s) em métricas, ${sum?.autoPaused || 0} auto-pausada(s)).`,
       });
     } catch (err) {
       setNotice({
@@ -1615,6 +2390,53 @@ export function CampaignsPanel({
     }
   }
 
+  async function handleToggleAdStatus(
+    ad: AdCampaignAdRecord,
+    nextStatus: "ACTIVE" | "PAUSED"
+  ) {
+    if (
+      nextStatus === "ACTIVE" &&
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Ativar apenas o anúncio "${ad.headline || ad.ad_name}" na Meta Ads?`
+      )
+    ) {
+      return;
+    }
+    setBusyAction(`ad-status-${ad.id}`);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "toggle_ad_status",
+          companyId,
+          adId: ad.id,
+          status: nextStatus,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok)
+        throw new Error(data.error || "Erro ao alterar status do anúncio.");
+      await fetchAdsState();
+      setNotice({
+        type: "success",
+        text: `Anúncio "${ad.headline || ad.ad_name}" alterado para ${nextStatus}.`,
+      });
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text:
+          err instanceof Error
+            ? err.message
+            : "Erro ao alterar status do anúncio.",
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function handleSyncPostEngagement() {
     setBusyAction("sync_engagement");
     setNotice(null);
@@ -1729,7 +2551,7 @@ export function CampaignsPanel({
           >
             {busyAction === "refresh_metrics"
               ? "Sincronizando..."
-              : "Atualizar Métricas"}
+              : "Sincronizar Meta & Métricas"}
           </button>
           <button
             type="button"
@@ -2423,6 +3245,32 @@ export function CampaignsPanel({
                           {adManagerLink.label}
                         </a>
                       )}
+                      {cmp.provider === "META" &&
+                        cmp.meta_campaign_id &&
+                        cmp.status !== "ARCHIVED" &&
+                        cmp.status !== "ERROR" && (
+                          <button
+                            type="button"
+                            disabled={busyAction !== null}
+                            onClick={() => setEditCampaignTarget(cmp)}
+                            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+                          >
+                            Editar
+                          </button>
+                        )}
+                      {cmp.provider === "META" &&
+                        cmp.meta_adset_id &&
+                        cmp.status !== "ARCHIVED" &&
+                        cmp.status !== "ERROR" && (
+                          <button
+                            type="button"
+                            disabled={busyAction !== null}
+                            onClick={() => setAddCreativesTarget(cmp)}
+                            className="rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-bold text-violet-700 hover:bg-violet-100 disabled:opacity-60"
+                          >
+                            + Criativo
+                          </button>
+                        )}
                       {cmp.status === "PAUSED" && cmp.meta_campaign_id && (
                         <button
                           type="button"
@@ -2553,6 +3401,117 @@ export function CampaignsPanel({
                       Erro Meta Ads: {cmp.error_message}
                     </p>
                   )}
+
+                  {cmp.ads && cmp.ads.length > 0 && (
+                    <div className="space-y-1.5 rounded-xl border border-slate-200 bg-white p-3">
+                      <p className="text-[11px] font-extrabold text-slate-700">
+                        Anúncios no Conjunto ({cmp.ads.length})
+                      </p>
+                      <div className="space-y-1.5">
+                        {cmp.ads.map((ad) => {
+                          const adWin = ad.last_insights_json?.windows?.[selectedWindow];
+                          const adSpend = adWin?.spend ?? ad.last_insights_json?.spend;
+                          const adClicks = adWin?.clicks ?? ad.last_insights_json?.clicks;
+                          const adCtr = adWin?.ctr ?? ad.last_insights_json?.ctr;
+                          const adConv =
+                            adWin?.conversions ?? ad.last_insights_json?.conversions;
+                          const adCpa = adWin?.cpa ?? ad.last_insights_json?.cpa;
+
+                          return (
+                            <div
+                              key={ad.id}
+                              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200/80 bg-slate-50/70 px-2.5 py-2 text-[11px]"
+                            >
+                              <div className="flex min-w-0 items-center gap-2">
+                                {ad.image_url && (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={ad.image_url}
+                                    alt={ad.headline || ad.ad_name}
+                                    className="h-9 w-9 shrink-0 rounded object-cover"
+                                  />
+                                )}
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span
+                                      className={`rounded-full px-1.5 py-0.5 text-[9px] font-extrabold ${
+                                        ad.status === "ACTIVE"
+                                          ? "bg-emerald-100 text-emerald-800"
+                                          : ad.status === "ERROR"
+                                            ? "bg-rose-100 text-rose-800"
+                                            : "bg-amber-100 text-amber-800"
+                                      }`}
+                                    >
+                                      {ad.status}
+                                    </span>
+                                    <span className="truncate font-bold text-slate-900">
+                                      {ad.headline || ad.ad_name}
+                                    </span>
+                                  </div>
+                                  <p className="mt-0.5 text-[10px] text-slate-600">
+                                    Gasto:{" "}
+                                    <strong>{formatMoney(adSpend, cmp.currency)}</strong>{" "}
+                                    • Cliques: <strong>{adClicks ?? "—"}</strong> • CTR:{" "}
+                                    <strong>
+                                      {adCtr !== undefined
+                                        ? `${Number(adCtr).toFixed(2)}%`
+                                        : "—"}
+                                    </strong>{" "}
+                                    • Conv.: <strong>{adConv ?? "—"}</strong> • CPA:{" "}
+                                    <strong>{formatMoney(adCpa, cmp.currency)}</strong>
+                                  </p>
+                                  {ad.error_message && (
+                                    <p className="mt-0.5 text-[10px] font-bold text-rose-700">
+                                      Erro: {ad.error_message}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex shrink-0 items-center gap-1">
+                                {ad.meta_ad_id &&
+                                  ad.status !== "ERROR" &&
+                                  ad.status !== "ARCHIVED" && (
+                                    <button
+                                      type="button"
+                                      disabled={busyAction !== null}
+                                      onClick={() => setEditAdTarget(ad)}
+                                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+                                    >
+                                      Editar
+                                    </button>
+                                  )}
+                                {ad.meta_ad_id && ad.status === "PAUSED" && (
+                                  <button
+                                    type="button"
+                                    disabled={busyAction !== null}
+                                    onClick={() =>
+                                      void handleToggleAdStatus(ad, "ACTIVE")
+                                    }
+                                    className="rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
+                                  >
+                                    Ativar
+                                  </button>
+                                )}
+                                {ad.meta_ad_id && ad.status === "ACTIVE" && (
+                                  <button
+                                    type="button"
+                                    disabled={busyAction !== null}
+                                    onClick={() =>
+                                      void handleToggleAdStatus(ad, "PAUSED")
+                                    }
+                                    className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-800 hover:bg-amber-100 disabled:opacity-60"
+                                  >
+                                    Pausar
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -2561,6 +3520,58 @@ export function CampaignsPanel({
       </div>
         );
       })()}
+
+      {addCreativesTarget && (
+        <AddCreativesModal
+          companyId={companyId}
+          campaign={addCreativesTarget}
+          publishedPosts={publishedPosts}
+          onClose={() => setAddCreativesTarget(null)}
+          onAdded={(addedCount, failedCount) => {
+            setAddCreativesTarget(null);
+            void fetchAdsState();
+            setNotice({
+              type: failedCount > 0 && addedCount === failedCount ? "error" : "success",
+              text:
+                failedCount > 0
+                  ? `${addedCount} criativo(s) processado(s) na campanha (${failedCount} com erro).`
+                  : `${addedCount} novo(s) anúncio(s) adicionado(s) em PAUSED no conjunto.`,
+            });
+          }}
+        />
+      )}
+
+      {editCampaignTarget && (
+        <EditCampaignModal
+          companyId={companyId}
+          campaign={editCampaignTarget}
+          onClose={() => setEditCampaignTarget(null)}
+          onSaved={() => {
+            setEditCampaignTarget(null);
+            void fetchAdsState();
+            setNotice({
+              type: "success",
+              text: "Campanha atualizada na Meta Ads e sincronizada no PilotFlow.",
+            });
+          }}
+        />
+      )}
+
+      {editAdTarget && (
+        <EditAdModal
+          companyId={companyId}
+          ad={editAdTarget}
+          onClose={() => setEditAdTarget(null)}
+          onSaved={() => {
+            setEditAdTarget(null);
+            void fetchAdsState();
+            setNotice({
+              type: "success",
+              text: "Anúncio atualizado na Meta Ads e sincronizado no PilotFlow.",
+            });
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CampaignOrchestratorService } from "@/lib/ads-orchestrator";
 import { getSessionFromRequest, SessionPayload } from "@/lib/crypto";
-import { AdChannel, ParsedCampaignPlan } from "@/lib/types";
+import {
+  AdChannel,
+  CreativePostInput,
+  ParsedCampaignPlan,
+} from "@/lib/types";
 
 function resolveCompanyScope(
   session: SessionPayload,
@@ -146,6 +150,9 @@ export async function POST(request: NextRequest) {
         body.overridePlan && typeof body.overridePlan === "object"
           ? (body.overridePlan as Partial<ParsedCampaignPlan>)
           : undefined;
+      const creatives = Array.isArray(body.creatives)
+        ? (body.creatives as CreativePostInput[])
+        : undefined;
 
       if (!postId) {
         return NextResponse.json(
@@ -158,6 +165,7 @@ export async function POST(request: NextRequest) {
         companyId,
         userId: session.userId,
         postId,
+        creatives,
         channel,
         userPrompt,
         adAccountId,
@@ -274,6 +282,104 @@ export async function POST(request: NextRequest) {
         query
       );
       return NextResponse.json({ locations });
+    }
+
+    if (action === "add_creatives") {
+      const campaignId = String(body.campaignId || "").trim();
+      const creatives = Array.isArray(body.creatives)
+        ? (body.creatives as CreativePostInput[])
+        : [];
+      if (!campaignId || creatives.length === 0) {
+        return NextResponse.json(
+          {
+            error:
+              "Informe campaignId e pelo menos 1 post publicado para adicionar como criativo.",
+          },
+          { status: 400 }
+        );
+      }
+      const result = await CampaignOrchestratorService.addCreativesToCampaign({
+        companyId,
+        campaignId,
+        creatives,
+        userId: session.userId,
+      });
+      return NextResponse.json(result);
+    }
+
+    if (action === "toggle_ad_status") {
+      const adId = String(body.adId || "").trim();
+      const status = String(body.status || "").toUpperCase();
+      if (
+        !adId ||
+        (status !== "ACTIVE" && status !== "PAUSED" && status !== "ARCHIVED")
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Informe adId e status válido (ACTIVE, PAUSED ou ARCHIVED).",
+          },
+          { status: 400 }
+        );
+      }
+      const ad = await CampaignOrchestratorService.toggleAdStatus({
+        companyId,
+        adId,
+        status,
+        userId: session.userId,
+      });
+      return NextResponse.json({ ad });
+    }
+
+    if (action === "update_campaign") {
+      const campaignId = String(body.campaignId || "").trim();
+      if (!campaignId) {
+        return NextResponse.json(
+          { error: "Informe campaignId para atualizar." },
+          { status: 400 }
+        );
+      }
+      const name =
+        typeof body.name === "string" ? body.name.trim() : undefined;
+      const dailyBudgetCents =
+        body.dailyBudgetCents !== undefined && body.dailyBudgetCents !== null
+          ? Number(body.dailyBudgetCents)
+          : undefined;
+      const campaign = await CampaignOrchestratorService.updateCampaignDetails({
+        companyId,
+        campaignId,
+        name,
+        dailyBudgetCents,
+        userId: session.userId,
+      });
+      return NextResponse.json({ campaign });
+    }
+
+    if (action === "update_ad") {
+      const adId = String(body.adId || "").trim();
+      if (!adId) {
+        return NextResponse.json(
+          { error: "Informe adId para atualizar o anúncio." },
+          { status: 400 }
+        );
+      }
+      const adName =
+        typeof body.adName === "string" ? body.adName.trim() : undefined;
+      const headline =
+        typeof body.headline === "string" ? body.headline.trim() : undefined;
+      const primaryText =
+        typeof body.primaryText === "string"
+          ? body.primaryText.trim()
+          : undefined;
+      const ad = await CampaignOrchestratorService.updateAdDetails({
+        companyId,
+        adId,
+        adName,
+        headline,
+        primaryText,
+        userId: session.userId,
+      });
+      return NextResponse.json({ ad });
     }
 
     return NextResponse.json({ error: "Ação inválida." }, { status: 400 });

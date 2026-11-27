@@ -8142,6 +8142,7 @@ export default function SaasAppPage() {
               <BoostCampaignModal
                 companyId={workspace.company.id}
                 post={boostModalPost}
+                availablePosts={workspace.posts}
                 adAccounts={companyAdAccounts}
                 defaultAccountId={
                   companyAdAccounts.find((a) => a.is_default)?.ad_account_id ||

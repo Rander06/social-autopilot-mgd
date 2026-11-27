@@ -222,6 +222,30 @@ create table if not exists public.ad_campaigns (
   updated_at timestamptz not null default now()
 );
 
+-- 13. ANÚNCIOS / CRIATIVOS POR CAMPANHA (ESTRUTURA 1-1-N)
+create table if not exists public.ad_campaign_ads (
+  id text primary key,
+  campaign_id text not null references public.ad_campaigns(id) on delete cascade,
+  company_id text not null references public.companies(id) on delete cascade,
+  post_id text references public.posts_history(id) on delete set null,
+  ad_name text not null,
+  headline text not null default '',
+  primary_text text not null default '',
+  image_url text,
+  story_image_url text,
+  source_story_id text,
+  meta_creative_id text,
+  meta_ad_id text,
+  status text not null default 'PAUSED' check (status in ('DRAFT', 'PAUSED', 'ACTIVE', 'ARCHIVED', 'ERROR')),
+  last_verdict text check (last_verdict in ('ESCALAR', 'MANTER', 'PAUSAR')),
+  last_verdict_reason text,
+  last_insights_json jsonb not null default '{}'::jsonb,
+  last_insights_at timestamptz,
+  error_message text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 -- ÍNDICES DE PERFORMANCE
 create index if not exists idx_topics_company_active on public.topics(company_id, is_active);
 create index if not exists idx_topics_schedule_time on public.topics(schedule_time) where is_active = true;
@@ -235,6 +259,9 @@ create index if not exists idx_ad_accounts_company on public.ad_accounts(company
 create index if not exists idx_ad_campaigns_company on public.ad_campaigns(company_id, created_at desc);
 create index if not exists idx_ad_campaigns_post on public.ad_campaigns(post_id);
 create index if not exists idx_ad_campaigns_monitoring on public.ad_campaigns(provider, status);
+create index if not exists idx_ad_campaign_ads_campaign on public.ad_campaign_ads(campaign_id, created_at asc);
+create index if not exists idx_ad_campaign_ads_company on public.ad_campaign_ads(company_id, status);
+create index if not exists idx_ad_campaign_ads_meta_ad on public.ad_campaign_ads(meta_ad_id);
 
 -- SEED INICIAL DOS PLANOS
 insert into public.plans (id, name, price_brl, max_posts_month, allow_carousel, allow_ai_photo, allow_multi_ai)

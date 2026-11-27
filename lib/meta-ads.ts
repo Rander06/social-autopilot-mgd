@@ -181,9 +181,40 @@ export interface MetaTargetingInput {
   age_min?: number;
   age_max?: number;
   genders?: Array<1 | 2>;
+  publisher_platforms?: string[];
+  facebook_positions?: string[];
+  instagram_positions?: string[];
   targeting_automation?: {
     advantage_audience?: 0 | 1;
   };
+}
+
+export interface MetaCreativeItemInput {
+  postId?: string | null;
+  adName?: string | null;
+  fbPostId?: string | null;
+  igMediaId?: string | null;
+  postImageUrl?: string | null;
+  postStoryImageUrl?: string | null;
+  postHeadline?: string | null;
+  postCaption?: string | null;
+  welcomeGreeting?: string | null;
+  welcomeAutofill?: string | null;
+}
+
+export interface CreatedMetaAdItem {
+  postId: string | null;
+  adName: string;
+  headline: string;
+  primaryText: string;
+  imageUrl: string | null;
+  storyImageUrl: string | null;
+  sourceStoryId: string;
+  creativeId: string | null;
+  adId: string | null;
+  status: "PAUSED" | "ERROR";
+  errorMessage?: string | null;
+  stepsLog: string[];
 }
 
 export interface CreateMetaCampaignInput {
@@ -213,6 +244,7 @@ export interface CreateMetaCampaignInput {
   welcomeAutofill?: string | null;
   pixelId?: string | null;
   urlTags?: string | null;
+  creatives?: MetaCreativeItemInput[];
 }
 
 export interface CreateMetaCampaignResult {
@@ -224,6 +256,7 @@ export interface CreateMetaCampaignResult {
   adId: string;
   status: "PAUSED";
   stepsLog: string[];
+  createdAds: CreatedMetaAdItem[];
 }
 
 export interface MetaAdInsightRow {
@@ -289,6 +322,16 @@ function extractConversionsAndRevenue(
 
   return { conversions, revenue };
 }
+
+const IMAGE_SAFE_FB_POSITIONS = [
+  "feed",
+  "story",
+  "marketplace",
+  "facebook_reels",
+];
+const IMAGE_SAFE_FB_POSITIONS_FALLBACK = ["feed", "story", "marketplace"];
+const IMAGE_SAFE_IG_POSITIONS = ["stream", "story", "explore", "reels"];
+const IMAGE_SAFE_IG_POSITIONS_FALLBACK = ["stream", "story", "reels"];
 
 export class MetaAdsService {
   private readonly accessToken: string;
@@ -733,7 +776,14 @@ export class MetaAdsService {
     return data.data || [];
   }
 
-  private normalizeTargeting(input?: MetaTargetingInput): Record<string, unknown> {
+  private normalizeTargeting(
+    input?: MetaTargetingInput,
+    options?: {
+      hasInstagram?: boolean;
+      fbPositions?: string[];
+      igPositions?: string[];
+    }
+  ): Record<string, unknown> {
     const ageMin = Math.max(18, Math.min(65, Math.round(input?.age_min ?? 18)));
     const ageMax = Math.max(ageMin, Math.min(65, Math.round(input?.age_max ?? 65)));
 
@@ -765,7 +815,82 @@ export class MetaAdsService {
       targeting.genders = input.genders;
     }
 
+    // Define explicitamente posicionamentos compatíveis com imagem (sem instream_video nem audience_network)
+    if (input?.publisher_platforms && input.publisher_platforms.length > 0) {
+      targeting.publisher_platforms = input.publisher_platforms;
+      if (input.facebook_positions) {
+        targeting.facebook_positions = input.facebook_positions;
+      }
+      if (input.instagram_positions) {
+        targeting.instagram_positions = input.instagram_positions;
+      }
+    } else {
+      const includeIg = options?.hasInstagram !== false;
+      targeting.publisher_platforms = includeIg
+        ? ["facebook", "instagram"]
+        : ["facebook"];
+      targeting.facebook_positions =
+        options?.fbPositions || IMAGE_SAFE_FB_POSITIONS;
+      if (includeIg) {
+        targeting.instagram_positions =
+          options?.igPositions || IMAGE_SAFE_IG_POSITIONS;
+      }
+    }
+
     return targeting;
+  }
+
+  async applyImageSafePlacementsToAdSet(
+    adsetId: string,
+    hasInstagram = true
+  ): Promise<{ updated: boolean; placements: string[] }> {
+    const cleanId = adsetId.trim();
+    if (!cleanId) {
+      throw new Error("meta_adset_id não informado.");
+    }
+
+    const data = await this.request<{ targeting?: Record<string, unknown> }>(
+      `/${encodeURIComponent(cleanId)}`,
+      { query: { fields: "targeting" } }
+    );
+    const baseTargeting: Record<string, unknown> = {
+      ...(data.targeting || {}),
+    };
+    delete baseTargeting.audience_network_positions;
+    delete baseTargeting.messenger_positions;
+    delete baseTargeting.device_platforms;
+
+    const platforms = hasInstagram ? ["facebook", "instagram"] : ["facebook"];
+    const buildPayload = (fbPos: string[], igPos: string[]) => ({
+      ...baseTargeting,
+      publisher_platforms: platforms,
+      facebook_positions: fbPos,
+      ...(hasInstagram ? { instagram_positions: igPos } : {}),
+    });
+
+    try {
+      await this.request(`/${encodeURIComponent(cleanId)}`, {
+        method: "POST",
+        body: {
+          targeting: buildPayload(
+            IMAGE_SAFE_FB_POSITIONS,
+            IMAGE_SAFE_IG_POSITIONS
+          ),
+        },
+      });
+      return { updated: true, placements: IMAGE_SAFE_FB_POSITIONS };
+    } catch {
+      await this.request(`/${encodeURIComponent(cleanId)}`, {
+        method: "POST",
+        body: {
+          targeting: buildPayload(
+            IMAGE_SAFE_FB_POSITIONS_FALLBACK,
+            IMAGE_SAFE_IG_POSITIONS_FALLBACK
+          ),
+        },
+      });
+      return { updated: true, placements: IMAGE_SAFE_FB_POSITIONS_FALLBACK };
+    }
   }
 
   async checkPageWhatsappNumber(fbPageId: string): Promise<string | null> {
@@ -943,7 +1068,9 @@ export class MetaAdsService {
         billing_event: "IMPRESSIONS",
         optimization_goal: effectiveGoal,
         bid_strategy: "LOWEST_COST_WITHOUT_CAP",
-        targeting: this.normalizeTargeting(input.targeting),
+        targeting: this.normalizeTargeting(input.targeting, {
+          hasInstagram: Boolean(igUserId),
+        }),
         status: "PAUSED",
       };
 
@@ -998,10 +1125,28 @@ export class MetaAdsService {
         adsetPayload.start_time = validStart.toISOString();
       }
 
-      const aRes = await this.request<{ id: string }>(`/${adAccountId}/adsets`, {
-        method: "POST",
-        body: adsetPayload,
-      });
+      let aRes: { id: string };
+      try {
+        aRes = await this.request<{ id: string }>(`/${adAccountId}/adsets`, {
+          method: "POST",
+          body: adsetPayload,
+        });
+      } catch (adsetErr) {
+        const msg = adsetErr instanceof Error ? adsetErr.message : "";
+        if (/position|placement|reels|explore/i.test(msg)) {
+          adsetPayload.targeting = this.normalizeTargeting(input.targeting, {
+            hasInstagram: Boolean(igUserId),
+            fbPositions: IMAGE_SAFE_FB_POSITIONS_FALLBACK,
+            igPositions: IMAGE_SAFE_IG_POSITIONS_FALLBACK,
+          });
+          aRes = await this.request<{ id: string }>(`/${adAccountId}/adsets`, {
+            method: "POST",
+            body: adsetPayload,
+          });
+        } else {
+          throw adsetErr;
+        }
+      }
       return { campaignId: cRes.id, adsetId: aRes.id };
     };
 
@@ -1055,16 +1200,121 @@ export class MetaAdsService {
     partialIds.adsetId = adsetRes.id;
     stepsLog.push(`Passo 2 concluído: AdSet ${adsetRes.id} (PAUSED)`);
 
-    // Passo 3 & 4 — AdCreative + Ad compatíveis com o objetivo ODAX v26.0
+    // Passo 3 & 4 — AdCreative + Ad compatíveis com o objetivo ODAX v26.0 (suporta 1 ou N criativos no mesmo AdSet)
+    const itemsToCreate: MetaCreativeItemInput[] =
+      input.creatives && input.creatives.length > 0
+        ? input.creatives
+        : [
+            {
+              fbPostId,
+              igMediaId,
+              postImageUrl: input.postImageUrl || null,
+              postStoryImageUrl: input.postStoryImageUrl || null,
+              postHeadline: input.postHeadline || null,
+              postCaption: input.postCaption || null,
+              welcomeGreeting: input.welcomeGreeting || null,
+              welcomeAutofill: input.welcomeAutofill || null,
+            },
+          ];
+
+    const createdAds: CreatedMetaAdItem[] = [];
+    for (let i = 0; i < itemsToCreate.length; i += 1) {
+      const adResult = await this.createAdInAdSet({
+        adAccountId,
+        adsetId: adsetRes.id,
+        campaignName: input.name,
+        objective: effectiveObjective,
+        destinationType: effectiveDestination,
+        fbPageId,
+        igUserId,
+        destinationUrl: cleanDestUrl,
+        pixelId: input.pixelId,
+        urlTags: input.urlTags,
+        item: itemsToCreate[i],
+        itemIndex: itemsToCreate.length > 1 ? i + 1 : undefined,
+      });
+      createdAds.push(adResult);
+      stepsLog.push(...adResult.stepsLog);
+    }
+
+    const firstSuccess = createdAds.find(
+      (a) => a.status === "PAUSED" && Boolean(a.adId) && Boolean(a.creativeId)
+    );
+    if (!firstSuccess || !firstSuccess.adId || !firstSuccess.creativeId) {
+      const firstErrMsg =
+        createdAds.find((a) => a.errorMessage)?.errorMessage ||
+        "Falha ao criar o(s) anúncio(s) na Meta Ads.";
+      return await attachPartialIds(new Error(firstErrMsg));
+    }
+
+    return {
+      adAccountId,
+      sourceStoryId: firstSuccess.sourceStoryId || sourceStoryId,
+      campaignId: campaignRes.id,
+      adsetId: adsetRes.id,
+      creativeId: firstSuccess.creativeId,
+      adId: firstSuccess.adId,
+      status: "PAUSED",
+      stepsLog,
+      createdAds,
+    };
+  }
+
+  async createAdInAdSet(params: {
+    adAccountId: string;
+    adsetId: string;
+    campaignName: string;
+    objective: MetaAdObjective;
+    destinationType?: string | null;
+    fbPageId: string;
+    igUserId?: string | null;
+    destinationUrl?: string | null;
+    pixelId?: string | null;
+    urlTags?: string | null;
+    item: MetaCreativeItemInput;
+    itemIndex?: number;
+  }): Promise<CreatedMetaAdItem> {
+    const adAccountId = normalizeAdAccountId(params.adAccountId);
+    const fbPageId = params.fbPageId.trim();
+    const igUserId = params.igUserId?.trim() || "";
+    const fbPostId = params.item.fbPostId?.trim() || "";
+    const igMediaId = params.item.igMediaId?.trim() || "";
+    const sourceStoryId = fbPostId
+      ? normalizeFbObjectStoryId(fbPageId, fbPostId)
+      : igMediaId || "";
+    const postImg = params.item.postImageUrl?.trim() || "";
+    const postStoryImg = params.item.postStoryImageUrl?.trim() || "";
+    const cleanDestUrl = params.destinationUrl?.trim() || null;
+    const cleanUrlTags = params.urlTags?.trim() || "";
+    const effectiveObjective = params.objective;
+    const effectiveDestination =
+      params.destinationType?.trim().toUpperCase() || null;
+
     const isMessagingDest =
       effectiveDestination === "WHATSAPP" ||
       effectiveDestination === "MESSENGER" ||
       effectiveDestination === "INSTAGRAM_DIRECT";
     const isPureEngagement =
       effectiveObjective === "OUTCOME_ENGAGEMENT" && !isMessagingDest;
-    const postImg = input.postImageUrl?.trim() || "";
 
-    const cleanUrlTags = input.urlTags?.trim() || "";
+    const headline = (params.item.postHeadline || params.campaignName)
+      .trim()
+      .slice(0, 90);
+    const primaryText = (
+      params.item.postCaption ||
+      headline ||
+      params.campaignName
+    ).trim();
+    const idxTag = params.itemIndex ? ` #${params.itemIndex}` : "";
+    const adName = (
+      params.item.adName?.trim() ||
+      `${params.campaignName.trim()} — Ad${idxTag}${
+        headline ? ` (${headline.slice(0, 28)})` : ""
+      }`
+    ).slice(0, 120);
+
+    const stepsLog: string[] = [];
+    let partialCreativeId: string | null = null;
 
     const buildLinkSpecCreativePayload = (
       welcomePlacement: "link_data" | "story_spec" | "none" = "link_data"
@@ -1089,16 +1339,16 @@ export class MetaAdsService {
 
       const linkData: Record<string, unknown> = {
         link: targetLink,
-        message: (input.postCaption || input.postHeadline || input.name).trim(),
-        name: (input.postHeadline || input.name).trim().slice(0, 90),
+        message: primaryText,
+        name: headline,
         call_to_action: cta,
       };
       if (postImg) {
         linkData.picture = postImg;
       }
 
-      const greeting = input.welcomeGreeting?.trim() || "";
-      const autofill = input.welcomeAutofill?.trim() || "";
+      const greeting = params.item.welcomeGreeting?.trim() || "";
+      const autofill = params.item.welcomeAutofill?.trim() || "";
       const shouldSendWelcome =
         welcomePlacement !== "none" &&
         effectiveDestination === "WHATSAPP" &&
@@ -1129,7 +1379,7 @@ export class MetaAdsService {
       }
 
       return {
-        name: `${input.name.trim()} — Creative Link`,
+        name: `${adName} — Creative Link`,
         ...(cleanUrlTags ? { url_tags: cleanUrlTags } : {}),
         object_story_spec: {
           page_id: fbPageId,
@@ -1146,34 +1396,47 @@ export class MetaAdsService {
       const hasWelcome =
         effectiveDestination === "WHATSAPP" &&
         Boolean(
-          input.welcomeGreeting?.trim() || input.welcomeAutofill?.trim()
+          params.item.welcomeGreeting?.trim() ||
+            params.item.welcomeAutofill?.trim()
         );
       if (!hasWelcome) {
-        return await this.request<{ id: string }>(`/${adAccountId}/adcreatives`, {
-          method: "POST",
-          body: buildLinkSpecCreativePayload("none"),
-        });
+        return await this.request<{ id: string }>(
+          `/${adAccountId}/adcreatives`,
+          {
+            method: "POST",
+            body: buildLinkSpecCreativePayload("none"),
+          }
+        );
       }
 
       try {
-        return await this.request<{ id: string }>(`/${adAccountId}/adcreatives`, {
-          method: "POST",
-          body: buildLinkSpecCreativePayload("link_data"),
-        });
+        return await this.request<{ id: string }>(
+          `/${adAccountId}/adcreatives`,
+          {
+            method: "POST",
+            body: buildLinkSpecCreativePayload("link_data"),
+          }
+        );
       } catch {
         try {
-          return await this.request<{ id: string }>(`/${adAccountId}/adcreatives`, {
-            method: "POST",
-            body: buildLinkSpecCreativePayload("story_spec"),
-          });
+          return await this.request<{ id: string }>(
+            `/${adAccountId}/adcreatives`,
+            {
+              method: "POST",
+              body: buildLinkSpecCreativePayload("story_spec"),
+            }
+          );
         } catch {
           stepsLog.push(
-            "Aviso: Meta rejeitou page_welcome_message personalizado; recriando criativo com mensagem padrão de conversa."
+            `Aviso (${adName}): Meta rejeitou page_welcome_message personalizado; recriando com mensagem padrão.`
           );
-          return await this.request<{ id: string }>(`/${adAccountId}/adcreatives`, {
-            method: "POST",
-            body: buildLinkSpecCreativePayload("none"),
-          });
+          return await this.request<{ id: string }>(
+            `/${adAccountId}/adcreatives`,
+            {
+              method: "POST",
+              body: buildLinkSpecCreativePayload("none"),
+            }
+          );
         }
       }
     };
@@ -1181,10 +1444,10 @@ export class MetaAdsService {
     const createAdWithTracking = async (
       creativeId: string
     ): Promise<{ id: string }> => {
-      const cleanPixel = input.pixelId?.trim() || "";
+      const cleanPixel = params.pixelId?.trim() || "";
       const baseAdBody: Record<string, unknown> = {
-        name: `${input.name.trim()} — Ad`,
-        adset_id: adsetRes.id,
+        name: adName,
+        adset_id: params.adsetId,
         creative: { creative_id: creativeId },
         status: "PAUSED",
       };
@@ -1210,14 +1473,14 @@ export class MetaAdsService {
           },
         });
         stepsLog.push(
-          `Rastreamento vinculado: Pixel ${cleanPixel}${
+          `Rastreamento vinculado (${adName}): Pixel ${cleanPixel}${
             cleanUrlTags ? " + UTM tags" : ""
           }`
         );
         return res;
       } catch {
         stepsLog.push(
-          `Aviso: Meta não aplicou tracking_specs do Pixel ${cleanPixel}; anúncio criado sem pixel explícito.`
+          `Aviso (${adName}): Meta não aplicou tracking_specs do Pixel ${cleanPixel}; anúncio criado sem pixel explícito.`
         );
         return await this.request<{ id: string }>(`/${adAccountId}/ads`, {
           method: "POST",
@@ -1229,7 +1492,7 @@ export class MetaAdsService {
     const buildOrganicCreativePayload = (): Record<string, unknown> => {
       if (fbPostId) {
         return {
-          name: `${input.name.trim()} — Creative Meta`,
+          name: `${adName} — Creative Meta`,
           object_story_id: normalizeFbObjectStoryId(fbPageId, fbPostId),
           ...(cleanUrlTags ? { url_tags: cleanUrlTags } : {}),
         };
@@ -1237,7 +1500,7 @@ export class MetaAdsService {
 
       if (igUserId && igMediaId) {
         const payload: Record<string, unknown> = {
-          name: `${input.name.trim()} — Creative IG`,
+          name: `${adName} — Creative IG`,
           object_id: fbPageId,
           instagram_user_id: igUserId,
           source_instagram_media_id: igMediaId,
@@ -1268,7 +1531,6 @@ export class MetaAdsService {
       );
     };
 
-    const postStoryImg = input.postStoryImageUrl?.trim() || "";
     const preferLinkSpecDirect = !isPureEngagement && Boolean(postImg);
 
     const tryCreatePlacementCustomizedCreative = async (): Promise<{
@@ -1299,7 +1561,7 @@ export class MetaAdsService {
           {
             method: "POST",
             body: {
-              name: `${input.name.trim()} — Creative Placement (Feed + Story)`,
+              name: `${adName} — Creative Placement (Feed + Story)`,
               ...(cleanUrlTags ? { url_tags: cleanUrlTags } : {}),
               object_story_spec: {
                 page_id: fbPageId,
@@ -1323,22 +1585,8 @@ export class MetaAdsService {
                     adlabels: [{ name: "pf_story" }],
                   },
                 ],
-                titles: [
-                  {
-                    text: (input.postHeadline || input.name)
-                      .trim()
-                      .slice(0, 90),
-                  },
-                ],
-                bodies: [
-                  {
-                    text: (
-                      input.postCaption ||
-                      input.postHeadline ||
-                      input.name
-                    ).trim(),
-                  },
-                ],
+                titles: [{ text: headline }],
+                bodies: [{ text: primaryText }],
                 asset_customization_rules: [
                   {
                     priority: 1,
@@ -1360,26 +1608,26 @@ export class MetaAdsService {
           }
         );
 
-        partialIds.creativeId = customCreative.id;
+        partialCreativeId = customCreative.id;
         const customAd = await createAdWithTracking(customCreative.id);
         stepsLog.push(
-          `Passo 3 concluído: AdCreative ${customCreative.id} (Personalização por Posicionamento Feed 4:5 + Story 9:16)`
+          `Passo 3 concluído (${adName}): AdCreative ${customCreative.id} (Personalização por Posicionamento Feed 4:5 + Story 9:16)`
         );
         return { creativeRes: customCreative, adRes: customAd };
       } catch {
-        partialIds.creativeId = undefined;
+        partialCreativeId = null;
         stepsLog.push(
-          "Aviso: Personalização por Posicionamento recusada pela Meta para este objetivo; aplicando criativo padrão unificado."
+          `Aviso (${adName}): Personalização por Posicionamento recusada pela Meta para este objetivo; aplicando criativo padrão unificado.`
         );
         return null;
       }
     };
 
-    let creativeRes: { id: string };
-    let adRes: { id: string };
+    try {
+      let creativeRes: { id: string };
+      let adRes: { id: string };
 
-    if (preferLinkSpecDirect) {
-      try {
+      if (preferLinkSpecDirect) {
         const placementCustomized =
           await tryCreatePlacementCustomizedCreative();
         if (placementCustomized) {
@@ -1387,62 +1635,72 @@ export class MetaAdsService {
           adRes = placementCustomized.adRes;
         } else {
           creativeRes = await createLinkSpecCreativeSafe();
-          partialIds.creativeId = creativeRes.id;
+          partialCreativeId = creativeRes.id;
           stepsLog.push(
-            `Passo 3 concluído: AdCreative ${creativeRes.id} (link_data com CTA compatível)`
+            `Passo 3 concluído (${adName}): AdCreative ${creativeRes.id} (link_data com CTA compatível)`
           );
-
           adRes = await createAdWithTracking(creativeRes.id);
         }
-      } catch (err) {
-        return await attachPartialIds(err);
-      }
-    } else {
-      try {
-        creativeRes = await this.request<{ id: string }>(
-          `/${adAccountId}/adcreatives`,
-          {
-            method: "POST",
-            body: buildOrganicCreativePayload(),
-          }
-        );
-        partialIds.creativeId = creativeRes.id;
-        stepsLog.push(
-          `Passo 3 concluído: AdCreative ${creativeRes.id} (prova social preservada)`
-        );
-
-        adRes = await createAdWithTracking(creativeRes.id);
-      } catch (primaryErr) {
-        if (!isPureEngagement && Boolean(postImg)) {
-          try {
+      } else {
+        try {
+          creativeRes = await this.request<{ id: string }>(
+            `/${adAccountId}/adcreatives`,
+            {
+              method: "POST",
+              body: buildOrganicCreativePayload(),
+            }
+          );
+          partialCreativeId = creativeRes.id;
+          stepsLog.push(
+            `Passo 3 concluído (${adName}): AdCreative ${creativeRes.id} (prova social preservada)`
+          );
+          adRes = await createAdWithTracking(creativeRes.id);
+        } catch (primaryErr) {
+          if (!isPureEngagement && Boolean(postImg)) {
             creativeRes = await createLinkSpecCreativeSafe();
-            partialIds.creativeId = creativeRes.id;
+            partialCreativeId = creativeRes.id;
             stepsLog.push(
-              `Passo 3 fallback concluído: AdCreative ${creativeRes.id} (link_data compatível com objetivo)`
+              `Passo 3 fallback concluído (${adName}): AdCreative ${creativeRes.id} (link_data compatível com objetivo)`
             );
-
             adRes = await createAdWithTracking(creativeRes.id);
-          } catch (fallbackErr) {
-            return await attachPartialIds(fallbackErr);
+          } else {
+            throw primaryErr;
           }
-        } else {
-          return await attachPartialIds(primaryErr);
         }
       }
+
+      stepsLog.push(`Passo 4 concluído: Ad ${adRes.id} (${adName} • PAUSED)`);
+      return {
+        postId: params.item.postId || null,
+        adName,
+        headline,
+        primaryText,
+        imageUrl: postImg || null,
+        storyImageUrl: postStoryImg || null,
+        sourceStoryId,
+        creativeId: creativeRes.id,
+        adId: adRes.id,
+        status: "PAUSED",
+        stepsLog,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      stepsLog.push(`Erro em ${adName}: ${msg}`);
+      return {
+        postId: params.item.postId || null,
+        adName,
+        headline,
+        primaryText,
+        imageUrl: postImg || null,
+        storyImageUrl: postStoryImg || null,
+        sourceStoryId,
+        creativeId: partialCreativeId,
+        adId: null,
+        status: "ERROR",
+        errorMessage: msg,
+        stepsLog,
+      };
     }
-
-    stepsLog.push(`Passo 4 concluído: Ad ${adRes.id} (PAUSED)`);
-
-    return {
-      adAccountId,
-      sourceStoryId,
-      campaignId: campaignRes.id,
-      adsetId: adsetRes.id,
-      creativeId: creativeRes.id,
-      adId: adRes.id,
-      status: "PAUSED",
-      stepsLog,
-    };
   }
 
   async toggleEntityStatus(
@@ -1458,6 +1716,303 @@ export class MetaAdsService {
       body: { status },
     });
     return { success: res.success !== false };
+  }
+
+  async fetchEntitiesMetadata(
+    ids: string[],
+    fields: string
+  ): Promise<Record<string, Record<string, unknown>>> {
+    const uniqueIds = Array.from(
+      new Set(ids.map((id) => id.trim()).filter(Boolean))
+    );
+    const out: Record<string, Record<string, unknown>> = {};
+    if (uniqueIds.length === 0) return out;
+
+    for (let i = 0; i < uniqueIds.length; i += 40) {
+      const chunk = uniqueIds.slice(i, i + 40);
+      try {
+        const res = await this.request<Record<string, Record<string, unknown>>>(
+          "/",
+          {
+            query: {
+              ids: chunk.join(","),
+              fields,
+            },
+          }
+        );
+        for (const [id, payload] of Object.entries(res || {})) {
+          if (payload && typeof payload === "object") {
+            out[id] = payload;
+          }
+        }
+      } catch {
+        // Se algum ID da lista foi apagado/restrito no Gerenciador, busca individualmente os restantes
+        for (const singleId of chunk) {
+          try {
+            const item = await this.request<Record<string, unknown>>(
+              `/${encodeURIComponent(singleId)}`,
+              { query: { fields } }
+            );
+            if (item && typeof item === "object") {
+              out[singleId] = item;
+            }
+          } catch {
+            // ignora ID inacessível
+          }
+        }
+      }
+    }
+
+    return out;
+  }
+
+  async listAdsInAdSet(adsetId: string): Promise<
+    Array<{
+      id: string;
+      name: string;
+      status?: string;
+      effective_status?: string;
+      creative?: {
+        id?: string;
+        title?: string;
+        body?: string;
+        image_url?: string;
+        thumbnail_url?: string;
+      };
+    }>
+  > {
+    const cleanId = adsetId.trim();
+    if (!cleanId) return [];
+    const res = await this.request<{
+      data?: Array<{
+        id: string;
+        name?: string;
+        status?: string;
+        effective_status?: string;
+        creative?: {
+          id?: string;
+          title?: string;
+          body?: string;
+          image_url?: string;
+          thumbnail_url?: string;
+        };
+      }>;
+    }>(`/${encodeURIComponent(cleanId)}/ads`, {
+      query: {
+        fields:
+          "id,name,status,effective_status,creative{id,title,body,image_url,thumbnail_url}",
+        limit: 50,
+      },
+    });
+    return (res.data || []).map((ad) => ({
+      id: String(ad.id),
+      name: ad.name?.trim() || `Ad ${ad.id}`,
+      status: ad.status,
+      effective_status: ad.effective_status,
+      creative: ad.creative,
+    }));
+  }
+
+  async updateCampaignFields(
+    campaignId: string,
+    fields: { name?: string }
+  ): Promise<{ success: boolean }> {
+    const cleanId = campaignId.trim();
+    if (!cleanId) throw new Error("meta_campaign_id não informado.");
+    const body: Record<string, unknown> = {};
+    if (fields.name?.trim()) {
+      body.name = fields.name.trim();
+    }
+    if (Object.keys(body).length === 0) return { success: true };
+    const res = await this.request<{ success?: boolean }>(`/${cleanId}`, {
+      method: "POST",
+      body,
+    });
+    return { success: res.success !== false };
+  }
+
+  async updateAdSetFields(
+    adsetId: string,
+    fields: { name?: string; dailyBudgetCents?: number; currency?: string }
+  ): Promise<{ success: boolean }> {
+    const cleanId = adsetId.trim();
+    if (!cleanId) throw new Error("meta_adset_id não informado.");
+    const body: Record<string, unknown> = {};
+    if (fields.name?.trim()) {
+      body.name = fields.name.trim();
+    }
+    if (fields.dailyBudgetCents !== undefined) {
+      const currency = (fields.currency || "BRL").toUpperCase();
+      const minCents = getMinimumDailyBudgetCents(currency);
+      const rounded = Math.round(fields.dailyBudgetCents);
+      if (!Number.isFinite(rounded) || rounded < minCents) {
+        throw new Error(
+          `Orçamento diário abaixo do mínimo exigido pela Meta (${minCents} centavos em ${currency}).`
+        );
+      }
+      body.daily_budget = String(rounded);
+    }
+    if (Object.keys(body).length === 0) return { success: true };
+    const res = await this.request<{ success?: boolean }>(`/${cleanId}`, {
+      method: "POST",
+      body,
+    });
+    return { success: res.success !== false };
+  }
+
+  async updateAdFields(
+    adId: string,
+    fields: { name?: string; creativeId?: string }
+  ): Promise<{ success: boolean }> {
+    const cleanId = adId.trim();
+    if (!cleanId) throw new Error("meta_ad_id não informado.");
+    const body: Record<string, unknown> = {};
+    if (fields.name?.trim()) {
+      body.name = fields.name.trim().slice(0, 120);
+    }
+    if (fields.creativeId?.trim()) {
+      body.creative = { creative_id: fields.creativeId.trim() };
+    }
+    if (Object.keys(body).length === 0) return { success: true };
+    const res = await this.request<{ success?: boolean }>(`/${cleanId}`, {
+      method: "POST",
+      body,
+    });
+    return { success: res.success !== false };
+  }
+
+  async updateAdCreativeAndFields(params: {
+    adAccountId: string;
+    adId: string;
+    adName: string;
+    headline: string;
+    primaryText: string;
+    imageUrl?: string | null;
+    objective: MetaAdObjective;
+    destinationType?: string | null;
+    fbPageId: string;
+    igUserId?: string | null;
+    destinationUrl?: string | null;
+    urlTags?: string | null;
+    welcomeGreeting?: string | null;
+    welcomeAutofill?: string | null;
+    creativeChanged: boolean;
+  }): Promise<{ creativeId: string | null }> {
+    const adAccountId = normalizeAdAccountId(params.adAccountId);
+    const cleanAdName = params.adName.trim().slice(0, 120);
+    const cleanHeadline = params.headline.trim().slice(0, 90);
+    const cleanPrimaryText = params.primaryText.trim();
+
+    if (!params.creativeChanged) {
+      await this.updateAdFields(params.adId, { name: cleanAdName });
+      return { creativeId: null };
+    }
+
+    const effectiveDestination =
+      params.destinationType?.trim().toUpperCase() || null;
+    const cleanDestUrl = params.destinationUrl?.trim() || null;
+    const cleanUrlTags = params.urlTags?.trim() || "";
+    const fbPageId = params.fbPageId.trim();
+    const igUserId = params.igUserId?.trim() || "";
+
+    const buildCreativeBody = (
+      welcomePlacement: "link_data" | "none" = "link_data"
+    ): Record<string, unknown> => {
+      const targetLink =
+        effectiveDestination === "WHATSAPP"
+          ? "https://api.whatsapp.com/send"
+          : cleanDestUrl || "https://www.facebook.com/";
+      const cta =
+        effectiveDestination === "WHATSAPP"
+          ? {
+              type: "WHATSAPP_MESSAGE",
+              value: {
+                app_destination: "WHATSAPP",
+                link: "https://api.whatsapp.com/send",
+              },
+            }
+          : {
+              type: "LEARN_MORE",
+              value: { link: targetLink },
+            };
+
+      const linkData: Record<string, unknown> = {
+        link: targetLink,
+        message: cleanPrimaryText || cleanHeadline || cleanAdName,
+        name: cleanHeadline || cleanAdName.slice(0, 90),
+        call_to_action: cta,
+      };
+      if (params.imageUrl?.trim()) {
+        linkData.picture = params.imageUrl.trim();
+      }
+
+      const greeting = params.welcomeGreeting?.trim() || "";
+      const autofill = params.welcomeAutofill?.trim() || "";
+      if (
+        welcomePlacement === "link_data" &&
+        effectiveDestination === "WHATSAPP" &&
+        Boolean(greeting || autofill)
+      ) {
+        linkData.page_welcome_message = JSON.stringify({
+          type: "VISUAL_EDITOR",
+          version: 2,
+          landing_screen_type: "welcome_message",
+          media_type: "text",
+          text_format: {
+            customer_action_type: "autofill_message",
+            message: {
+              text: greeting || "Oi! Como podemos ajudar?",
+              autofill_message: {
+                content:
+                  autofill ||
+                  "Olá! Gostaria de mais informações sobre este anúncio.",
+              },
+            },
+          },
+        });
+      }
+
+      return {
+        name: `${cleanAdName} — Creative Edit`,
+        ...(cleanUrlTags ? { url_tags: cleanUrlTags } : {}),
+        object_story_spec: {
+          page_id: fbPageId,
+          ...(igUserId ? { instagram_user_id: igUserId } : {}),
+          link_data: linkData,
+        },
+      };
+    };
+
+    const hasWelcome =
+      effectiveDestination === "WHATSAPP" &&
+      Boolean(
+        params.welcomeGreeting?.trim() || params.welcomeAutofill?.trim()
+      );
+    let creativeRes: { id: string };
+    if (hasWelcome) {
+      try {
+        creativeRes = await this.request<{ id: string }>(
+          `/${adAccountId}/adcreatives`,
+          { method: "POST", body: buildCreativeBody("link_data") }
+        );
+      } catch {
+        creativeRes = await this.request<{ id: string }>(
+          `/${adAccountId}/adcreatives`,
+          { method: "POST", body: buildCreativeBody("none") }
+        );
+      }
+    } else {
+      creativeRes = await this.request<{ id: string }>(
+        `/${adAccountId}/adcreatives`,
+        { method: "POST", body: buildCreativeBody("none") }
+      );
+    }
+
+    await this.updateAdFields(params.adId, {
+      name: cleanAdName,
+      creativeId: creativeRes.id,
+    });
+    return { creativeId: creativeRes.id };
   }
 
   async fetchAdInsights(

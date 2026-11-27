@@ -4,34 +4,44 @@ import {
   isBrokenFacebookPermalink,
   MetaAdsApiError,
   MetaAdsService,
+  MetaCreativeItemInput,
   MetaTargetingInput,
   normalizeAdAccountId,
   normalizeFbObjectStoryId,
 } from "./meta-ads";
 import {
   appendAuditLog,
+  createAdCampaignAdRecord,
   createAdCampaignRecord,
   deleteAdCampaignRecord,
+  getAdCampaignAdById,
   getAdCampaignById,
   getCompanyById,
   getCompanySecrets,
   getDefaultAdAccount,
   listActiveAdCampaignsForMonitoring,
   listAdAccountsByCompany,
+  listAdCampaignAdsByCompany,
   listAdCampaignsByCompany,
   listPostsHistory,
+  updateAdCampaignAdRecord,
   updateAdCampaignRecord,
   updatePostRecord,
   upsertAdAccountConfig,
 } from "./store";
 import {
   AdAccountConfig,
+  AdCampaignAdRecord,
   AdCampaignRecord,
   AdChannel,
   AdDecisionVerdict,
   AdGeoLocationSelection,
+  AdInsightsDailyPoint,
   AdInsightsSnapshot,
+  AdInsightsWindow,
+  AdInsightsWindowMetrics,
   AdsAdvisorReport,
+  CreativePostInput,
   MetaAdObjective,
   ParsedCampaignPlan,
   PostChannelOrganicMetrics,
@@ -616,6 +626,7 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
     companyId: string;
     userId?: string | null;
     postId: string;
+    creatives?: CreativePostInput[];
     channel: AdChannel;
     userPrompt: string;
     adAccountId?: string | null;
@@ -645,16 +656,39 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
       );
     }
 
-    const post = posts.find((p) => p.id === params.postId);
-    if (!post) {
-      throw new Error("Post orgânico não encontrado para esta empresa.");
+    const rawCreatives: CreativePostInput[] =
+      params.creatives && params.creatives.length > 0
+        ? params.creatives
+        : [{ postId: params.postId }];
+
+    const seenPostIds = new Set<string>();
+    const selectedEntries: Array<{
+      post: (typeof posts)[number];
+      input: CreativePostInput;
+    }> = [];
+
+    for (const item of rawCreatives) {
+      const pid = String(item.postId || "").trim();
+      if (!pid || seenPostIds.has(pid)) continue;
+      seenPostIds.add(pid);
+      const found = posts.find((p) => p.id === pid);
+      if (!found) {
+        throw new Error(`Post orgânico (${pid}) não encontrado para esta empresa.`);
+      }
+      if (!found.fb_post_id && !found.ig_post_id && !found.image_urls_json?.[0]) {
+        throw new Error(
+          `O post "${found.headline}" não possui publicação no Facebook/Instagram nem imagem disponível para impulsionar na Meta.`
+        );
+      }
+      selectedEntries.push({ post: found, input: item });
+      if (selectedEntries.length >= 10) break;
     }
 
-    if (!post.fb_post_id && !post.ig_post_id && !post.image_urls_json?.[0]) {
-      throw new Error(
-        "Este post não possui publicação no Facebook/Instagram nem imagem disponível para impulsionar na Meta."
-      );
+    if (selectedEntries.length === 0) {
+      throw new Error("Selecione pelo menos 1 post publicado para impulsionar.");
     }
+
+    const post = selectedEntries[0].post;
 
     const requestedAccId = params.adAccountId
       ? normalizeAdAccountId(params.adAccountId)
@@ -675,8 +709,11 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
     const parsed = await CampaignLauncherService.parseCampaignPromptWithAI({
       companyName: company?.name || "Empresa",
       userPrompt: params.userPrompt,
-      postHeadline: post.headline,
-      postCaption: post.content_json?.legenda || "",
+      postHeadline: selectedEntries[0].input.headline?.trim() || post.headline,
+      postCaption:
+        selectedEntries[0].input.primaryText?.trim() ||
+        post.content_json?.legenda ||
+        "",
       adAccount: selectedAccount,
       channel: params.channel,
       keys: {
@@ -729,11 +766,40 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
         null,
     };
 
+    const creativeItems: MetaCreativeItemInput[] = selectedEntries.map(
+      ({ post: itemPost, input: itemInput }) => ({
+        postId: itemPost.id,
+        fbPostId: itemPost.fb_post_id,
+        igMediaId: itemPost.ig_post_id,
+        postImageUrl: itemPost.image_urls_json?.[0] || null,
+        postStoryImageUrl:
+          itemPost.story_image_urls_json?.[0] ||
+          itemPost.content_json?.story_image_urls?.[0] ||
+          null,
+        postHeadline: itemInput.headline?.trim() || itemPost.headline,
+        postCaption:
+          itemInput.primaryText?.trim() || itemPost.content_json?.legenda || "",
+        welcomeGreeting: params.overridePlan?.welcome_greeting ?? null,
+        welcomeAutofill: params.overridePlan?.welcome_autofill ?? null,
+      })
+    );
+
     const metaAds = new MetaAdsService(secrets.meta_access_token);
     const targeting = await CampaignLauncherService.resolveGeoTargeting(
       metaAds,
       plan
     );
+
+    const dbTargetingJson: Record<string, unknown> = {
+      ...(targeting as Record<string, unknown>),
+      _creative_defaults: {
+        destination_url: plan.destination_url || null,
+        pixel_id: params.overridePlan?.pixel_id ?? null,
+        url_tags: params.overridePlan?.url_tags ?? null,
+        welcome_greeting: params.overridePlan?.welcome_greeting ?? null,
+        welcome_autofill: params.overridePlan?.welcome_autofill ?? null,
+      },
+    };
 
     try {
       const created = await metaAds.createCampaignFromExistingPost({
@@ -760,12 +826,13 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
           post.story_image_urls_json?.[0] ||
           post.content_json?.story_image_urls?.[0] ||
           null,
-        postHeadline: post.headline,
-        postCaption: post.content_json?.legenda || "",
+        postHeadline: creativeItems[0].postHeadline,
+        postCaption: creativeItems[0].postCaption,
         welcomeGreeting: params.overridePlan?.welcome_greeting ?? null,
         welcomeAutofill: params.overridePlan?.welcome_autofill ?? null,
         pixelId: params.overridePlan?.pixel_id ?? null,
         urlTags: params.overridePlan?.url_tags ?? null,
+        creatives: creativeItems,
       });
 
       const saved = await createAdCampaignRecord({
@@ -782,7 +849,7 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
         daily_budget_cents: plan.daily_budget_cents,
         currency,
         duration_days: plan.no_end_date ? null : plan.duration_days,
-        targeting_json: targeting as Record<string, unknown>,
+        targeting_json: dbTargetingJson,
         source_story_id: created.sourceStoryId,
         meta_campaign_id: created.campaignId,
         meta_adset_id: created.adsetId,
@@ -792,8 +859,28 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
         created_by_user_id: params.userId || null,
       });
 
+      const savedAds = await Promise.all(
+        created.createdAds.map((item) =>
+          createAdCampaignAdRecord({
+            campaign_id: saved.id,
+            company_id: params.companyId,
+            post_id: item.postId,
+            ad_name: item.adName,
+            headline: item.headline,
+            primary_text: item.primaryText,
+            image_url: item.imageUrl,
+            story_image_url: item.storyImageUrl,
+            source_story_id: item.sourceStoryId || null,
+            meta_creative_id: item.creativeId,
+            meta_ad_id: item.adId,
+            status: item.status === "ERROR" ? "ERROR" : "PAUSED",
+            error_message: item.errorMessage || null,
+          })
+        )
+      );
+
       return {
-        campaign: saved,
+        campaign: { ...saved, ads: savedAds },
         plan,
         stepsLog: created.stepsLog,
       };
@@ -814,7 +901,7 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
         daily_budget_cents: plan.daily_budget_cents,
         currency,
         duration_days: plan.duration_days,
-        targeting_json: targeting as Record<string, unknown>,
+        targeting_json: dbTargetingJson,
         meta_campaign_id: partial?.campaignId || null,
         meta_adset_id: partial?.adsetId || null,
         meta_creative_id: partial?.creativeId || null,
@@ -935,39 +1022,341 @@ export class PerformanceAnalyzerService {
   }
 }
 
+function aggregateAdSnapshots(
+  snapshots: AdInsightsSnapshot[]
+): AdInsightsSnapshot {
+  if (snapshots.length === 0) return {};
+  if (snapshots.length === 1) return snapshots[0];
+
+  let spend = 0;
+  let impressions = 0;
+  let clicks = 0;
+  let conversions = 0;
+  let revenue = 0;
+  let frequency = 0;
+  let creativeFatigue = false;
+
+  const windowKeys: AdInsightsWindow[] = ["4d", "7d", "14d", "30d"];
+  const windows: Partial<Record<AdInsightsWindow, AdInsightsWindowMetrics>> = {};
+  const dailyMap = new Map<
+    string,
+    { spend: number; impressions: number; clicks: number; conversions: number; revenue: number }
+  >();
+
+  for (const snap of snapshots) {
+    spend += Number(snap.spend || 0);
+    impressions += Number(snap.impressions || 0);
+    clicks += Number(snap.clicks || 0);
+    conversions += Number(snap.conversions || 0);
+    revenue += Number(snap.revenue || 0);
+    frequency = Math.max(frequency, Number(snap.frequency || 0));
+    if (snap.creative_fatigue) creativeFatigue = true;
+
+    for (const pt of snap.daily || []) {
+      const cur = dailyMap.get(pt.date) || {
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        conversions: 0,
+        revenue: 0,
+      };
+      cur.spend += Number(pt.spend || 0);
+      cur.impressions += Number(pt.impressions || 0);
+      cur.clicks += Number(pt.clicks || 0);
+      cur.conversions += Number(pt.conversions || 0);
+      cur.revenue += Number(pt.revenue || 0);
+      dailyMap.set(pt.date, cur);
+    }
+  }
+
+  for (const wKey of windowKeys) {
+    const items = snapshots
+      .map((s) => s.windows?.[wKey])
+      .filter((w): w is AdInsightsWindowMetrics => Boolean(w));
+    if (items.length === 0) continue;
+    let wSpend = 0;
+    let wImpr = 0;
+    let wClicks = 0;
+    let wConv = 0;
+    let wRev = 0;
+    let wFreq = 0;
+    for (const w of items) {
+      wSpend += Number(w.spend || 0);
+      wImpr += Number(w.impressions || 0);
+      wClicks += Number(w.clicks || 0);
+      wConv += Number(w.conversions || 0);
+      wRev += Number(w.revenue || 0);
+      wFreq = Math.max(wFreq, Number(w.frequency || 0));
+    }
+    const wCpa = wConv > 0 ? Number((wSpend / wConv).toFixed(2)) : null;
+    windows[wKey] = {
+      spend: Number(wSpend.toFixed(2)),
+      impressions: wImpr,
+      clicks: wClicks,
+      ctr: wImpr > 0 ? Number(((wClicks / wImpr) * 100).toFixed(2)) : 0,
+      cpc: wClicks > 0 ? Number((wSpend / wClicks).toFixed(2)) : 0,
+      cpm: wImpr > 0 ? Number(((wSpend / wImpr) * 1000).toFixed(2)) : 0,
+      frequency: Number(wFreq.toFixed(2)),
+      conversions: wConv,
+      revenue: Number(wRev.toFixed(2)),
+      cpl: wCpa,
+      cpa: wCpa,
+      roas: wSpend > 0 && wRev > 0 ? Number((wRev / wSpend).toFixed(2)) : null,
+    };
+  }
+
+  const daily: AdInsightsDailyPoint[] = Array.from(dailyMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, d]) => ({
+      date,
+      spend: Number(d.spend.toFixed(2)),
+      impressions: d.impressions,
+      clicks: d.clicks,
+      conversions: d.conversions,
+      revenue: Number(d.revenue.toFixed(2)),
+      ctr: d.impressions > 0 ? Number(((d.clicks / d.impressions) * 100).toFixed(2)) : 0,
+      cpc: d.clicks > 0 ? Number((d.spend / d.clicks).toFixed(2)) : 0,
+    }));
+
+  const cpa = conversions > 0 ? Number((spend / conversions).toFixed(2)) : null;
+  return {
+    spend: Number(spend.toFixed(2)),
+    impressions,
+    clicks,
+    ctr: impressions > 0 ? Number(((clicks / impressions) * 100).toFixed(2)) : 0,
+    cpc: clicks > 0 ? Number((spend / clicks).toFixed(2)) : 0,
+    cpm: impressions > 0 ? Number(((spend / impressions) * 1000).toFixed(2)) : 0,
+    frequency: Number(frequency.toFixed(2)),
+    conversions,
+    revenue: Number(revenue.toFixed(2)),
+    cpl: cpa,
+    cpa,
+    roas: spend > 0 && revenue > 0 ? Number((revenue / spend).toFixed(2)) : null,
+    creative_fatigue: creativeFatigue,
+    windows,
+    daily,
+  };
+}
+
+function mapMetaEntityStatus(
+  status?: unknown,
+  effectiveStatus?: unknown
+): "ACTIVE" | "PAUSED" | "ARCHIVED" | null {
+  const eff = String(effectiveStatus || "").trim().toUpperCase();
+  if (eff === "DELETED" || eff === "ARCHIVED") {
+    return "ARCHIVED";
+  }
+  const st = String(status || "").trim().toUpperCase();
+  if (st === "ACTIVE") return "ACTIVE";
+  if (st === "PAUSED") return "PAUSED";
+  if (st === "ARCHIVED" || st === "DELETED") return "ARCHIVED";
+  return null;
+}
+
 /**
  * Módulo 3 (equiv. meta-metrics-fetcher): coleta insights nas janelas 4d, 7d, 14d e 30d,
- * aplica decide() e executa auto-pause quando autorizado no perfil da empresa.
+ * sincroniza alterações feitas no Gerenciador da Meta, aplica decide() e executa auto-pause.
  */
 export class MetricsFetcherWorker {
   static async syncCompanyCampaignMetrics(companyId: string): Promise<{
     campaignsUpdated: number;
+    metadataSynced: number;
     autoPaused: number;
     errors: string[];
   }> {
-    const [secrets, accounts, campaigns] = await Promise.all([
+    const [secrets, accounts, campaigns, allAds] = await Promise.all([
       getCompanySecrets(companyId),
       listAdAccountsByCompany(companyId, "META"),
       listAdCampaignsByCompany(companyId, 200),
+      listAdCampaignAdsByCompany(companyId),
     ]);
 
     const errors: string[] = [];
     if (!secrets.meta_access_token) {
       return {
         campaignsUpdated: 0,
+        metadataSynced: 0,
         autoPaused: 0,
         errors: ["Token da Meta ausente para esta empresa."],
       };
     }
 
-    const trackable = campaigns.filter(
+    const adsByCampaign = new Map<string, AdCampaignAdRecord[]>();
+    for (const ad of allAds) {
+      const arr = adsByCampaign.get(ad.campaign_id) || [];
+      arr.push(ad);
+      adsByCampaign.set(ad.campaign_id, arr);
+    }
+
+    const metaAds = new MetaAdsService(secrets.meta_access_token);
+    let metadataSynced = 0;
+
+    // 1) Sincronização Meta -> PilotFlow (nome, orçamento, status e novos anúncios do conjunto)
+    const syncableCampaigns = campaigns.filter(
       (c) =>
         c.provider === "META" &&
-        c.meta_ad_id &&
-        (c.status === "ACTIVE" || c.status === "PAUSED")
+        Boolean(c.meta_campaign_id) &&
+        (c.status === "ACTIVE" || c.status === "PAUSED" || c.status === "DRAFT")
     );
+
+    if (syncableCampaigns.length > 0) {
+      try {
+        const campaignIds = syncableCampaigns
+          .map((c) => c.meta_campaign_id)
+          .filter((id): id is string => Boolean(id));
+        const adsetIds = syncableCampaigns
+          .map((c) => c.meta_adset_id)
+          .filter((id): id is string => Boolean(id));
+        const existingAdIds = allAds
+          .map((a) => a.meta_ad_id)
+          .filter((id): id is string => Boolean(id));
+
+        const [campaignMeta, adsetMeta, existingAdMeta] = await Promise.all([
+          metaAds.fetchEntitiesMetadata(
+            campaignIds,
+            "id,name,status,effective_status"
+          ),
+          metaAds.fetchEntitiesMetadata(
+            adsetIds,
+            "id,name,daily_budget,status,effective_status"
+          ),
+          metaAds.fetchEntitiesMetadata(
+            existingAdIds,
+            "id,name,status,effective_status"
+          ),
+        ]);
+
+        for (const cmp of syncableCampaigns) {
+          const rCamp = cmp.meta_campaign_id
+            ? campaignMeta[cmp.meta_campaign_id]
+            : undefined;
+          const rAdSet = cmp.meta_adset_id
+            ? adsetMeta[cmp.meta_adset_id]
+            : undefined;
+
+          const cmpPatch: Partial<{
+            name: string;
+            daily_budget_cents: number;
+            status: "ACTIVE" | "PAUSED" | "ARCHIVED";
+          }> = {};
+
+          const remoteCampName =
+            typeof rCamp?.name === "string" ? rCamp.name.trim() : "";
+          if (remoteCampName && remoteCampName !== cmp.name) {
+            cmpPatch.name = remoteCampName;
+            cmp.name = remoteCampName;
+          }
+
+          const rawDailyBudget = rAdSet?.daily_budget;
+          const parsedBudget = Number(rawDailyBudget);
+          if (
+            rawDailyBudget !== undefined &&
+            Number.isFinite(parsedBudget) &&
+            parsedBudget > 0 &&
+            Math.round(parsedBudget) !== cmp.daily_budget_cents
+          ) {
+            cmpPatch.daily_budget_cents = Math.round(parsedBudget);
+            cmp.daily_budget_cents = Math.round(parsedBudget);
+          }
+
+          const mappedStatus = mapMetaEntityStatus(
+            rCamp?.status,
+            rCamp?.effective_status
+          );
+          if (mappedStatus && mappedStatus !== cmp.status) {
+            cmpPatch.status = mappedStatus;
+            cmp.status = mappedStatus;
+          }
+
+          if (Object.keys(cmpPatch).length > 0) {
+            await updateAdCampaignRecord(cmp.id, cmpPatch);
+            metadataSynced += 1;
+          }
+
+          const children = adsByCampaign.get(cmp.id) || [];
+          for (const ch of children) {
+            if (!ch.meta_ad_id) continue;
+            const rAd = existingAdMeta[ch.meta_ad_id];
+            if (!rAd) continue;
+
+            const adPatch: Partial<{
+              ad_name: string;
+              status: "ACTIVE" | "PAUSED" | "ARCHIVED";
+            }> = {};
+            const remoteAdName =
+              typeof rAd.name === "string" ? rAd.name.trim() : "";
+            if (remoteAdName && remoteAdName !== ch.ad_name) {
+              adPatch.ad_name = remoteAdName;
+              ch.ad_name = remoteAdName;
+            }
+            const mappedAdStatus = mapMetaEntityStatus(
+              rAd.status,
+              rAd.effective_status
+            );
+            if (mappedAdStatus && mappedAdStatus !== ch.status) {
+              adPatch.status = mappedAdStatus;
+              ch.status = mappedAdStatus;
+            }
+            if (Object.keys(adPatch).length > 0) {
+              await updateAdCampaignAdRecord(ch.id, adPatch);
+              metadataSynced += 1;
+            }
+          }
+
+          if (cmp.meta_adset_id && cmp.status !== "ARCHIVED") {
+            const remoteAdsInSet = await metaAds
+              .listAdsInAdSet(cmp.meta_adset_id)
+              .catch(() => []);
+            const knownMetaAdIds = new Set(
+              children.map((c) => c.meta_ad_id).filter(Boolean)
+            );
+            for (const rAd of remoteAdsInSet) {
+              if (!rAd.id || knownMetaAdIds.has(rAd.id)) continue;
+              const rStatus = mapMetaEntityStatus(
+                rAd.status,
+                rAd.effective_status
+              );
+              if (rStatus === "ARCHIVED") continue;
+
+              const imported = await createAdCampaignAdRecord({
+                campaign_id: cmp.id,
+                company_id: companyId,
+                post_id:
+                  rAd.id === cmp.meta_ad_id ? cmp.post_id || null : null,
+                ad_name: rAd.name,
+                headline: rAd.creative?.title?.trim() || rAd.name,
+                primary_text: rAd.creative?.body?.trim() || "",
+                image_url:
+                  rAd.creative?.image_url ||
+                  rAd.creative?.thumbnail_url ||
+                  null,
+                meta_creative_id: rAd.creative?.id || null,
+                meta_ad_id: rAd.id,
+                status: rStatus === "ACTIVE" ? "ACTIVE" : "PAUSED",
+              });
+              children.push(imported);
+              adsByCampaign.set(cmp.id, children);
+              metadataSynced += 1;
+            }
+          }
+        }
+      } catch (metaErr) {
+        errors.push(
+          `Sincronização cadastral: ${
+            metaErr instanceof Error ? metaErr.message : String(metaErr)
+          }`
+        );
+      }
+    }
+
+    const trackable = campaigns.filter((c) => {
+      if (c.provider !== "META") return false;
+      if (c.status !== "ACTIVE" && c.status !== "PAUSED") return false;
+      const children = adsByCampaign.get(c.id) || [];
+      return Boolean(c.meta_ad_id) || children.some((a) => Boolean(a.meta_ad_id));
+    });
     if (trackable.length === 0) {
-      return { campaignsUpdated: 0, autoPaused: 0, errors: [] };
+      return { campaignsUpdated: 0, metadataSynced, autoPaused: 0, errors };
     }
 
     const byAccount = new Map<string, AdCampaignRecord[]>();
@@ -977,7 +1366,6 @@ export class MetricsFetcherWorker {
       byAccount.set(cmp.ad_account_id, list);
     }
 
-    const metaAds = new MetaAdsService(secrets.meta_access_token);
     let campaignsUpdated = 0;
     let autoPaused = 0;
 
@@ -992,19 +1380,60 @@ export class MetricsFetcherWorker {
         };
 
       try {
-        const adIds = accountCampaigns
-          .map((c) => c.meta_ad_id)
-          .filter((id): id is string => Boolean(id));
-        const insightsMap = await metaAds.fetchMultiWindowAdInsights(
-          accountId,
-          adIds
-        );
+        const adIdSet = new Set<string>();
+        for (const cmp of accountCampaigns) {
+          const children = adsByCampaign.get(cmp.id) || [];
+          if (children.length > 0) {
+            for (const ch of children) {
+              if (
+                ch.meta_ad_id &&
+                (ch.status === "ACTIVE" || ch.status === "PAUSED")
+              ) {
+                adIdSet.add(ch.meta_ad_id);
+              }
+            }
+          } else if (cmp.meta_ad_id) {
+            adIdSet.add(cmp.meta_ad_id);
+          }
+        }
+
+        const adIds = Array.from(adIdSet);
+        const insightsMap =
+          adIds.length > 0
+            ? await metaAds.fetchMultiWindowAdInsights(accountId, adIds)
+            : {};
         const nowIso = new Date().toISOString();
 
         for (const cmp of accountCampaigns) {
-          const snapshot = cmp.meta_ad_id
-            ? insightsMap[cmp.meta_ad_id] || {}
-            : {};
+          const children = adsByCampaign.get(cmp.id) || [];
+          let snapshot: AdInsightsSnapshot = {};
+
+          if (children.length > 0) {
+            const childSnapshots: AdInsightsSnapshot[] = [];
+            for (const ch of children) {
+              if (!ch.meta_ad_id) continue;
+              const adSnap = insightsMap[ch.meta_ad_id] || {};
+              childSnapshots.push(adSnap);
+              const adDecision = PerformanceAnalyzerService.decide({
+                snapshot: adSnap,
+                account: accConfig,
+                campaignCreatedAt: ch.created_at || cmp.created_at,
+              });
+              await updateAdCampaignAdRecord(ch.id, {
+                last_verdict: adDecision.verdict,
+                last_verdict_reason: adDecision.reason,
+                last_insights_json: {
+                  ...adSnap,
+                  creative_fatigue: adDecision.creativeFatigue,
+                },
+                last_insights_at: nowIso,
+              });
+            }
+            snapshot = aggregateAdSnapshots(childSnapshots);
+          } else {
+            snapshot = cmp.meta_ad_id ? insightsMap[cmp.meta_ad_id] || {} : {};
+          }
+
           const decision = PerformanceAnalyzerService.decide({
             snapshot,
             account: accConfig,
@@ -1059,7 +1488,7 @@ export class MetricsFetcherWorker {
       }
     }
 
-    return { campaignsUpdated, autoPaused, errors };
+    return { campaignsUpdated, metadataSynced, autoPaused, errors };
   }
 
   static async runGlobalMonitoringCycle(companyIdFilter?: string | null): Promise<{
@@ -1289,11 +1718,52 @@ export class BudgetAndCreativeAdvisor {
  */
 export class CampaignOrchestratorService {
   static async getAdsDashboardState(companyId: string) {
-    const [secrets, adAccounts, campaigns] = await Promise.all([
+    const [secrets, adAccounts, rawCampaigns, rawAds] = await Promise.all([
       getCompanySecrets(companyId),
       listAdAccountsByCompany(companyId, "META"),
       listAdCampaignsByCompany(companyId, 100),
+      listAdCampaignAdsByCompany(companyId),
     ]);
+
+    const adsByCampaign = new Map<string, AdCampaignAdRecord[]>();
+    for (const ad of rawAds) {
+      const list = adsByCampaign.get(ad.campaign_id) || [];
+      list.push(ad);
+      adsByCampaign.set(ad.campaign_id, list);
+    }
+
+    const campaigns = rawCampaigns.map((cmp) => {
+      const childAds = adsByCampaign.get(cmp.id);
+      if (childAds && childAds.length > 0) {
+        return { ...cmp, ads: childAds };
+      }
+      if (cmp.meta_ad_id) {
+        const legacyAd: AdCampaignAdRecord = {
+          id: `legacy_${cmp.id}`,
+          campaign_id: cmp.id,
+          company_id: cmp.company_id,
+          post_id: cmp.post_id || null,
+          ad_name: cmp.name,
+          headline: cmp.name,
+          primary_text: cmp.user_prompt || "",
+          image_url: null,
+          story_image_url: null,
+          source_story_id: cmp.source_story_id || null,
+          meta_creative_id: cmp.meta_creative_id || null,
+          meta_ad_id: cmp.meta_ad_id,
+          status: cmp.status,
+          last_verdict: cmp.last_verdict || null,
+          last_verdict_reason: cmp.last_verdict_reason || null,
+          last_insights_json: cmp.last_insights_json || {},
+          last_insights_at: cmp.last_insights_at || null,
+          error_message: cmp.error_message || null,
+          created_at: cmp.created_at,
+          updated_at: cmp.updated_at,
+        };
+        return { ...cmp, ads: [legacyAd] };
+      }
+      return { ...cmp, ads: [] };
+    });
 
     return {
       has_meta_token: Boolean(secrets.meta_access_token),
@@ -1442,13 +1912,26 @@ export class CampaignOrchestratorService {
     const metaAds = new MetaAdsService(secrets.meta_access_token);
     await metaAds.toggleEntityStatus(campaign.meta_campaign_id, params.status);
 
-    // Garante ativação/pausa explícita também no AdSet e Ad quando ativar/pausar
     if (campaign.meta_adset_id && params.status !== "ARCHIVED") {
       await metaAds
         .toggleEntityStatus(campaign.meta_adset_id, params.status)
         .catch(() => null);
     }
-    if (campaign.meta_ad_id && params.status !== "ARCHIVED") {
+
+    const childAds = await listAdCampaignAdsByCompany(
+      params.companyId,
+      campaign.id
+    );
+    if (childAds.length > 0 && params.status !== "ARCHIVED") {
+      for (const ch of childAds) {
+        if (ch.meta_ad_id && ch.status !== "ARCHIVED" && ch.status !== "ERROR") {
+          await metaAds
+            .toggleEntityStatus(ch.meta_ad_id, params.status)
+            .catch(() => null);
+          await updateAdCampaignAdRecord(ch.id, { status: params.status });
+        }
+      }
+    } else if (campaign.meta_ad_id && params.status !== "ARCHIVED") {
       await metaAds
         .toggleEntityStatus(campaign.meta_ad_id, params.status)
         .catch(() => null);
@@ -1469,6 +1952,440 @@ export class CampaignOrchestratorService {
     });
 
     return updated;
+  }
+
+  static async toggleAdStatus(params: {
+    companyId: string;
+    adId: string;
+    status: "ACTIVE" | "PAUSED" | "ARCHIVED";
+    userId?: string | null;
+  }) {
+    const secrets = await getCompanySecrets(params.companyId);
+    if (!secrets.meta_access_token) {
+      throw new Error("Token Meta não configurado.");
+    }
+
+    if (params.adId.startsWith("legacy_")) {
+      const legacyCmpId = params.adId.slice("legacy_".length);
+      const cmp = await getAdCampaignById(legacyCmpId, params.companyId);
+      if (!cmp || !cmp.meta_ad_id) {
+        throw new Error("Anúncio não encontrado para esta campanha.");
+      }
+      const metaAds = new MetaAdsService(secrets.meta_access_token);
+      await metaAds.toggleEntityStatus(cmp.meta_ad_id, params.status);
+      return { id: params.adId, status: params.status };
+    }
+
+    const adRecord = await getAdCampaignAdById(params.adId, params.companyId);
+    if (!adRecord) {
+      throw new Error("Anúncio não encontrado para esta empresa.");
+    }
+    if (!adRecord.meta_ad_id) {
+      throw new Error("Este anúncio não possui meta_ad_id válido na Meta.");
+    }
+
+    const metaAds = new MetaAdsService(secrets.meta_access_token);
+    await metaAds.toggleEntityStatus(adRecord.meta_ad_id, params.status);
+    const updated = await updateAdCampaignAdRecord(adRecord.id, {
+      status: params.status,
+    });
+
+    await appendAuditLog({
+      company_id: params.companyId,
+      user_id: params.userId || null,
+      action: `AD_CREATIVE_STATUS_${params.status}`,
+      details_json: {
+        ad_campaign_ad_id: adRecord.id,
+        campaign_id: adRecord.campaign_id,
+        meta_ad_id: adRecord.meta_ad_id,
+      },
+    });
+
+    return updated;
+  }
+
+  static async addCreativesToCampaign(params: {
+    companyId: string;
+    campaignId: string;
+    creatives: CreativePostInput[];
+    userId?: string | null;
+  }): Promise<{
+    addedAds: AdCampaignAdRecord[];
+    failedCount: number;
+    stepsLog: string[];
+  }> {
+    const [secrets, campaign, existingAds, posts, accounts] =
+      await Promise.all([
+        getCompanySecrets(params.companyId),
+        getAdCampaignById(params.campaignId, params.companyId),
+        listAdCampaignAdsByCompany(params.companyId, params.campaignId),
+        listPostsHistory(params.companyId, 150),
+        listAdAccountsByCompany(params.companyId, "META"),
+      ]);
+
+    if (!campaign) {
+      throw new Error("Campanha não encontrada para esta empresa.");
+    }
+    if (campaign.provider !== "META") {
+      throw new Error("Adição de múltiplos criativos suportada apenas no Meta Ads.");
+    }
+    if (!campaign.meta_adset_id) {
+      throw new Error(
+        "Esta campanha não possui Conjunto de Anúncios (meta_adset_id) criado na Meta."
+      );
+    }
+    if (campaign.status === "ARCHIVED") {
+      throw new Error("Não é possível adicionar criativos a uma campanha arquivada.");
+    }
+    if (!secrets.meta_access_token || !secrets.fb_page_id) {
+      throw new Error(
+        "Token da Meta ou Página do Facebook (fb_page_id) não configurados."
+      );
+    }
+
+    const seen = new Set<string>();
+    const selectedEntries: Array<{
+      post: (typeof posts)[number];
+      input: CreativePostInput;
+    }> = [];
+
+    for (const item of params.creatives || []) {
+      const pid = String(item.postId || "").trim();
+      if (!pid || seen.has(pid)) continue;
+      seen.add(pid);
+      const found = posts.find((p) => p.id === pid);
+      if (!found) {
+        throw new Error(`Post (${pid}) não encontrado.`);
+      }
+      if (!found.fb_post_id && !found.ig_post_id && !found.image_urls_json?.[0]) {
+        throw new Error(
+          `Post "${found.headline}" não possui publicação nem imagem válida para Meta Ads.`
+        );
+      }
+      selectedEntries.push({ post: found, input: item });
+      if (selectedEntries.length >= 10) break;
+    }
+
+    if (selectedEntries.length === 0) {
+      throw new Error("Selecione pelo menos 1 post publicado para adicionar.");
+    }
+
+    const defaultsRaw = (campaign.targeting_json?._creative_defaults || {}) as {
+      destination_url?: string | null;
+      pixel_id?: string | null;
+      url_tags?: string | null;
+      welcome_greeting?: string | null;
+      welcome_autofill?: string | null;
+    };
+    const accountCfg = accounts.find(
+      (a) => a.ad_account_id === campaign.ad_account_id
+    );
+    const destinationUrl =
+      defaultsRaw.destination_url || accountCfg?.link_destino_padrao || null;
+
+    const metaAds = new MetaAdsService(secrets.meta_access_token);
+    const stepsLog: string[] = [];
+    const addedAds: AdCampaignAdRecord[] = [];
+    let failedCount = 0;
+
+    for (let i = 0; i < selectedEntries.length; i += 1) {
+      const { post, input } = selectedEntries[i];
+      const adResult = await metaAds.createAdInAdSet({
+        adAccountId: campaign.ad_account_id,
+        adsetId: campaign.meta_adset_id,
+        campaignName: campaign.name,
+        objective: normalizeObjective(campaign.objective),
+        destinationType: campaign.destination_type,
+        fbPageId: secrets.fb_page_id,
+        igUserId: secrets.ig_user_id,
+        destinationUrl,
+        pixelId: defaultsRaw.pixel_id ?? null,
+        urlTags: defaultsRaw.url_tags ?? null,
+        itemIndex: existingAds.length + 1 + i,
+        item: {
+          postId: post.id,
+          fbPostId: post.fb_post_id,
+          igMediaId: post.ig_post_id,
+          postImageUrl: post.image_urls_json?.[0] || null,
+          postStoryImageUrl:
+            post.story_image_urls_json?.[0] ||
+            post.content_json?.story_image_urls?.[0] ||
+            null,
+          postHeadline: input.headline?.trim() || post.headline,
+          postCaption:
+            input.primaryText?.trim() || post.content_json?.legenda || "",
+          welcomeGreeting: defaultsRaw.welcome_greeting ?? null,
+          welcomeAutofill: defaultsRaw.welcome_autofill ?? null,
+        },
+      });
+      stepsLog.push(...adResult.stepsLog);
+      if (adResult.status === "ERROR") failedCount += 1;
+
+      const savedAd = await createAdCampaignAdRecord({
+        campaign_id: campaign.id,
+        company_id: params.companyId,
+        post_id: adResult.postId,
+        ad_name: adResult.adName,
+        headline: adResult.headline,
+        primary_text: adResult.primaryText,
+        image_url: adResult.imageUrl,
+        story_image_url: adResult.storyImageUrl,
+        source_story_id: adResult.sourceStoryId || null,
+        meta_creative_id: adResult.creativeId,
+        meta_ad_id: adResult.adId,
+        status: adResult.status === "ERROR" ? "ERROR" : "PAUSED",
+        error_message: adResult.errorMessage || null,
+      });
+      addedAds.push(savedAd);
+
+      if (!campaign.meta_ad_id && adResult.adId) {
+        await updateAdCampaignRecord(campaign.id, {
+          meta_ad_id: adResult.adId,
+          meta_creative_id: adResult.creativeId,
+        });
+      }
+    }
+
+    await appendAuditLog({
+      company_id: params.companyId,
+      user_id: params.userId || null,
+      action: "AD_CAMPAIGN_CREATIVES_ADDED",
+      details_json: {
+        ad_campaign_id: campaign.id,
+        added_count: addedAds.length,
+        failed_count: failedCount,
+      },
+    });
+
+    return { addedAds, failedCount, stepsLog };
+  }
+
+  static async updateCampaignDetails(params: {
+    companyId: string;
+    campaignId: string;
+    name?: string;
+    dailyBudgetCents?: number;
+    userId?: string | null;
+  }) {
+    const [secrets, campaign] = await Promise.all([
+      getCompanySecrets(params.companyId),
+      getAdCampaignById(params.campaignId, params.companyId),
+    ]);
+
+    if (!campaign) {
+      throw new Error("Campanha não encontrada para esta empresa.");
+    }
+    if (campaign.provider !== "META") {
+      throw new Error("Edição direta suportada apenas para campanhas Meta Ads.");
+    }
+    if (!campaign.meta_campaign_id) {
+      throw new Error("Campanha sem meta_campaign_id criado na Meta Ads.");
+    }
+    if (campaign.status === "ARCHIVED" || campaign.status === "ERROR") {
+      throw new Error(
+        "Não é possível editar uma campanha com status ERROR ou ARCHIVED."
+      );
+    }
+    if (!secrets.meta_access_token) {
+      throw new Error("Token Meta não configurado.");
+    }
+
+    const nextName = params.name?.trim();
+    const nextBudget =
+      params.dailyBudgetCents !== undefined &&
+      Number.isFinite(params.dailyBudgetCents)
+        ? Math.round(params.dailyBudgetCents)
+        : undefined;
+
+    const metaAds = new MetaAdsService(secrets.meta_access_token);
+    const patch: Partial<{ name: string; daily_budget_cents: number }> = {};
+
+    if (nextName && nextName !== campaign.name) {
+      await metaAds.updateCampaignFields(campaign.meta_campaign_id, {
+        name: nextName,
+      });
+      patch.name = nextName;
+    }
+
+    if (nextBudget !== undefined && nextBudget !== campaign.daily_budget_cents) {
+      if (!campaign.meta_adset_id) {
+        throw new Error(
+          "Campanha sem Conjunto de Anúncios (meta_adset_id) para alterar orçamento."
+        );
+      }
+      await metaAds.updateAdSetFields(campaign.meta_adset_id, {
+        dailyBudgetCents: nextBudget,
+        currency: campaign.currency,
+      });
+      patch.daily_budget_cents = nextBudget;
+    }
+
+    if (Object.keys(patch).length === 0) {
+      return campaign;
+    }
+
+    const updated = await updateAdCampaignRecord(campaign.id, patch);
+
+    await appendAuditLog({
+      company_id: params.companyId,
+      user_id: params.userId || null,
+      action: "AD_CAMPAIGN_UPDATED",
+      details_json: {
+        ad_campaign_id: campaign.id,
+        meta_campaign_id: campaign.meta_campaign_id,
+        ...patch,
+      },
+    });
+
+    return updated;
+  }
+
+  static async updateAdDetails(params: {
+    companyId: string;
+    adId: string;
+    adName?: string;
+    headline?: string;
+    primaryText?: string;
+    userId?: string | null;
+  }) {
+    const secrets = await getCompanySecrets(params.companyId);
+    if (!secrets.meta_access_token || !secrets.fb_page_id) {
+      throw new Error(
+        "Token da Meta ou Página do Facebook (fb_page_id) não configurados."
+      );
+    }
+
+    const isLegacy = params.adId.startsWith("legacy_");
+    let adRecord = isLegacy
+      ? null
+      : await getAdCampaignAdById(params.adId, params.companyId);
+    const campaignId = isLegacy
+      ? params.adId.slice("legacy_".length)
+      : adRecord?.campaign_id || "";
+
+    const campaign = campaignId
+      ? await getAdCampaignById(campaignId, params.companyId)
+      : null;
+    if (!campaign) {
+      throw new Error("Campanha vinculada ao anúncio não encontrada.");
+    }
+
+    const targetMetaAdId = isLegacy
+      ? campaign.meta_ad_id || ""
+      : adRecord?.meta_ad_id || "";
+    if (!targetMetaAdId) {
+      throw new Error("Este anúncio não possui meta_ad_id válido na Meta.");
+    }
+
+    const posts = await listPostsHistory(params.companyId, 150);
+    const linkedPost =
+      posts.find((p) => p.id === (adRecord?.post_id || campaign.post_id)) ||
+      null;
+
+    const currentAdName = adRecord?.ad_name || campaign.name;
+    const currentHeadline =
+      adRecord?.headline || linkedPost?.headline || campaign.name;
+    const currentPrimaryText =
+      adRecord?.primary_text ||
+      linkedPost?.content_json?.legenda ||
+      campaign.user_prompt ||
+      "";
+    const imageUrl =
+      adRecord?.image_url || linkedPost?.image_urls_json?.[0] || null;
+
+    const nextAdName = params.adName?.trim() || currentAdName;
+    const nextHeadline =
+      params.headline !== undefined ? params.headline.trim() : currentHeadline;
+    const nextPrimaryText =
+      params.primaryText !== undefined
+        ? params.primaryText.trim()
+        : currentPrimaryText;
+
+    const creativeChanged =
+      nextHeadline !== currentHeadline || nextPrimaryText !== currentPrimaryText;
+    const nameChanged = nextAdName !== currentAdName;
+
+    if (!creativeChanged && !nameChanged) {
+      return adRecord || { id: params.adId };
+    }
+
+    const defaultsRaw = (campaign.targeting_json?._creative_defaults || {}) as {
+      destination_url?: string | null;
+      url_tags?: string | null;
+      welcome_greeting?: string | null;
+      welcome_autofill?: string | null;
+    };
+    const accounts = await listAdAccountsByCompany(params.companyId, "META");
+    const accCfg = accounts.find(
+      (a) => a.ad_account_id === campaign.ad_account_id
+    );
+
+    const metaAds = new MetaAdsService(secrets.meta_access_token);
+    const res = await metaAds.updateAdCreativeAndFields({
+      adAccountId: campaign.ad_account_id,
+      adId: targetMetaAdId,
+      adName: nextAdName,
+      headline: nextHeadline,
+      primaryText: nextPrimaryText,
+      imageUrl,
+      objective: normalizeObjective(campaign.objective),
+      destinationType: campaign.destination_type,
+      fbPageId: secrets.fb_page_id,
+      igUserId: secrets.ig_user_id,
+      destinationUrl:
+        defaultsRaw.destination_url || accCfg?.link_destino_padrao || null,
+      urlTags: defaultsRaw.url_tags ?? null,
+      welcomeGreeting: defaultsRaw.welcome_greeting ?? null,
+      welcomeAutofill: defaultsRaw.welcome_autofill ?? null,
+      creativeChanged,
+    });
+
+    if (isLegacy || !adRecord) {
+      adRecord = await createAdCampaignAdRecord({
+        campaign_id: campaign.id,
+        company_id: params.companyId,
+        post_id: linkedPost?.id || campaign.post_id || null,
+        ad_name: nextAdName,
+        headline: nextHeadline,
+        primary_text: nextPrimaryText,
+        image_url: imageUrl,
+        source_story_id: campaign.source_story_id || null,
+        meta_creative_id: res.creativeId || campaign.meta_creative_id || null,
+        meta_ad_id: targetMetaAdId,
+        status:
+          campaign.status === "ACTIVE" || campaign.status === "PAUSED"
+            ? campaign.status
+            : "PAUSED",
+      });
+    } else {
+      adRecord = await updateAdCampaignAdRecord(adRecord.id, {
+        ad_name: nextAdName,
+        headline: nextHeadline,
+        primary_text: nextPrimaryText,
+        ...(res.creativeId ? { meta_creative_id: res.creativeId } : {}),
+      });
+    }
+
+    if (res.creativeId && campaign.meta_ad_id === targetMetaAdId) {
+      await updateAdCampaignRecord(campaign.id, {
+        meta_creative_id: res.creativeId,
+      });
+    }
+
+    await appendAuditLog({
+      company_id: params.companyId,
+      user_id: params.userId || null,
+      action: "AD_CREATIVE_UPDATED",
+      details_json: {
+        ad_campaign_id: campaign.id,
+        ad_campaign_ad_id: adRecord?.id || params.adId,
+        meta_ad_id: targetMetaAdId,
+        creative_recreated: creativeChanged,
+        new_creative_id: res.creativeId,
+      },
+    });
+
+    return adRecord;
   }
 
   static async refreshMetricsNow(companyId: string) {

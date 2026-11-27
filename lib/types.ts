@@ -342,6 +342,35 @@ export interface AdAccountConfig {
   updated_at: string;
 }
 
+export interface CreativePostInput {
+  postId: string;
+  headline?: string | null;
+  primaryText?: string | null;
+}
+
+export interface AdCampaignAdRecord {
+  id: string;
+  campaign_id: string;
+  company_id: string;
+  post_id?: string | null;
+  ad_name: string;
+  headline: string;
+  primary_text: string;
+  image_url?: string | null;
+  story_image_url?: string | null;
+  source_story_id?: string | null;
+  meta_creative_id?: string | null;
+  meta_ad_id?: string | null;
+  status: AdCampaignStatus;
+  last_verdict?: AdDecisionVerdict | null;
+  last_verdict_reason?: string | null;
+  last_insights_json: AdInsightsSnapshot;
+  last_insights_at?: string | null;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AdCampaignRecord {
   id: string;
   company_id: string;
@@ -372,6 +401,7 @@ export interface AdCampaignRecord {
   created_by_user_id?: string | null;
   created_at: string;
   updated_at: string;
+  ads?: AdCampaignAdRecord[];
 }
 
 export interface AdGeoLocationSelection {

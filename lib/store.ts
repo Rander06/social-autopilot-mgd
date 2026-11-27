@@ -9,6 +9,7 @@ import {
 import { LUMINOUS_THEME_PRESETS, NICHE_TOPIC_TEMPLATES } from "./presets";
 import {
   AdAccountConfig,
+  AdCampaignAdRecord,
   AdCampaignRecord,
   AdCampaignStatus,
   AdChannel,
@@ -44,6 +45,7 @@ interface InMemoryDatabase {
   tips: ImprovementTip[];
   ad_accounts: AdAccountConfig[];
   ad_campaigns: AdCampaignRecord[];
+  ad_campaign_ads: AdCampaignAdRecord[];
   seededSupabase: boolean;
 }
 
@@ -392,6 +394,7 @@ function createInitialSeedData(): InMemoryDatabase {
     tips: [],
     ad_accounts: [],
     ad_campaigns: [],
+    ad_campaign_ads: [],
     seededSupabase: false,
   };
 }
@@ -3353,6 +3356,8 @@ export async function createAdCampaignRecord(input: {
 export async function updateAdCampaignRecord(
   campaignId: string,
   patch: Partial<{
+    name: string;
+    daily_budget_cents: number;
     status: AdCampaignStatus;
     meta_campaign_id: string | null;
     meta_adset_id: string | null;
@@ -3419,5 +3424,210 @@ export async function deleteAdCampaignRecord(
   mem.ad_campaigns = mem.ad_campaigns.filter(
     (c) => !(c.id === campaignId && c.company_id === companyId)
   );
+  mem.ad_campaign_ads = mem.ad_campaign_ads.filter(
+    (a) => !(a.campaign_id === campaignId && a.company_id === companyId)
+  );
   return deleted || mem.ad_campaigns.length < before;
+}
+
+function normalizeAdCampaignAdRow(row: AdCampaignAdRecord): AdCampaignAdRecord {
+  return {
+    ...row,
+    headline: row.headline || "",
+    primary_text: row.primary_text || "",
+    last_insights_json:
+      row.last_insights_json && typeof row.last_insights_json === "object"
+        ? row.last_insights_json
+        : {},
+  };
+}
+
+export async function listAdCampaignAdsByCompany(
+  companyId: string,
+  campaignId?: string
+): Promise<AdCampaignAdRecord[]> {
+  await ensureSeededInSupabase();
+  if (isSupabaseConfigured()) {
+    try {
+      const cmpFilter = campaignId
+        ? `&campaign_id=eq.${encodeURIComponent(campaignId)}`
+        : "";
+      const rows = await sbRequest<AdCampaignAdRecord[]>(
+        `ad_campaign_ads?company_id=eq.${encodeURIComponent(
+          companyId
+        )}${cmpFilter}&order=created_at.asc&limit=500`
+      );
+      return rows.map(normalizeAdCampaignAdRow);
+    } catch {
+      // Fallback para memória caso a tabela ad_campaign_ads ainda não exista no Supabase
+    }
+  }
+  return getMemDb()
+    .ad_campaign_ads.filter(
+      (a) =>
+        a.company_id === companyId &&
+        (!campaignId || a.campaign_id === campaignId)
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    )
+    .map(normalizeAdCampaignAdRow);
+}
+
+export async function getAdCampaignAdById(
+  adId: string,
+  companyId?: string
+): Promise<AdCampaignAdRecord | null> {
+  await ensureSeededInSupabase();
+  if (isSupabaseConfigured()) {
+    try {
+      const companyFilter = companyId
+        ? `&company_id=eq.${encodeURIComponent(companyId)}`
+        : "";
+      const rows = await sbRequest<AdCampaignAdRecord[]>(
+        `ad_campaign_ads?id=eq.${encodeURIComponent(adId)}${companyFilter}&limit=1`
+      );
+      return rows[0] ? normalizeAdCampaignAdRow(rows[0]) : null;
+    } catch {
+      // Fallback para memória
+    }
+  }
+  const found = getMemDb().ad_campaign_ads.find(
+    (a) => a.id === adId && (!companyId || a.company_id === companyId)
+  );
+  return found ? normalizeAdCampaignAdRow(found) : null;
+}
+
+export async function createAdCampaignAdRecord(input: {
+  campaign_id: string;
+  company_id: string;
+  post_id?: string | null;
+  ad_name: string;
+  headline?: string;
+  primary_text?: string;
+  image_url?: string | null;
+  story_image_url?: string | null;
+  source_story_id?: string | null;
+  meta_creative_id?: string | null;
+  meta_ad_id?: string | null;
+  status?: AdCampaignStatus;
+  error_message?: string | null;
+}): Promise<AdCampaignAdRecord> {
+  const nowIso = new Date().toISOString();
+  const entry: AdCampaignAdRecord = {
+    id: generateId("adad"),
+    campaign_id: input.campaign_id,
+    company_id: input.company_id,
+    post_id: input.post_id || null,
+    ad_name: input.ad_name,
+    headline: input.headline || "",
+    primary_text: input.primary_text || "",
+    image_url: input.image_url || null,
+    story_image_url: input.story_image_url || null,
+    source_story_id: input.source_story_id || null,
+    meta_creative_id: input.meta_creative_id || null,
+    meta_ad_id: input.meta_ad_id || null,
+    status: input.status || "PAUSED",
+    last_verdict: null,
+    last_verdict_reason: null,
+    last_insights_json: {},
+    last_insights_at: null,
+    error_message: input.error_message || null,
+    created_at: nowIso,
+    updated_at: nowIso,
+  };
+
+  let persistedInSupabase = false;
+  if (isSupabaseConfigured()) {
+    try {
+      await sbRequest("ad_campaign_ads", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(entry),
+      });
+      persistedInSupabase = true;
+    } catch {
+      // Fallback para memória
+    }
+  }
+
+  if (!persistedInSupabase) {
+    getMemDb().ad_campaign_ads.push(entry);
+  }
+
+  return normalizeAdCampaignAdRow(entry);
+}
+
+export async function updateAdCampaignAdRecord(
+  adId: string,
+  patch: Partial<{
+    ad_name: string;
+    headline: string;
+    primary_text: string;
+    status: AdCampaignStatus;
+    meta_creative_id: string | null;
+    meta_ad_id: string | null;
+    last_verdict: AdDecisionVerdict | null;
+    last_verdict_reason: string | null;
+    last_insights_json: AdInsightsSnapshot;
+    last_insights_at: string | null;
+    error_message: string | null;
+  }>
+): Promise<AdCampaignAdRecord | null> {
+  const payload = {
+    ...patch,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (isSupabaseConfigured()) {
+    try {
+      const rows = await sbRequest<AdCampaignAdRecord[]>(
+        `ad_campaign_ads?id=eq.${encodeURIComponent(adId)}`,
+        {
+          method: "PATCH",
+          headers: { Prefer: "return=representation" },
+          body: JSON.stringify(payload),
+        }
+      );
+      if (rows?.[0]) return normalizeAdCampaignAdRow(rows[0]);
+    } catch {
+      // Fallback para memória
+    }
+  }
+
+  const mem = getMemDb();
+  const idx = mem.ad_campaign_ads.findIndex((a) => a.id === adId);
+  if (idx >= 0) {
+    mem.ad_campaign_ads[idx] = { ...mem.ad_campaign_ads[idx], ...payload };
+    return normalizeAdCampaignAdRow(mem.ad_campaign_ads[idx]);
+  }
+  return null;
+}
+
+export async function deleteAdCampaignAdRecord(
+  adId: string,
+  companyId: string
+): Promise<boolean> {
+  let deleted = false;
+  if (isSupabaseConfigured()) {
+    try {
+      await sbRequest(
+        `ad_campaign_ads?id=eq.${encodeURIComponent(
+          adId
+        )}&company_id=eq.${encodeURIComponent(companyId)}`,
+        { method: "DELETE" }
+      );
+      deleted = true;
+    } catch {
+      // fallback memória
+    }
+  }
+
+  const mem = getMemDb();
+  const before = mem.ad_campaign_ads.length;
+  mem.ad_campaign_ads = mem.ad_campaign_ads.filter(
+    (a) => !(a.id === adId && a.company_id === companyId)
+  );
+  return deleted || mem.ad_campaign_ads.length < before;
 }
