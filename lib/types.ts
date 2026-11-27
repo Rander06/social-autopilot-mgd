@@ -249,6 +249,21 @@ export type AdCampaignStatus =
   | "ARCHIVED"
   | "ERROR";
 export type AdDecisionVerdict = "ESCALAR" | "MANTER" | "PAUSAR";
+export type AdInsightsWindow = "4d" | "7d" | "14d" | "30d";
+
+export interface AdInsightsWindowMetrics {
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  cpc: number;
+  cpm: number;
+  frequency: number;
+  conversions: number;
+  cpl: number | null;
+  cpa: number | null;
+  roas: number | null;
+}
 
 export interface AdInsightsSnapshot {
   spend?: number;
@@ -256,9 +271,14 @@ export interface AdInsightsSnapshot {
   clicks?: number;
   ctr?: number;
   cpc?: number;
+  cpm?: number;
+  frequency?: number;
   conversions?: number;
+  cpl?: number | null;
   cpa?: number | null;
   roas?: number | null;
+  creative_fatigue?: boolean;
+  windows?: Partial<Record<AdInsightsWindow, AdInsightsWindowMetrics>>;
   raw_actions?: Array<{ action_type: string; value: string }>;
 }
 
@@ -311,4 +331,38 @@ export interface AdCampaignRecord {
   created_by_user_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ParsedCampaignPlan {
+  name: string;
+  objective: MetaAdObjective;
+  optimization_goal: string;
+  destination_type: string | null;
+  daily_budget_cents: number;
+  duration_days: number | null;
+  location_query: string;
+  age_min: number;
+  age_max: number;
+  genders: Array<1 | 2>;
+  destination_url: string | null;
+  reasoning: string;
+  parser_provider: string;
+}
+
+export interface AdsAdvisorReport {
+  generated_at: string;
+  budget_recommendations: Array<{
+    campaign_id?: string;
+    campaign_name?: string;
+    action: "ESCALAR" | "PAUSAR" | "MANTER" | "REALOCAR";
+    title: string;
+    reason: string;
+  }>;
+  creative_hooks: Array<{
+    angle: string;
+    headline_suggestion: string;
+    hook_text: string;
+    based_on_post_id?: string | null;
+  }>;
+  provider_used: string;
 }

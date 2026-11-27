@@ -75,6 +75,22 @@ Quando o cliente clicar em **"Criar Campanha"** em um post já publicado e preen
 ## 7. Roadmap de Implementação no Código
 1. **[Concluído]** Inspecionar autenticação Meta atual (`integrations.meta_token_enc`, `ig_user_id`, `fb_page_id`) e armazenamento dos IDs orgânicos (`posts_history.ig_post_id` e `fb_post_id`).
 2. **[Concluído]** Criar a migration SQL (`supabase/migration_meta_ads.sql`), atualizar `supabase/schema.sql`, criar tipos em `lib/types.ts` e CRUD multi-tenant por `company_id` em `lib/store.ts` para `ad_accounts` e `ad_campaigns`.
-3. Implementar o serviço `MetaAdsService` em Node.js (`v26.0`) com: `listAdAccounts()`, `searchGeoLocations()`, `createCampaignFromExistingPost()`, `toggleEntityStatus()` e `fetchAdInsights()`.
-4. Criar o endpoint de IA (Structured Output) que recebe o comando em linguagem natural no modal + perfil da `ad_account` e gera o payload validado para o `MetaAdsService`, além do motor `decide()` e da rota `GET /api/cron/monitorar-campanhas`.
-5. Criar os componentes de UI (botão **"Impulsionar / Criar Campanha"** nos posts publicados + modal de criação rápida com prévia antes de ativar + seletor/perfil de conta de anúncios nas configurações do cliente + badge *"Em breve"* para TikTok Ads).
+3. **[Concluído]** Implementar o serviço `MetaAdsService` em Node.js (`lib/meta-ads.ts`, Graph API `v26.0`) com: `listAdAccounts()`, `checkAdsPermissions()`, `searchGeoLocations()`, `createCampaignFromExistingPost()`, `toggleEntityStatus()` e `fetchAdInsights()`.
+4. **[Concluído]** Criar os 5 serviços adaptados da arquitetura ZX LAB (`lib/ads-orchestrator.ts`), endpoint `/api/ads` (Structured Output + gestão) e cron serverless `GET /api/cron/monitorar-campanhas` (janelas 4d/7d/14d/30d + motor `decide()`).
+5. **[Concluído]** Criar os componentes de UI (`app/components/CampaignsModule.tsx` + `app/page.tsx`): aba **"Campanhas"**, botão **"Impulsionar / Criar Campanha"** nos posts publicados + modal de criação rápida com prévia IA + seletor/perfil de conta de anúncios (`decide()`) + badge *"Em breve"* para TikTok Ads.
+
+---
+
+## 8. Mapeamento das Skills (Modelo ZX LAB adaptado para Backend Node.js)
+Em vez de arquivos `SKILL.md` locais, o backend deve implementar a lógica dos 5 módulos da arquitetura ZX LAB como serviços/prompts especializados:
+
+1. **Orquestrador (`CampaignOrchestratorService`):**
+   * Recebe a intenção do usuário no modal ou dashboard, consulta o perfil de metas do cliente (`decide()`) e os dados recentes da conta, e roteia para o serviço adequado.
+2. **Lançador de Campanhas (`CampaignLauncherService` — equiv. `meta-campaign-launcher`):**
+   * Converte o comando em linguagem natural (ex: *"R$ 50/dia para leads em Uberaba"*) em JSON estruturado via LLM e cria Campanha + Conjunto + Anúncio apontando para o `post_id`/`ig_media_id` existente, sempre em `PAUSED`.
+3. **Coletor de Métricas (`MetricsFetcherWorker` — equiv. `meta-metrics-fetcher`):**
+   * Cron job que busca insights da Graph API nas janelas de **4, 7, 14 e 30 dias** (CPL, CPA, ROAS, CPM, CTR, CPC e Frequência) e salva no banco para alimentar o dashboard do cliente sem depender da API em tempo real a cada clique.
+4. **Analisador de Performance (`PerformanceAnalyzerService` — equiv. `meta-performance-analyzer`):**
+   * Cruza as métricas coletadas com os limiares do cliente (`cpa_maximo`, `roas_minimo`, `amostra_minima`) e gera o veredito **ESCALAR / MATAR / MANTER** com explicação gerada por IA (identificando fadiga criativa quando a frequência sobe e o CTR cai).
+5. **Otimizador de Orçamento & Copy (`BudgetAndCreativeAdvisor` — equiv. `meta-budget-optimizer` e `meta-creative-brief`):**
+   * Sugere no painel de onde tirar verba (conjuntos com CPA estourado) e para onde mover (conjuntos vencedores), além de gerar novos ganchos de copy/roteiro para o módulo de criação orgânica do SaaS com base nos posts impulsionados que mais converteram.

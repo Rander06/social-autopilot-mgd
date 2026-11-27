@@ -18,6 +18,11 @@ import {
   TIP_ENCOURAGEMENT_TEXT,
 } from "@/lib/support";
 import {
+  BoostCampaignModal,
+  CampaignsPanel,
+} from "./components/CampaignsModule";
+import {
+  AdAccountConfig,
   AIProvider,
   AIPhotoMode,
   ApprovalMode,
@@ -117,6 +122,7 @@ type ClientTab =
   | "brand"
   | "integrations"
   | "history"
+  | "campaigns"
   | "support";
 
 type AdminTab = "overview" | "companies" | "plans" | "audit" | "tips";
@@ -1315,6 +1321,33 @@ export default function SaasAppPage() {
   const [uploadingPhotoTopicId, setUploadingPhotoTopicId] = useState<
     string | null
   >(null);
+
+  // Paid Campaigns (Meta Ads)
+  const [boostModalPost, setBoostModalPost] = useState<PostHistoryItem | null>(
+    null
+  );
+  const [companyAdAccounts, setCompanyAdAccounts] = useState<AdAccountConfig[]>(
+    []
+  );
+  const [campaignsRefreshKey, setCampaignsRefreshKey] = useState(0);
+
+  async function handleOpenBoostModal(post: PostHistoryItem) {
+    setBoostModalPost(post);
+    if (workspace && companyAdAccounts.length === 0) {
+      try {
+        const res = await fetch(
+          `/api/ads?companyId=${encodeURIComponent(workspace.company.id)}`,
+          { cache: "no-store" }
+        );
+        const data = await res.json();
+        if (res.ok && Array.isArray(data.ad_accounts)) {
+          setCompanyAdAccounts(data.ad_accounts as AdAccountConfig[]);
+        }
+      } catch {
+        // segue abrindo o modal normalmente
+      }
+    }
+  }
 
   // Studio Manual
   const studioInitializedCompanyRef = useRef<string | null>(null);
@@ -4079,6 +4112,7 @@ export default function SaasAppPage() {
                   ["brand", "Identidade Visual"],
                   ["integrations", "Integrações (Multi-IA & Redes)"],
                   ["history", "Histórico de Posts"],
+                  ["campaigns", "Campanhas"],
                   ["support", "Suporte & Dicas"],
                 ] as Array<[ClientTab, string]>
               ).map(([tabKey, label]) => (
@@ -7657,6 +7691,16 @@ export default function SaasAppPage() {
                                     ? "Visualizar & Editar Rascunho"
                                     : "Visualizar / Reabrir no Estúdio"}
                                 </button>
+                                {p.status === "PUBLISHED" &&
+                                  (p.ig_post_id || p.fb_post_id) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleOpenBoostModal(p)}
+                                      className="rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-xs hover:opacity-95"
+                                    >
+                                      Impulsionar / Criar Campanha
+                                    </button>
+                                  )}
                                 {p.status === "PENDING_APPROVAL" && (
                                   <>
                                     <button
@@ -7720,7 +7764,31 @@ export default function SaasAppPage() {
                 );
               })()}
 
-            {/* ---------- ABA 7: SUPORTE & CAIXA DE DICAS ---------- */}
+            {/* ---------- ABA 7: CAMPANHAS (TRÁFEGO PAGO) ---------- */}
+            {clientTab === "campaigns" && (
+              <CampaignsPanel
+                companyId={workspace.company.id}
+                publishedPosts={workspace.posts}
+                refreshKey={campaignsRefreshKey}
+                onOpenBoostModal={(post) => void handleOpenBoostModal(post)}
+                onOpenIntegrations={() => setClientTab("integrations")}
+                onAccountsLoaded={setCompanyAdAccounts}
+                onUseHookInStudio={(hookPrompt) => {
+                  setStudioTopicId("__free__");
+                  setStudioTitle("");
+                  setStudioPrompt(hookPrompt);
+                  setStudioPhotoMode("AI_FULL_CREATIVE");
+                  setStudioPreview(null);
+                  setClientTab("studio");
+                  setGlobalNotice({
+                    type: "success",
+                    text: "Gancho vencedor carregado no Estúdio Manual! Ajuste se desejar e gere uma nova prévia.",
+                  });
+                }}
+              />
+            )}
+
+            {/* ---------- ABA 8: SUPORTE & CAIXA DE DICAS ---------- */}
             {clientTab === "support" && (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -7898,6 +7966,29 @@ export default function SaasAppPage() {
                   </div>
                 </div>
               </div>
+            )}
+            {boostModalPost && workspace && (
+              <BoostCampaignModal
+                companyId={workspace.company.id}
+                post={boostModalPost}
+                adAccounts={companyAdAccounts}
+                defaultAccountId={
+                  companyAdAccounts.find((a) => a.is_default)?.ad_account_id ||
+                  companyAdAccounts[0]?.ad_account_id ||
+                  null
+                }
+                onClose={() => setBoostModalPost(null)}
+                onOpenAccountSetup={() => setClientTab("campaigns")}
+                onCreated={(campaign) => {
+                  setBoostModalPost(null);
+                  setCampaignsRefreshKey((prev) => prev + 1);
+                  setClientTab("campaigns");
+                  setGlobalNotice({
+                    type: "success",
+                    text: `Campanha "${campaign.name}" criada com sucesso na Meta Ads (status: PAUSED)! Ative quando estiver pronta.`,
+                  });
+                }}
+              />
             )}
           </div>
         )}
