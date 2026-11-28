@@ -3,6 +3,7 @@ import { CampaignOrchestratorService } from "@/lib/ads-orchestrator";
 import { getSessionFromRequest, SessionPayload } from "@/lib/crypto";
 import {
   AdChannel,
+  AdGeoLocationSelection,
   CreativePostInput,
   ParsedCampaignPlan,
 } from "@/lib/types";
@@ -331,6 +332,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ad });
     }
 
+    if (action === "get_campaign_edit_details") {
+      const campaignId = String(body.campaignId || "").trim();
+      if (!campaignId) {
+        return NextResponse.json(
+          { error: "Informe campaignId." },
+          { status: 400 }
+        );
+      }
+      const details =
+        await CampaignOrchestratorService.getCampaignEditDetails(
+          companyId,
+          campaignId
+        );
+      return NextResponse.json({ details });
+    }
+
     if (action === "update_campaign") {
       const campaignId = String(body.campaignId || "").trim();
       if (!campaignId) {
@@ -341,15 +358,75 @@ export async function POST(request: NextRequest) {
       }
       const name =
         typeof body.name === "string" ? body.name.trim() : undefined;
+      const adsetName =
+        typeof body.adsetName === "string" ? body.adsetName.trim() : undefined;
       const dailyBudgetCents =
         body.dailyBudgetCents !== undefined && body.dailyBudgetCents !== null
           ? Number(body.dailyBudgetCents)
           : undefined;
+      const audienceChanged = Boolean(body.audienceChanged);
+      const ageMin =
+        body.ageMin !== undefined && body.ageMin !== null
+          ? Number(body.ageMin)
+          : undefined;
+      const ageMax =
+        body.ageMax !== undefined && body.ageMax !== null
+          ? Number(body.ageMax)
+          : undefined;
+      const genders = Array.isArray(body.genders)
+        ? (body.genders as Array<1 | 2>)
+        : undefined;
+      const locationQuery =
+        typeof body.locationQuery === "string"
+          ? body.locationQuery.trim()
+          : undefined;
+      const locationRadiusKm =
+        body.locationRadiusKm !== undefined && body.locationRadiusKm !== null
+          ? Number(body.locationRadiusKm)
+          : undefined;
+      const selectedLocation =
+        body.selectedLocation && typeof body.selectedLocation === "object"
+          ? (body.selectedLocation as AdGeoLocationSelection)
+          : body.selectedLocation === null
+            ? null
+            : undefined;
+      const scheduleChanged = Boolean(body.scheduleChanged);
+      const startTime =
+        typeof body.startTime === "string"
+          ? body.startTime.trim() || null
+          : body.startTime === null
+            ? null
+            : undefined;
+      const endTime =
+        typeof body.endTime === "string"
+          ? body.endTime.trim() || null
+          : body.endTime === null
+            ? null
+            : undefined;
+      const noEndDate =
+        typeof body.noEndDate === "boolean" ? body.noEndDate : undefined;
+      const adNames = Array.isArray(body.adNames)
+        ? (body.adNames as Array<{ id: string; adName: string }>)
+        : undefined;
+
       const campaign = await CampaignOrchestratorService.updateCampaignDetails({
         companyId,
         campaignId,
         name,
+        adsetName,
         dailyBudgetCents,
+        audienceChanged,
+        ageMin,
+        ageMax,
+        genders,
+        locationQuery,
+        locationRadiusKm,
+        selectedLocation,
+        scheduleChanged,
+        startTime,
+        endTime,
+        noEndDate,
+        adNames,
         userId: session.userId,
       });
       return NextResponse.json({ campaign });

@@ -2160,16 +2160,186 @@ export class CampaignOrchestratorService {
     return { addedAds, failedCount, stepsLog };
   }
 
+  static async getCampaignEditDetails(companyId: string, campaignId: string) {
+    const [secrets, campaign] = await Promise.all([
+      getCompanySecrets(companyId),
+      getAdCampaignById(campaignId, companyId),
+    ]);
+    if (!campaign) {
+      throw new Error("Campanha não encontrada para esta empresa.");
+    }
+
+    let adsetDetails: Awaited<
+      ReturnType<MetaAdsService["fetchAdSetDetails"]>
+    > | null = null;
+    if (
+      campaign.provider === "META" &&
+      campaign.meta_adset_id &&
+      secrets.meta_access_token
+    ) {
+      const metaAds = new MetaAdsService(secrets.meta_access_token);
+      adsetDetails = await metaAds
+        .fetchAdSetDetails(campaign.meta_adset_id)
+        .catch(() => null);
+    }
+
+    const dbTargeting = (campaign.targeting_json || {}) as Record<
+      string,
+      unknown
+    >;
+    const liveTargeting = (adsetDetails?.targeting || dbTargeting) as Record<
+      string,
+      unknown
+    >;
+    const geo = (liveTargeting.geo_locations || {}) as {
+      countries?: string[];
+      cities?: Array<{ key?: string; radius?: number }>;
+      regions?: Array<{ key?: string }>;
+      neighborhoods?: Array<{ key?: string }>;
+      subcities?: Array<{ key?: string }>;
+      zips?: Array<{ key?: string }>;
+      custom_locations?: Array<{
+        latitude?: number;
+        longitude?: number;
+        radius?: number;
+        name?: string;
+      }>;
+    };
+
+    const storedLabel =
+      typeof dbTargeting._location_label === "string"
+        ? dbTargeting._location_label.trim()
+        : "";
+    let locationSummary = storedLabel;
+    let locationRadiusKm = 20;
+
+    if (geo.custom_locations?.length) {
+      const pin = geo.custom_locations[0];
+      locationRadiusKm = Number(pin.radius || 5);
+      const isGenericStored =
+        !locationSummary || /^bra[sz]il/i.test(locationSummary);
+      if (isGenericStored) {
+        let friendlyName = pin.name?.trim() || "";
+        if (
+          !friendlyName &&
+          typeof pin.latitude === "number" &&
+          typeof pin.longitude === "number"
+        ) {
+          try {
+            const revRes = await fetch(
+              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${pin.latitude}&lon=${pin.longitude}&zoom=14&accept-language=pt-BR`,
+              {
+                headers: { "User-Agent": "SocialPilotFlow/1.0" },
+                signal: AbortSignal.timeout(2500),
+              }
+            );
+            if (revRes.ok) {
+              const revData = (await revRes.json()) as {
+                address?: {
+                  suburb?: string;
+                  neighbourhood?: string;
+                  city?: string;
+                  town?: string;
+                  municipality?: string;
+                  state?: string;
+                };
+              };
+              const addr = revData.address;
+              const neigh = addr?.suburb || addr?.neighbourhood || "";
+              const city = addr?.city || addr?.town || addr?.municipality || "";
+              friendlyName = [neigh, city, addr?.state]
+                .filter(Boolean)
+                .slice(0, 2)
+                .join(", ");
+            }
+          } catch {
+            // fallback para nome genérico abaixo
+          }
+        }
+        locationSummary = friendlyName
+          ? `${friendlyName} (Raio ${locationRadiusKm} km)`
+          : `Pino no mapa (Raio ${locationRadiusKm} km)`;
+      }
+    } else if (geo.cities?.length) {
+      locationRadiusKm = Number(geo.cities[0].radius || 20);
+      if (!locationSummary || /^bra[sz]il/i.test(locationSummary)) {
+        locationSummary = `Cidade selecionada (Raio ${locationRadiusKm} km)`;
+      }
+    } else if (geo.neighborhoods?.length && !locationSummary) {
+      locationSummary = `Bairro (ID ${geo.neighborhoods[0].key || "—"})`;
+    } else if (geo.subcities?.length && !locationSummary) {
+      locationSummary = `Sub-região (ID ${geo.subcities[0].key || "—"})`;
+    } else if (geo.zips?.length && !locationSummary) {
+      locationSummary = `CEP (${geo.zips[0].key || "—"})`;
+    } else if (geo.regions?.length && !locationSummary) {
+      locationSummary = `Estado (ID ${geo.regions[0].key || "—"})`;
+    } else if (geo.countries?.length) {
+      locationSummary = geo.countries.includes("BR")
+        ? "Brasil (Todo o país)"
+        : `País: ${geo.countries.join(", ")}`;
+    }
+
+    const startTime =
+      adsetDetails?.start_time ||
+      (typeof dbTargeting._start_time === "string"
+        ? dbTargeting._start_time
+        : null);
+    const endTime =
+      adsetDetails?.end_time ||
+      (typeof dbTargeting._end_time === "string" ? dbTargeting._end_time : null);
+    const noEndDate = adsetDetails
+      ? !adsetDetails.end_time
+      : typeof dbTargeting._no_end_date === "boolean"
+        ? dbTargeting._no_end_date
+        : !endTime;
+
+    return {
+      campaign_name: campaign.name,
+      adset_name:
+        adsetDetails?.name ||
+        (typeof dbTargeting._adset_name === "string"
+          ? dbTargeting._adset_name
+          : `${campaign.name} — AdSet`),
+      daily_budget_cents:
+        adsetDetails?.daily_budget_cents ?? campaign.daily_budget_cents,
+      currency: campaign.currency,
+      age_min: Number(liveTargeting.age_min ?? 22),
+      age_max: Number(liveTargeting.age_max ?? 55),
+      genders: Array.isArray(liveTargeting.genders)
+        ? (liveTargeting.genders as Array<1 | 2>)
+        : [],
+      location_summary: locationSummary || "Brasil",
+      location_radius_km: locationRadiusKm,
+      start_time: startTime,
+      end_time: endTime,
+      no_end_date: noEndDate,
+    };
+  }
+
   static async updateCampaignDetails(params: {
     companyId: string;
     campaignId: string;
     name?: string;
+    adsetName?: string;
     dailyBudgetCents?: number;
+    audienceChanged?: boolean;
+    ageMin?: number;
+    ageMax?: number;
+    genders?: Array<1 | 2>;
+    locationQuery?: string;
+    locationRadiusKm?: number;
+    selectedLocation?: AdGeoLocationSelection | null;
+    scheduleChanged?: boolean;
+    startTime?: string | null;
+    endTime?: string | null;
+    noEndDate?: boolean;
+    adNames?: Array<{ id: string; adName: string }>;
     userId?: string | null;
   }) {
-    const [secrets, campaign] = await Promise.all([
+    const [secrets, campaign, existingAds] = await Promise.all([
       getCompanySecrets(params.companyId),
       getAdCampaignById(params.campaignId, params.companyId),
+      listAdCampaignAdsByCompany(params.companyId, params.campaignId),
     ]);
 
     if (!campaign) {
@@ -2190,41 +2360,238 @@ export class CampaignOrchestratorService {
       throw new Error("Token Meta não configurado.");
     }
 
+    const metaAds = new MetaAdsService(secrets.meta_access_token);
+    const dbPatch: Partial<{
+      name: string;
+      daily_budget_cents: number;
+      targeting_json: Record<string, unknown>;
+    }> = {};
+    const nextTargetingJson: Record<string, unknown> = {
+      ...(campaign.targeting_json || {}),
+    };
+
     const nextName = params.name?.trim();
+    if (nextName && nextName !== campaign.name) {
+      await metaAds.updateCampaignFields(campaign.meta_campaign_id, {
+        name: nextName,
+      });
+      dbPatch.name = nextName;
+    }
+
     const nextBudget =
       params.dailyBudgetCents !== undefined &&
       Number.isFinite(params.dailyBudgetCents)
         ? Math.round(params.dailyBudgetCents)
         : undefined;
+    const nextAdsetName = params.adsetName?.trim();
 
-    const metaAds = new MetaAdsService(secrets.meta_access_token);
-    const patch: Partial<{ name: string; daily_budget_cents: number }> = {};
+    const adsetUpdate: {
+      name?: string;
+      dailyBudgetCents?: number;
+      currency?: string;
+      targeting?: Record<string, unknown>;
+      startTime?: string | null;
+      endTime?: string | null;
+      noEndDate?: boolean;
+    } = {};
 
-    if (nextName && nextName !== campaign.name) {
-      await metaAds.updateCampaignFields(campaign.meta_campaign_id, {
-        name: nextName,
-      });
-      patch.name = nextName;
+    if (nextAdsetName) {
+      const prevAdsetName =
+        typeof nextTargetingJson._adset_name === "string"
+          ? nextTargetingJson._adset_name
+          : "";
+      if (nextAdsetName !== prevAdsetName) {
+        adsetUpdate.name = nextAdsetName;
+        nextTargetingJson._adset_name = nextAdsetName;
+      }
     }
 
     if (nextBudget !== undefined && nextBudget !== campaign.daily_budget_cents) {
-      if (!campaign.meta_adset_id) {
-        throw new Error(
-          "Campanha sem Conjunto de Anúncios (meta_adset_id) para alterar orçamento."
-        );
-      }
-      await metaAds.updateAdSetFields(campaign.meta_adset_id, {
-        dailyBudgetCents: nextBudget,
-        currency: campaign.currency,
-      });
-      patch.daily_budget_cents = nextBudget;
+      adsetUpdate.dailyBudgetCents = nextBudget;
+      adsetUpdate.currency = campaign.currency;
+      dbPatch.daily_budget_cents = nextBudget;
     }
 
-    if (Object.keys(patch).length === 0) {
+    if (params.audienceChanged) {
+      const liveDetails = campaign.meta_adset_id
+        ? await metaAds.fetchAdSetDetails(campaign.meta_adset_id).catch(() => null)
+        : null;
+      const baseMetaTargeting: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(
+        liveDetails?.targeting || campaign.targeting_json || {}
+      )) {
+        if (!k.startsWith("_")) {
+          baseMetaTargeting[k] = v;
+        }
+      }
+
+      const ageMin = Math.max(
+        18,
+        Math.min(
+          65,
+          Math.round(
+            params.ageMin ?? Number(baseMetaTargeting.age_min ?? 22)
+          )
+        )
+      );
+      const ageMax = Math.max(
+        ageMin,
+        Math.min(
+          65,
+          Math.round(
+            params.ageMax ?? Number(baseMetaTargeting.age_max ?? 55)
+          )
+        )
+      );
+      baseMetaTargeting.age_min = ageMin;
+      baseMetaTargeting.age_max = ageMax;
+
+      if (params.genders !== undefined) {
+        if (params.genders.length > 0) {
+          baseMetaTargeting.genders = params.genders;
+        } else {
+          delete baseMetaTargeting.genders;
+        }
+      }
+
+      if (params.selectedLocation || params.locationQuery?.trim()) {
+        const geoPlan: ParsedCampaignPlan = {
+          name: campaign.name,
+          objective: normalizeObjective(campaign.objective),
+          optimization_goal: campaign.optimization_goal,
+          destination_type: campaign.destination_type ?? null,
+          daily_budget_cents: campaign.daily_budget_cents,
+          duration_days: campaign.duration_days ?? null,
+          location_query: params.locationQuery?.trim() || "Brasil",
+          location_radius_km: params.locationRadiusKm ?? 20,
+          selected_location: params.selectedLocation ?? null,
+          age_min: ageMin,
+          age_max: ageMax,
+          genders: params.genders ?? [],
+          destination_url: null,
+          reasoning: "",
+          parser_provider: "manual_edit",
+        };
+        const resolvedGeo = await CampaignLauncherService.resolveGeoTargeting(
+          metaAds,
+          geoPlan
+        );
+        if (resolvedGeo.geo_locations) {
+          baseMetaTargeting.geo_locations = resolvedGeo.geo_locations;
+        }
+        nextTargetingJson._location_label =
+          params.selectedLocation?.type === "country"
+            ? "Brasil (Todo o país)"
+            : params.selectedLocation?.label ||
+              params.locationQuery?.trim() ||
+              "Brasil (Todo o país)";
+      }
+
+      adsetUpdate.targeting = baseMetaTargeting;
+      for (const [k, v] of Object.entries(baseMetaTargeting)) {
+        nextTargetingJson[k] = v;
+      }
+      if (!baseMetaTargeting.genders) {
+        delete nextTargetingJson.genders;
+      }
+    }
+
+    if (params.scheduleChanged) {
+      if (params.noEndDate) {
+        adsetUpdate.noEndDate = true;
+        nextTargetingJson._no_end_date = true;
+        nextTargetingJson._end_time = null;
+      } else {
+        adsetUpdate.noEndDate = false;
+        nextTargetingJson._no_end_date = false;
+        if (params.endTime !== undefined) {
+          adsetUpdate.endTime = params.endTime;
+          nextTargetingJson._end_time = params.endTime;
+        }
+      }
+      if (params.startTime) {
+        const startDate = new Date(params.startTime);
+        if (!Number.isNaN(startDate.getTime())) {
+          if (
+            !params.noEndDate &&
+            params.endTime &&
+            new Date(params.endTime).getTime() <= startDate.getTime() + 60_000
+          ) {
+            throw new Error(
+              "A data/hora de término deve ser posterior à data/hora de início."
+            );
+          }
+          if (startDate.getTime() > Date.now() + 60_000) {
+            adsetUpdate.startTime = params.startTime;
+          }
+          nextTargetingJson._start_time = params.startTime;
+        }
+      }
+    }
+
+    if (Object.keys(adsetUpdate).length > 0) {
+      if (!campaign.meta_adset_id) {
+        throw new Error(
+          "Campanha sem Conjunto de Anúncios (meta_adset_id) para editar."
+        );
+      }
+      await metaAds.updateAdSetFields(campaign.meta_adset_id, adsetUpdate);
+      dbPatch.targeting_json = nextTargetingJson;
+    }
+
+    let adsRenamed = 0;
+    if (Array.isArray(params.adNames) && params.adNames.length > 0) {
+      for (const entry of params.adNames) {
+        const cleanAdName = entry.adName?.trim().slice(0, 120);
+        if (!cleanAdName) continue;
+        if (entry.id.startsWith("legacy_")) {
+          if (campaign.meta_ad_id && cleanAdName !== campaign.name) {
+            await metaAds.updateAdFields(campaign.meta_ad_id, {
+              name: cleanAdName,
+            });
+            await createAdCampaignAdRecord({
+              campaign_id: campaign.id,
+              company_id: params.companyId,
+              post_id: campaign.post_id || null,
+              ad_name: cleanAdName,
+              headline: campaign.name,
+              primary_text: campaign.user_prompt || "",
+              source_story_id: campaign.source_story_id || null,
+              meta_creative_id: campaign.meta_creative_id || null,
+              meta_ad_id: campaign.meta_ad_id,
+              status:
+                campaign.status === "ACTIVE" || campaign.status === "PAUSED"
+                  ? campaign.status
+                  : "PAUSED",
+            });
+            adsRenamed += 1;
+          }
+          continue;
+        }
+
+        const existing = existingAds.find((a) => a.id === entry.id);
+        if (
+          existing &&
+          existing.meta_ad_id &&
+          cleanAdName !== existing.ad_name
+        ) {
+          await metaAds.updateAdFields(existing.meta_ad_id, {
+            name: cleanAdName,
+          });
+          await updateAdCampaignAdRecord(existing.id, { ad_name: cleanAdName });
+          adsRenamed += 1;
+        }
+      }
+    }
+
+    if (Object.keys(dbPatch).length === 0 && adsRenamed === 0) {
       return campaign;
     }
 
-    const updated = await updateAdCampaignRecord(campaign.id, patch);
+    const updated =
+      Object.keys(dbPatch).length > 0
+        ? await updateAdCampaignRecord(campaign.id, dbPatch)
+        : campaign;
 
     await appendAuditLog({
       company_id: params.companyId,
@@ -2233,7 +2600,10 @@ export class CampaignOrchestratorService {
       details_json: {
         ad_campaign_id: campaign.id,
         meta_campaign_id: campaign.meta_campaign_id,
-        ...patch,
+        updated_fields: Object.keys(dbPatch),
+        audience_changed: Boolean(params.audienceChanged),
+        schedule_changed: Boolean(params.scheduleChanged),
+        ads_renamed: adsRenamed,
       },
     });
 

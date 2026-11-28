@@ -289,6 +289,23 @@ function stripAdAccountPrefix(accountId: string): string {
   return accountId.trim().replace(/^act_/i, "");
 }
 
+function shouldShowLocationRadius(
+  locationInput: string,
+  selectedLocation: AdGeoLocationSelection | null
+): boolean {
+  if (selectedLocation) {
+    return (
+      selectedLocation.type === "city" ||
+      selectedLocation.type === "custom_pin"
+    );
+  }
+  const clean = locationInput.trim();
+  if (!clean) return false;
+  return !/^(?:bra[sz]il(?:\s*\(todo o brasil\))?|todo\s+o\s+brasil|br)$/i.test(
+    clean
+  );
+}
+
 function buildCampaignAdLink(cmp: AdCampaignRecord): {
   label: string;
   url: string;
@@ -1136,40 +1153,56 @@ export function BoostCampaignModal({
                 )}
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_110px]">
-              <input
-                value={locationInput}
-                onChange={(e) => {
-                  locationTouchedRef.current = true;
-                  setSelectedLocation(null);
-                  setLocationInput(e.target.value);
-                }}
-                placeholder="Ex: Uberaba, Centro Uberaba, Copacabana RJ ou CEP"
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-500"
-              />
-              <button
-                type="button"
-                disabled={searchingGeo || !locationInput.trim()}
-                onClick={() => void handleSearchGeoLocations()}
-                className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
-              >
-                {searchingGeo ? "Buscando..." : "Buscar local"}
-              </button>
-              <div>
-                <input
-                  type="number"
-                  min={1}
-                  max={80}
-                  value={locationRadiusKm}
-                  onChange={(e) => setLocationRadiusKm(e.target.value)}
-                  title="Raio em km (Cidades: 17–80 km • Pino Exato: 1–80 km)"
-                  className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold outline-none focus:border-indigo-500"
-                />
-                <span className="mt-0.5 block text-center text-[9px] text-slate-500">
-                  Raio (km)
-                </span>
-              </div>
-            </div>
+            {(() => {
+              const showRadius = shouldShowLocationRadius(
+                locationInput,
+                selectedLocation
+              );
+              return (
+                <div
+                  className={`grid grid-cols-1 gap-2 ${
+                    showRadius
+                      ? "sm:grid-cols-[1fr_auto_110px]"
+                      : "sm:grid-cols-[1fr_auto]"
+                  }`}
+                >
+                  <input
+                    value={locationInput}
+                    onChange={(e) => {
+                      locationTouchedRef.current = true;
+                      setSelectedLocation(null);
+                      setLocationInput(e.target.value);
+                    }}
+                    placeholder="Ex: Uberaba, Centro Uberaba, Copacabana RJ ou CEP"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    disabled={searchingGeo || !locationInput.trim()}
+                    onClick={() => void handleSearchGeoLocations()}
+                    className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
+                  >
+                    {searchingGeo ? "Buscando..." : "Buscar local"}
+                  </button>
+                  {showRadius && (
+                    <div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={80}
+                        value={locationRadiusKm}
+                        onChange={(e) => setLocationRadiusKm(e.target.value)}
+                        title="Raio em km (Cidades: 17–80 km • Pino Exato: 1–80 km)"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold outline-none focus:border-indigo-500"
+                      />
+                      <span className="mt-0.5 block text-center text-[9px] text-slate-500">
+                        Raio (km)
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {selectedLocation && (
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-900">
@@ -1768,24 +1801,211 @@ function EditCampaignModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const initTargeting = (campaign.targeting_json || {}) as Record<
+    string,
+    unknown
+  >;
+  const initGenders = Array.isArray(initTargeting.genders)
+    ? (initTargeting.genders as Array<1 | 2>)
+    : [];
+
+  const [loadingDetails, setLoadingDetails] = useState(true);
   const [name, setName] = useState(campaign.name);
+  const [adsetName, setAdsetName] = useState(
+    typeof initTargeting._adset_name === "string"
+      ? initTargeting._adset_name
+      : `${campaign.name} — AdSet`
+  );
   const [budgetReais, setBudgetReais] = useState(
     (campaign.daily_budget_cents / 100).toFixed(2)
   );
+
+  // Público
+  const [ageMin, setAgeMin] = useState(String(initTargeting.age_min ?? 22));
+  const [ageMax, setAgeMax] = useState(String(initTargeting.age_max ?? 55));
+  const [genderFilter, setGenderFilter] = useState<"ALL" | "WOMEN" | "MEN">(
+    initGenders.length === 1 && initGenders[0] === 2
+      ? "WOMEN"
+      : initGenders.length === 1 && initGenders[0] === 1
+        ? "MEN"
+        : "ALL"
+  );
+  const [currentLocationSummary, setCurrentLocationSummary] = useState(
+    typeof initTargeting._location_label === "string"
+      ? initTargeting._location_label
+      : "Brasil"
+  );
+  const [locationInput, setLocationInput] = useState("");
+  const [locationRadiusKm, setLocationRadiusKm] = useState("20");
+  const [selectedLocation, setSelectedLocation] =
+    useState<AdGeoLocationSelection | null>(null);
+  const [geoResults, setGeoResults] = useState<AdGeoLocationSelection[]>([]);
+  const [searchingGeo, setSearchingGeo] = useState(false);
+  const [audienceTouched, setAudienceTouched] = useState(false);
+
+  // Agendamento
+  const [startDateTimeInput, setStartDateTimeInput] = useState("");
+  const [endDateTimeInput, setEndDateTimeInput] = useState("");
+  const [noEndDate, setNoEndDate] = useState(true);
+  const [scheduleTouched, setScheduleTouched] = useState(false);
+
+  // Nomes dos anúncios
+  const [adNames, setAdNames] = useState<
+    Array<{ id: string; adName: string; imageUrl?: string | null }>
+  >(() =>
+    (campaign.ads || [])
+      .filter((a) => a.status !== "ERROR" && a.status !== "ARCHIVED")
+      .map((a) => ({
+        id: a.id,
+        adName: a.ad_name || a.headline,
+        imageUrl: a.image_url,
+      }))
+  );
+
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadLiveDetails() {
+      setLoadingDetails(true);
+      try {
+        const res = await fetch("/api/ads", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "get_campaign_edit_details",
+            companyId,
+            campaignId: campaign.id,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || cancelled || !data.details) return;
+        const d = data.details as {
+          campaign_name: string;
+          adset_name: string;
+          daily_budget_cents: number;
+          age_min: number;
+          age_max: number;
+          genders: Array<1 | 2>;
+          location_summary: string;
+          location_radius_km: number;
+          start_time: string | null;
+          end_time: string | null;
+          no_end_date: boolean;
+        };
+        setName(d.campaign_name);
+        setAdsetName(d.adset_name);
+        setBudgetReais((d.daily_budget_cents / 100).toFixed(2));
+        setAgeMin(String(d.age_min));
+        setAgeMax(String(d.age_max));
+        if (d.genders?.length === 1 && d.genders[0] === 2) {
+          setGenderFilter("WOMEN");
+        } else if (d.genders?.length === 1 && d.genders[0] === 1) {
+          setGenderFilter("MEN");
+        } else {
+          setGenderFilter("ALL");
+        }
+        setCurrentLocationSummary(d.location_summary || "Brasil");
+        setLocationRadiusKm(String(d.location_radius_km || 20));
+        if (d.start_time) {
+          const parsedStart = new Date(d.start_time);
+          if (!Number.isNaN(parsedStart.getTime())) {
+            setStartDateTimeInput(toLocalDateTimeInputValue(parsedStart));
+          }
+        }
+        setNoEndDate(Boolean(d.no_end_date));
+        if (d.end_time) {
+          const parsedEnd = new Date(d.end_time);
+          if (!Number.isNaN(parsedEnd.getTime())) {
+            setEndDateTimeInput(toLocalDateTimeInputValue(parsedEnd));
+          }
+        }
+      } catch {
+        // mantém valores locais
+      } finally {
+        if (!cancelled) setLoadingDetails(false);
+      }
+    }
+    void loadLiveDetails();
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, campaign.id]);
+
+  async function handleSearchGeoLocations() {
+    const q = locationInput.trim();
+    if (!q) return;
+    setSearchingGeo(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "search_geo_locations",
+          companyId,
+          query: q,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro ao buscar localizações.");
+      setGeoResults((data.locations || []) as AdGeoLocationSelection[]);
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : "Erro ao buscar localizações."
+      );
+    } finally {
+      setSearchingGeo(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const cleanName = name.trim();
+    const cleanAdsetName = adsetName.trim();
     const parsedBudget = Number(budgetReais.replace(",", "."));
     if (!cleanName) {
       setErrorMsg("Informe o nome da campanha.");
       return;
     }
+    if (!cleanAdsetName) {
+      setErrorMsg("Informe o nome do conjunto de anúncios.");
+      return;
+    }
     if (!Number.isFinite(parsedBudget) || parsedBudget <= 0) {
       setErrorMsg("Informe um orçamento diário válido.");
       return;
+    }
+
+    const parsedAgeMin = Math.max(18, Math.min(65, Math.round(Number(ageMin) || 22)));
+    const parsedAgeMax = Math.max(
+      parsedAgeMin,
+      Math.min(65, Math.round(Number(ageMax) || 55))
+    );
+    const genders: Array<1 | 2> =
+      genderFilter === "WOMEN" ? [2] : genderFilter === "MEN" ? [1] : [];
+    const parsedRadius = Math.max(
+      1,
+      Math.min(80, Math.round(Number(locationRadiusKm) || 20))
+    );
+
+    const startIso = startDateTimeInput.trim()
+      ? new Date(startDateTimeInput).toISOString()
+      : null;
+    const endIso =
+      !noEndDate && endDateTimeInput.trim()
+        ? new Date(endDateTimeInput).toISOString()
+        : null;
+
+    if (scheduleTouched && !noEndDate && endIso) {
+      const startMs = startIso ? new Date(startIso).getTime() : Date.now();
+      if (new Date(endIso).getTime() <= startMs + 60_000) {
+        setErrorMsg(
+          "A data/hora de término deve ser posterior à data/hora de início."
+        );
+        return;
+      }
     }
 
     setSaving(true);
@@ -1799,7 +2019,22 @@ function EditCampaignModal({
           companyId,
           campaignId: campaign.id,
           name: cleanName,
+          adsetName: cleanAdsetName,
           dailyBudgetCents: Math.round(parsedBudget * 100),
+          audienceChanged: audienceTouched,
+          ageMin: parsedAgeMin,
+          ageMax: parsedAgeMax,
+          genders,
+          locationQuery: locationInput.trim() || undefined,
+          locationRadiusKm: parsedRadius,
+          selectedLocation: selectedLocation
+            ? { ...selectedLocation, radius_km: parsedRadius }
+            : undefined,
+          scheduleChanged: scheduleTouched,
+          startTime: startIso,
+          endTime: endIso,
+          noEndDate,
+          adNames: adNames.map((a) => ({ id: a.id, adName: a.adName })),
         }),
       });
       const data = await res.json();
@@ -1820,16 +2055,17 @@ function EditCampaignModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
       <form
         onSubmit={(e) => void handleSubmit(e)}
-        className="w-full max-w-lg space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+        className="max-h-[92vh] w-full max-w-2xl space-y-4 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
       >
         <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
           <div>
             <h3 className="text-base font-extrabold text-slate-900">
-              Editar Campanha na Meta Ads
+              Editar Campanha, Conjunto, Público e Anúncios
             </h3>
             <p className="mt-0.5 text-xs text-slate-500">
-              Atualiza diretamente na Meta e no PilotFlow sem recriar a campanha
-              nem perder o aprendizado.
+              {loadingDetails
+                ? "Carregando configurações atuais da Meta Ads..."
+                : "Alterações aplicadas diretamente na Meta Ads API e sincronizadas no PilotFlow."}
             </p>
           </div>
           <button
@@ -1841,28 +2077,358 @@ function EditCampaignModal({
           </button>
         </div>
 
-        <div className="space-y-3 text-xs">
-          <div>
-            <label className="block font-bold text-slate-700">
-              Nome da Campanha
-            </label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold outline-none focus:border-indigo-500"
-            />
-          </div>
-          <div>
-            <label className="block font-bold text-slate-700">
-              Orçamento Diário ({campaign.currency})
-            </label>
-            <input
-              value={budgetReais}
-              onChange={(e) => setBudgetReais(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold outline-none focus:border-indigo-500"
-            />
+        {/* Bloco 1: Identificação & Orçamento */}
+        <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 text-xs">
+          <p className="font-extrabold text-slate-800">
+            Campanha, Conjunto &amp; Orçamento
+          </p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label className="block text-[11px] font-bold text-slate-700">
+                Nome da Campanha
+              </label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold outline-none focus:border-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700">
+                Nome do Conjunto de Anúncios (AdSet)
+              </label>
+              <input
+                value={adsetName}
+                onChange={(e) => setAdsetName(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold outline-none focus:border-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700">
+                Orçamento Diário ({campaign.currency})
+              </label>
+              <input
+                value={budgetReais}
+                onChange={(e) => setBudgetReais(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold outline-none focus:border-indigo-500"
+              />
+            </div>
           </div>
         </div>
+
+        {/* Bloco 2: Público (Idade, Gênero e Localização Precisa) */}
+        <div className="space-y-2.5 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 text-xs">
+          <p className="font-extrabold text-slate-800">
+            Público (Idade, Gênero &amp; Localização Precisa)
+          </p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700">
+                Idade Mínima
+              </label>
+              <input
+                type="number"
+                min={18}
+                max={65}
+                value={ageMin}
+                onChange={(e) => {
+                  setAudienceTouched(true);
+                  setAgeMin(e.target.value);
+                }}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700">
+                Idade Máxima
+              </label>
+              <input
+                type="number"
+                min={18}
+                max={65}
+                value={ageMax}
+                onChange={(e) => {
+                  setAudienceTouched(true);
+                  setAgeMax(e.target.value);
+                }}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700">
+                Gênero do Público
+              </label>
+              <select
+                value={genderFilter}
+                onChange={(e) => {
+                  setAudienceTouched(true);
+                  setGenderFilter(
+                    e.target.value as "ALL" | "WOMEN" | "MEN"
+                  );
+                }}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold outline-none focus:border-indigo-500"
+              >
+                <option value="ALL">Todos</option>
+                <option value="WOMEN">Mulheres</option>
+                <option value="MEN">Homens</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              {selectedLocation ? (
+                <div className="text-[11px]">
+                  <p className="font-bold text-emerald-800">
+                    Nova localização (ao salvar):{" "}
+                    <span>
+                      {selectedLocation.label}
+                      {(selectedLocation.type === "city" ||
+                        selectedLocation.type === "custom_pin") &&
+                        ` • Raio ${locationRadiusKm} km`}
+                    </span>
+                  </p>
+                  <p className="text-[10px] text-slate-500">
+                    Salvo atualmente na Meta: {currentLocationSummary}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-[11px] font-bold text-slate-700">
+                  Localização salva na Meta:{" "}
+                  <span className="text-indigo-700">{currentLocationSummary}</span>
+                </p>
+              )}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAudienceTouched(true);
+                    setLocationInput("Brasil");
+                    setSelectedLocation({
+                      label: "País: Brasil (Todo o Brasil)",
+                      type: "country",
+                      country_code: "BR",
+                    });
+                    setGeoResults([]);
+                  }}
+                  className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700"
+                >
+                  Brasil inteiro
+                </button>
+                {selectedLocation && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedLocation(null);
+                      setLocationInput("");
+                      setGeoResults([]);
+                    }}
+                    className="text-[10px] font-bold text-rose-600 hover:underline"
+                  >
+                    Cancelar troca
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {(() => {
+              const showRadius = shouldShowLocationRadius(
+                locationInput,
+                selectedLocation
+              );
+              return (
+                <div
+                  className={`grid grid-cols-1 gap-2 ${
+                    showRadius
+                      ? "sm:grid-cols-[1fr_auto_95px]"
+                      : "sm:grid-cols-[1fr_auto]"
+                  }`}
+                >
+                  <input
+                    value={locationInput}
+                    onChange={(e) => {
+                      setAudienceTouched(true);
+                      setSelectedLocation(null);
+                      setLocationInput(e.target.value);
+                    }}
+                    placeholder="Alterar para: cidade, bairro, CEP ou endereço exato"
+                    className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    disabled={searchingGeo || !locationInput.trim()}
+                    onClick={() => void handleSearchGeoLocations()}
+                    className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
+                  >
+                    {searchingGeo ? "Buscando..." : "Buscar local"}
+                  </button>
+                  {showRadius && (
+                    <div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={80}
+                        value={locationRadiusKm}
+                        onChange={(e) => {
+                          setAudienceTouched(true);
+                          setLocationRadiusKm(e.target.value);
+                        }}
+                        title="Raio em km (Cidades: 17–80 km • Pino Exato: 1–80 km)"
+                        className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold outline-none focus:border-indigo-500"
+                      />
+                      <span className="mt-0.5 block text-center text-[9px] text-slate-500">
+                        Raio (km)
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {geoResults.length > 0 && (
+              <div className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-2">
+                {geoResults.map((item, idx) => (
+                  <button
+                    key={`${item.type}-${item.key || item.latitude}-${idx}`}
+                    type="button"
+                    onClick={() => {
+                      setAudienceTouched(true);
+                      setSelectedLocation(item);
+                      setLocationInput(
+                        item.label.replace(
+                          /^(?:País|Cidade|Bairro|Estado|CEP|Sub-região|📍\s*Pino Exato):\s*/i,
+                          ""
+                        )
+                      );
+                      if (item.type === "custom_pin") {
+                        setLocationRadiusKm(String(item.radius_km ?? 5));
+                      } else if (item.type === "city") {
+                        setLocationRadiusKm(String(item.radius_km ?? 20));
+                      }
+                      setGeoResults([]);
+                    }}
+                    className="block w-full rounded-md px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-indigo-50 hover:text-indigo-800"
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+            Obs.: alterar público em uma campanha já ativa reinicia a fase de
+            aprendizado na Meta; em campanhas pausadas é imediato e sem impacto.
+          </p>
+        </div>
+
+        {/* Bloco 3: Agendamento */}
+        <div className="space-y-2.5 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 text-xs">
+          <p className="font-extrabold text-slate-800">
+            Agendamento (Início e Término)
+          </p>
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-600">
+                Data e Hora de Início
+              </label>
+              <input
+                type="datetime-local"
+                value={startDateTimeInput}
+                onChange={(e) => {
+                  setScheduleTouched(true);
+                  setStartDateTimeInput(e.target.value);
+                }}
+                className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+              />
+              <span className="mt-0.5 block text-[9px] text-slate-500">
+                A Meta só altera o início se a nova data estiver no futuro.
+              </span>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-600">
+                Data e Hora de Término
+              </label>
+              {noEndDate ? (
+                <div className="mt-0.5 rounded-lg border border-dashed border-slate-300 bg-white px-2.5 py-2 text-[11px] font-semibold text-slate-600">
+                  Contínua (sem data de término definida)
+                </div>
+              ) : (
+                <input
+                  type="datetime-local"
+                  value={endDateTimeInput}
+                  onChange={(e) => {
+                    setScheduleTouched(true);
+                    setEndDateTimeInput(e.target.value);
+                  }}
+                  className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+                />
+              )}
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-[11px] font-bold text-slate-700">
+            <input
+              type="checkbox"
+              checked={noEndDate}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setScheduleTouched(true);
+                setNoEndDate(checked);
+                if (!checked && !endDateTimeInput.trim()) {
+                  const base = startDateTimeInput.trim()
+                    ? new Date(startDateTimeInput)
+                    : new Date();
+                  const plus7 = new Date(
+                    Math.max(base.getTime(), Date.now()) +
+                      7 * 24 * 60 * 60 * 1000
+                  );
+                  setEndDateTimeInput(toLocalDateTimeInputValue(plus7));
+                }
+              }}
+            />
+            Sem data de término (campanha contínua)
+          </label>
+        </div>
+
+        {/* Bloco 4: Nomes dos Anúncios neste Conjunto */}
+        {adNames.length > 0 && (
+          <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 text-xs">
+            <p className="font-extrabold text-slate-800">
+              Nomes dos Anúncios neste Conjunto ({adNames.length})
+            </p>
+            <div className="space-y-2">
+              {adNames.map((item, idx) => (
+                <div
+                  key={item.id}
+                  className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-2"
+                >
+                  {item.imageUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={item.imageUrl}
+                      alt={item.adName}
+                      className="h-8 w-8 shrink-0 rounded object-cover"
+                    />
+                  )}
+                  <input
+                    maxLength={120}
+                    value={item.adName}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setAdNames((prev) =>
+                        prev.map((row, rIdx) =>
+                          rIdx === idx ? { ...row, adName: val } : row
+                        )
+                      );
+                    }}
+                    placeholder={`Nome do Anúncio #${idx + 1}`}
+                    className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold outline-none focus:border-indigo-500"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {errorMsg && (
           <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-800">

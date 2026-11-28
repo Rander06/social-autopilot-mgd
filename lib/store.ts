@@ -3358,6 +3358,7 @@ export async function updateAdCampaignRecord(
   patch: Partial<{
     name: string;
     daily_budget_cents: number;
+    targeting_json: Record<string, unknown>;
     status: AdCampaignStatus;
     meta_campaign_id: string | null;
     meta_adset_id: string | null;

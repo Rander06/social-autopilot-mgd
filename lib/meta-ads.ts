@@ -1852,9 +1852,59 @@ export class MetaAdsService {
     return { success: res.success !== false };
   }
 
+  async fetchAdSetDetails(adsetId: string): Promise<{
+    id: string;
+    name: string;
+    daily_budget_cents: number | null;
+    start_time: string | null;
+    end_time: string | null;
+    status: string | null;
+    targeting: Record<string, unknown>;
+  } | null> {
+    const cleanId = adsetId.trim();
+    if (!cleanId) return null;
+    const data = await this.request<{
+      id?: string;
+      name?: string;
+      daily_budget?: string | number;
+      start_time?: string;
+      end_time?: string;
+      status?: string;
+      targeting?: Record<string, unknown>;
+    }>(`/${encodeURIComponent(cleanId)}`, {
+      query: {
+        fields: "id,name,daily_budget,start_time,end_time,status,targeting",
+      },
+    });
+    const parsedBudget = Number(data.daily_budget);
+    return {
+      id: String(data.id || cleanId),
+      name: data.name?.trim() || "",
+      daily_budget_cents:
+        Number.isFinite(parsedBudget) && parsedBudget > 0
+          ? Math.round(parsedBudget)
+          : null,
+      start_time: data.start_time || null,
+      end_time: data.end_time || null,
+      status: data.status || null,
+      targeting:
+        data.targeting && typeof data.targeting === "object"
+          ? data.targeting
+          : {},
+    };
+  }
+
   async updateAdSetFields(
     adsetId: string,
-    fields: { name?: string; dailyBudgetCents?: number; currency?: string }
+    fields: {
+      name?: string;
+      dailyBudgetCents?: number;
+      currency?: string;
+      targeting?: Record<string, unknown>;
+      startTime?: string | null;
+      endTime?: string | null;
+      noEndDate?: boolean;
+    }
   ): Promise<{ success: boolean }> {
     const cleanId = adsetId.trim();
     if (!cleanId) throw new Error("meta_adset_id não informado.");
@@ -1872,6 +1922,29 @@ export class MetaAdsService {
         );
       }
       body.daily_budget = String(rounded);
+    }
+    if (fields.targeting && Object.keys(fields.targeting).length > 0) {
+      body.targeting = fields.targeting;
+    }
+    if (fields.startTime?.trim()) {
+      const parsed = new Date(fields.startTime.trim());
+      if (!Number.isNaN(parsed.getTime()) && parsed.getTime() > Date.now() + 60_000) {
+        body.start_time = parsed.toISOString();
+      }
+    }
+    if (fields.noEndDate === true) {
+      body.end_time = "0";
+    } else if (fields.endTime?.trim()) {
+      const parsedEnd = new Date(fields.endTime.trim());
+      if (Number.isNaN(parsedEnd.getTime())) {
+        throw new Error("Data/hora de término inválida.");
+      }
+      if (parsedEnd.getTime() <= Date.now() + 60_000) {
+        throw new Error(
+          "A data/hora de término deve estar no futuro em relação ao horário atual."
+        );
+      }
+      body.end_time = parsedEnd.toISOString();
     }
     if (Object.keys(body).length === 0) return { success: true };
     const res = await this.request<{ success?: boolean }>(`/${cleanId}`, {
