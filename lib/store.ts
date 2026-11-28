@@ -2980,6 +2980,14 @@ function normalizeAdsAIProvider(raw?: unknown): AdsAIProviderPreference {
 function normalizeAdAccountRow(row: AdAccountConfig): AdAccountConfig {
   return {
     ...row,
+    business_id:
+      typeof row.business_id === "string" && row.business_id.trim()
+        ? row.business_id.trim()
+        : null,
+    business_name:
+      typeof row.business_name === "string" && row.business_name.trim()
+        ? row.business_name.trim()
+        : null,
     account_status:
       row.account_status !== null && row.account_status !== undefined
         ? Number(row.account_status)
@@ -3064,6 +3072,8 @@ export async function upsertAdAccountConfig(input: {
   provider?: AdProvider;
   ad_account_id: string;
   account_name?: string;
+  business_id?: string | null;
+  business_name?: string | null;
   currency?: string;
   account_status?: number | null;
   is_default?: boolean;
@@ -3091,6 +3101,15 @@ export async function upsertAdAccountConfig(input: {
         ? Boolean(input.is_default)
         : Boolean(existing?.is_default);
 
+  const resolvedBusinessId =
+    input.business_id !== undefined
+      ? input.business_id?.trim() || null
+      : (existing?.business_id ?? null);
+  const resolvedBusinessName =
+    input.business_name !== undefined
+      ? input.business_name?.trim() || null
+      : (existing?.business_name ?? null);
+
   const entry: AdAccountConfig = {
     id: existing?.id || generateId("adacc"),
     company_id: input.company_id,
@@ -3098,6 +3117,8 @@ export async function upsertAdAccountConfig(input: {
     ad_account_id: normalizedAdAccountId,
     account_name:
       input.account_name?.trim() || existing?.account_name || normalizedAdAccountId,
+    business_id: resolvedBusinessId,
+    business_name: resolvedBusinessName,
     currency: (input.currency || existing?.currency || "BRL").toUpperCase(),
     account_status:
       input.account_status !== undefined
@@ -3145,6 +3166,8 @@ export async function upsertAdAccountConfig(input: {
 
       const patchPayload = {
         account_name: entry.account_name,
+        business_id: entry.business_id,
+        business_name: entry.business_name,
         currency: entry.currency,
         account_status: entry.account_status,
         is_default: entry.is_default,
@@ -3158,41 +3181,58 @@ export async function upsertAdAccountConfig(input: {
         updated_at: entry.updated_at,
       };
 
-      try {
+      const persistPayload = async (
+        pPatch: Record<string, unknown>,
+        pEntry: Record<string, unknown>
+      ) => {
         if (existing) {
           await sbRequest(`ad_accounts?id=eq.${encodeURIComponent(entry.id)}`, {
             method: "PATCH",
             headers: { Prefer: "return=minimal" },
-            body: JSON.stringify(patchPayload),
+            body: JSON.stringify(pPatch),
           });
         } else {
           await sbRequest("ad_accounts", {
             method: "POST",
             headers: { Prefer: "return=minimal" },
-            body: JSON.stringify(entry),
+            body: JSON.stringify(pEntry),
           });
         }
+      };
+
+      try {
+        await persistPayload(patchPayload, entry as unknown as Record<string, unknown>);
         persistedInSupabase = true;
       } catch {
-        // Fallback seguro se a coluna preferred_ai_provider ainda não tiver sido adicionada via migration
-        const { preferred_ai_provider: _omitPatch, ...legacyPatch } = patchPayload;
-        const { preferred_ai_provider: _omitEntry, ...legacyEntry } = entry;
-        void _omitPatch;
-        void _omitEntry;
-        if (existing) {
-          await sbRequest(`ad_accounts?id=eq.${encodeURIComponent(entry.id)}`, {
-            method: "PATCH",
-            headers: { Prefer: "return=minimal" },
-            body: JSON.stringify(legacyPatch),
-          });
-        } else {
-          await sbRequest("ad_accounts", {
-            method: "POST",
-            headers: { Prefer: "return=minimal" },
-            body: JSON.stringify(legacyEntry),
-          });
+        // Fallback 1: se business_id / business_name ainda não foram migrados, mantém preferred_ai_provider
+        const {
+          business_id: _bIdP,
+          business_name: _bNameP,
+          ...withoutBmPatch
+        } = patchPayload;
+        const {
+          business_id: _bIdE,
+          business_name: _bNameE,
+          ...withoutBmEntry
+        } = entry;
+        void _bIdP;
+        void _bNameP;
+        void _bIdE;
+        void _bNameE;
+        try {
+          await persistPayload(withoutBmPatch, withoutBmEntry);
+          persistedInSupabase = true;
+        } catch {
+          // Fallback 2: schema totalmente legado sem business_* nem preferred_ai_provider
+          const { preferred_ai_provider: _omitPatch, ...legacyPatch } =
+            withoutBmPatch;
+          const { preferred_ai_provider: _omitEntry, ...legacyEntry } =
+            withoutBmEntry;
+          void _omitPatch;
+          void _omitEntry;
+          await persistPayload(legacyPatch, legacyEntry);
+          persistedInSupabase = true;
         }
-        persistedInSupabase = true;
       }
     } catch {
       // Fallback para memória caso a tabela ainda não exista no Supabase

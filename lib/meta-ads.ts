@@ -137,7 +137,9 @@ export interface MetaAdAccountSummary {
   name: string;
   currency: string;
   account_status: number;
+  business_id: string | null;
   business_name: string | null;
+  ownership_type?: "OWNED" | "CLIENT" | "PERSONAL";
   is_active: boolean;
 }
 
@@ -727,32 +729,192 @@ export class MetaAdsService {
   }
 
   async listAdAccounts(): Promise<MetaAdAccountSummary[]> {
-    const data = await this.request<{
-      data?: Array<{
-        id: string;
-        name?: string;
-        currency?: string;
-        account_status?: number;
-        business_name?: string;
-      }>;
-    }>("/me/adaccounts", {
-      query: {
-        fields: "id,name,currency,account_status,business_name",
-        limit: 100,
-      },
-    });
+    type RawMetaAdAccount = {
+      id: string;
+      name?: string;
+      currency?: string;
+      account_status?: number;
+      business_name?: string;
+      business?: { id?: string; name?: string };
+    };
+
+    let data: { data?: RawMetaAdAccount[] };
+    try {
+      data = await this.request<{ data?: RawMetaAdAccount[] }>("/me/adaccounts", {
+        query: {
+          fields: "id,name,currency,account_status,business_name,business{id,name}",
+          limit: 100,
+        },
+      });
+    } catch {
+      data = await this.request<{ data?: RawMetaAdAccount[] }>("/me/adaccounts", {
+        query: {
+          fields: "id,name,currency,account_status,business_name",
+          limit: 100,
+        },
+      });
+    }
 
     return (data.data || []).map((acc) => {
       const statusCode = Number(acc.account_status ?? 0);
+      const businessId = acc.business?.id?.trim() || null;
+      const businessName =
+        acc.business?.name?.trim() || acc.business_name?.trim() || null;
       return {
         id: normalizeAdAccountId(acc.id),
         name: acc.name?.trim() || acc.id,
         currency: (acc.currency || "BRL").toUpperCase(),
         account_status: statusCode,
-        business_name: acc.business_name || null,
+        business_id: businessId,
+        business_name: businessName,
+        ownership_type:
+          businessId || businessName ? "OWNED" : "PERSONAL",
         is_active: statusCode === 1,
       };
     });
+  }
+
+  async listBusinessesWithAdAccounts(): Promise<{
+    businesses: Array<{ id: string; name: string; ad_account_count: number }>;
+    accounts: MetaAdAccountSummary[];
+  }> {
+    type RawMetaAdAccount = {
+      id: string;
+      name?: string;
+      currency?: string;
+      account_status?: number;
+      business_name?: string;
+      business?: { id?: string; name?: string };
+    };
+
+    const [meAccounts, bmListResp] = await Promise.all([
+      this.listAdAccounts(),
+      this.request<{ data?: Array<{ id: string; name?: string }> }>(
+        "/me/businesses",
+        {
+          query: {
+            fields: "id,name",
+            limit: 50,
+          },
+        }
+      ).catch(() => ({ data: [] as Array<{ id: string; name?: string }> })),
+    ]);
+
+    const accountMap = new Map<string, MetaAdAccountSummary>();
+    for (const acc of meAccounts) {
+      accountMap.set(acc.id, acc);
+    }
+
+    const businessMap = new Map<string, { id: string; name: string }>();
+    for (const acc of meAccounts) {
+      if (acc.business_id) {
+        businessMap.set(acc.business_id, {
+          id: acc.business_id,
+          name: acc.business_name || `BM ${acc.business_id}`,
+        });
+      }
+    }
+
+    const remoteBusinesses = (bmListResp.data || []).slice(0, 15);
+    for (const bm of remoteBusinesses) {
+      if (bm.id) {
+        businessMap.set(bm.id, {
+          id: bm.id,
+          name: bm.name?.trim() || `BM ${bm.id}`,
+        });
+      }
+    }
+
+    const mapBmRawAccount = (
+      raw: RawMetaAdAccount,
+      bm: { id: string; name?: string },
+      ownershipType: "OWNED" | "CLIENT"
+    ): MetaAdAccountSummary => {
+      const normalizedId = normalizeAdAccountId(raw.id);
+      const statusCode = Number(raw.account_status ?? 0);
+      return {
+        id: normalizedId,
+        name: raw.name?.trim() || raw.id,
+        currency: (raw.currency || "BRL").toUpperCase(),
+        account_status: statusCode,
+        business_id: raw.business?.id?.trim() || bm.id,
+        business_name:
+          bm.name?.trim() ||
+          raw.business?.name?.trim() ||
+          raw.business_name?.trim() ||
+          `BM ${bm.id}`,
+        ownership_type: ownershipType,
+        is_active: statusCode === 1,
+      };
+    };
+
+    await Promise.all(
+      remoteBusinesses.map(async (bm) => {
+        if (!bm.id) return;
+        const [ownedResp, clientResp] = await Promise.all([
+          this.request<{ data?: RawMetaAdAccount[] }>(
+            `/${encodeURIComponent(bm.id)}/owned_ad_accounts`,
+            {
+              query: {
+                fields:
+                  "id,name,currency,account_status,business_name,business{id,name}",
+                limit: 100,
+              },
+            }
+          ).catch(() => ({ data: [] as RawMetaAdAccount[] })),
+          this.request<{ data?: RawMetaAdAccount[] }>(
+            `/${encodeURIComponent(bm.id)}/client_ad_accounts`,
+            {
+              query: {
+                fields:
+                  "id,name,currency,account_status,business_name,business{id,name}",
+                limit: 100,
+              },
+            }
+          ).catch(() => ({ data: [] as RawMetaAdAccount[] })),
+        ]);
+
+        for (const raw of ownedResp.data || []) {
+          const mapped = mapBmRawAccount(raw, bm, "OWNED");
+          const prev = accountMap.get(mapped.id);
+          accountMap.set(mapped.id, {
+            ...prev,
+            ...mapped,
+            business_id: mapped.business_id || prev?.business_id || null,
+            business_name: mapped.business_name || prev?.business_name || null,
+          });
+        }
+
+        for (const raw of clientResp.data || []) {
+          const mapped = mapBmRawAccount(raw, bm, "CLIENT");
+          const prev = accountMap.get(mapped.id);
+          accountMap.set(mapped.id, {
+            ...prev,
+            ...mapped,
+            business_id: mapped.business_id || prev?.business_id || null,
+            business_name: mapped.business_name || prev?.business_name || null,
+          });
+        }
+      })
+    );
+
+    const accounts = Array.from(accountMap.values());
+    for (const acc of accounts) {
+      if (acc.business_id && !businessMap.has(acc.business_id)) {
+        businessMap.set(acc.business_id, {
+          id: acc.business_id,
+          name: acc.business_name || `BM ${acc.business_id}`,
+        });
+      }
+    }
+
+    const businesses = Array.from(businessMap.values()).map((bm) => ({
+      id: bm.id,
+      name: bm.name,
+      ad_account_count: accounts.filter((a) => a.business_id === bm.id).length,
+    }));
+
+    return { businesses, accounts };
   }
 
   async searchGeoLocations(

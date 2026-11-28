@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import {
+  AdAccountConfig,
   AdCampaignRecord,
   AdInsightsDailyPoint,
   AdInsightsWindow,
@@ -94,6 +95,7 @@ export function CampaignsReportCharts({
   companyName,
   accountName,
   currency,
+  adAccounts = [],
   campaigns,
   selectedWindow,
   onSelectWindow,
@@ -103,12 +105,15 @@ export function CampaignsReportCharts({
   companyName: string;
   accountName?: string | null;
   currency: string;
+  adAccounts?: AdAccountConfig[];
   campaigns: AdCampaignRecord[];
   selectedWindow: AdInsightsWindow;
   onSelectWindow: (win: AdInsightsWindow) => void;
   cpaMaximo?: number;
   roasMinimo?: number;
 }) {
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("ALL");
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string>("ALL");
   const [secondarySeries, setSecondarySeries] =
     useState<SecondaryChartMetric>("clicks");
   const [compareMetric, setCompareMetric] =
@@ -116,8 +121,93 @@ export function CampaignsReportCharts({
   const [hoveredDayIndex, setHoveredDayIndex] = useState<number | null>(null);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
 
+  const accountOptions = useMemo(() => {
+    const map = new Map<string, { id: string; label: string }>();
+    for (const acc of adAccounts) {
+      const base = acc.account_name?.trim() || acc.ad_account_id;
+      const bm = acc.business_name?.trim();
+      map.set(acc.ad_account_id, {
+        id: acc.ad_account_id,
+        label: bm ? `${bm} › ${base} (${acc.ad_account_id})` : `${base} (${acc.ad_account_id})`,
+      });
+    }
+    for (const cmp of campaigns) {
+      if (cmp.ad_account_id && !map.has(cmp.ad_account_id)) {
+        map.set(cmp.ad_account_id, {
+          id: cmp.ad_account_id,
+          label: cmp.ad_account_id,
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [adAccounts, campaigns]);
+
+  const effectiveAccountId =
+    selectedAccountId === "ALL" ||
+    accountOptions.some((opt) => opt.id === selectedAccountId)
+      ? selectedAccountId
+      : "ALL";
+
+  const validCampaignsInAccount = useMemo(
+    () =>
+      campaigns.filter(
+        (c) =>
+          c.status !== "ERROR" &&
+          (effectiveAccountId === "ALL" || c.ad_account_id === effectiveAccountId)
+      ),
+    [campaigns, effectiveAccountId]
+  );
+
+  const effectiveCampaignId =
+    selectedCampaignId === "ALL" ||
+    validCampaignsInAccount.some((c) => c.id === selectedCampaignId)
+      ? selectedCampaignId
+      : "ALL";
+
+  const scopedCampaigns = useMemo(
+    () =>
+      effectiveCampaignId === "ALL"
+        ? validCampaignsInAccount
+        : validCampaignsInAccount.filter((c) => c.id === effectiveCampaignId),
+    [validCampaignsInAccount, effectiveCampaignId]
+  );
+
+  const selectedCampaignObj = useMemo(
+    () =>
+      effectiveCampaignId === "ALL"
+        ? null
+        : validCampaignsInAccount.find((c) => c.id === effectiveCampaignId) || null,
+    [validCampaignsInAccount, effectiveCampaignId]
+  );
+
+  const activeAccount = useMemo(() => {
+    const targetAccId =
+      effectiveAccountId !== "ALL"
+        ? effectiveAccountId
+        : selectedCampaignObj?.ad_account_id || null;
+    if (!targetAccId) return null;
+    return adAccounts.find((a) => a.ad_account_id === targetAccId) || null;
+  }, [adAccounts, effectiveAccountId, selectedCampaignObj]);
+
+  const effectiveCurrency =
+    activeAccount?.currency || selectedCampaignObj?.currency || currency;
+  const effectiveCpaMaximo = activeAccount?.cpa_maximo ?? cpaMaximo;
+  const effectiveRoasMinimo = activeAccount?.roas_minimo ?? roasMinimo;
+  const effectiveAccountLabel =
+    effectiveAccountId !== "ALL"
+      ? activeAccount?.business_name?.trim()
+        ? `${activeAccount.business_name.trim()} › ${activeAccount.account_name}`
+        : activeAccount?.account_name || effectiveAccountId
+      : selectedCampaignObj && activeAccount
+        ? activeAccount.business_name?.trim()
+          ? `${activeAccount.business_name.trim()} › ${activeAccount.account_name}`
+          : activeAccount.account_name
+        : accountOptions.length > 1
+          ? `Todas as Contas (${accountOptions.length})`
+          : accountName || null;
+
   const report = useMemo(() => {
-    const validCampaigns = campaigns.filter((c) => c.status !== "ERROR");
+    const validCampaigns = scopedCampaigns;
 
     const rows: CampaignRowSummary[] = validCampaigns.map((cmp) => {
       const w = getWindowMetrics(cmp, selectedWindow);
@@ -226,7 +316,7 @@ export function CampaignsReportCharts({
     ).length;
 
     let lastUpdatedAt: string | null = null;
-    for (const c of campaigns) {
+    for (const c of scopedCampaigns.length > 0 ? scopedCampaigns : campaigns) {
       if (
         c.last_insights_at &&
         (!lastUpdatedAt || c.last_insights_at > lastUpdatedAt)
@@ -341,7 +431,7 @@ export function CampaignsReportCharts({
       windowTotals,
       hasAnyWindowData,
     };
-  }, [campaigns, selectedWindow]);
+  }, [scopedCampaigns, campaigns, selectedWindow]);
 
   function handleExportCsv() {
     setExportNotice(null);
@@ -367,12 +457,14 @@ export function CampaignsReportCharts({
     ];
 
     const summaryRow = [
-      `RESUMO CONSOLIDADO (${companyName})`,
-      "TODAS",
-      `${report.activeCount} ativa(s) / ${campaigns.length} total`,
+      selectedCampaignObj
+        ? `RESUMO (${companyName} — ${selectedCampaignObj.name})`
+        : `RESUMO CONSOLIDADO (${companyName})`,
+      selectedCampaignObj ? selectedCampaignObj.channel : "TODAS",
+      `${report.activeCount} ativa(s) / ${scopedCampaigns.length} exibida(s)`,
       "—",
       "—",
-      currency,
+      effectiveCurrency,
       WINDOW_LABELS[selectedWindow],
       report.totalSpend.toFixed(2).replace(".", ","),
       Math.round(report.totalImpressions),
@@ -395,7 +487,7 @@ export function CampaignsReportCharts({
       r.campaign.status,
       r.campaign.objective,
       (r.campaign.daily_budget_cents / 100).toFixed(2).replace(".", ","),
-      r.campaign.currency || currency,
+      r.campaign.currency || effectiveCurrency,
       WINDOW_LABELS[selectedWindow],
       r.spend.toFixed(2).replace(".", ","),
       Math.round(r.impressions),
@@ -423,9 +515,16 @@ export function CampaignsReportCharts({
       .toLowerCase()
       .replace(/[^a-z0-9]+/gi, "-")
       .replace(/(^-|-$)/g, "");
+    const cmpSlug = selectedCampaignObj
+      ? `-${selectedCampaignObj.name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/gi, "-")
+          .replace(/(^-|-$)/g, "")
+          .slice(0, 32)}`
+      : "";
     const todayIso = new Date().toISOString().slice(0, 10);
     link.href = url;
-    link.download = `relatorio-campanhas-${slug || "empresa"}-${selectedWindow}-${todayIso}.csv`;
+    link.download = `relatorio-campanhas-${slug || "empresa"}${cmpSlug}-${selectedWindow}-${todayIso}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -445,12 +544,15 @@ export function CampaignsReportCharts({
 
     const nowFormatted = new Date().toLocaleString("pt-BR");
     const safeCompany = escapeHtml(companyName);
-    const safeAccount = escapeHtml(accountName || "Conta Padrão");
+    const safeAccount = escapeHtml(effectiveAccountLabel || "Todas as Contas");
+    const safeCampaignScope = selectedCampaignObj
+      ? ` • Campanha: <strong>${escapeHtml(selectedCampaignObj.name)}</strong>`
+      : "";
     const safeWindow = escapeHtml(WINDOW_LABELS[selectedWindow]);
 
     const rowsHtml =
       report.rows.length === 0
-        ? `<tr><td colspan="10" style="text-align:center;color:#64748b;padding:18px;">Nenhuma campanha registrada até o momento.</td></tr>`
+        ? `<tr><td colspan="10" style="text-align:center;color:#64748b;padding:18px;">Nenhuma campanha encontrada para este filtro.</td></tr>`
         : report.rows
             .map(
               (r) => `
@@ -458,14 +560,14 @@ export function CampaignsReportCharts({
             <td><strong>${escapeHtml(r.campaign.name)}</strong><br/><span style="color:#64748b;font-size:11px;">${escapeHtml(
               r.campaign.channel
             )} • ${escapeHtml(r.campaign.status)}</span></td>
-            <td>${escapeHtml(formatMoney(r.spend, r.campaign.currency || currency))}</td>
+            <td>${escapeHtml(formatMoney(r.spend, r.campaign.currency || effectiveCurrency))}</td>
             <td>${escapeHtml(formatInt(r.impressions))}</td>
             <td>${escapeHtml(formatInt(r.clicks))}</td>
             <td>${escapeHtml(formatPct(r.ctr))}</td>
-            <td>${escapeHtml(formatMoney(r.cpc, r.campaign.currency || currency))}</td>
-            <td>${escapeHtml(formatMoney(r.cpm, r.campaign.currency || currency))}</td>
+            <td>${escapeHtml(formatMoney(r.cpc, r.campaign.currency || effectiveCurrency))}</td>
+            <td>${escapeHtml(formatMoney(r.cpm, r.campaign.currency || effectiveCurrency))}</td>
             <td>${escapeHtml(formatInt(r.conversions))}</td>
-            <td>${escapeHtml(formatMoney(r.cpa, r.campaign.currency || currency))}</td>
+            <td>${escapeHtml(formatMoney(r.cpa, r.campaign.currency || effectiveCurrency))}</td>
             <td>${escapeHtml(r.campaign.last_verdict || "—")}</td>
           </tr>`
             )
@@ -494,13 +596,13 @@ export function CampaignsReportCharts({
 </head>
 <body>
   <h1>Relatório de Performance — Tráfego Pago</h1>
-  <div class="meta">Empresa: <strong>${safeCompany}</strong> • Conta: ${safeAccount} • Janela: <strong>${safeWindow}</strong> • Gerado em ${escapeHtml(
+  <div class="meta">Empresa: <strong>${safeCompany}</strong> • Conta: ${safeAccount}${safeCampaignScope} • Janela: <strong>${safeWindow}</strong> • Gerado em ${escapeHtml(
       nowFormatted
     )}</div>
 
   <div class="kpis">
     <div class="kpi"><div class="kpi-label">Gasto Total</div><div class="kpi-val">${escapeHtml(
-      formatMoney(report.totalSpend, currency)
+      formatMoney(report.totalSpend, effectiveCurrency)
     )}</div></div>
     <div class="kpi"><div class="kpi-label">Impressões</div><div class="kpi-val">${escapeHtml(
       formatInt(report.totalImpressions)
@@ -511,13 +613,13 @@ export function CampaignsReportCharts({
       formatInt(report.totalClicks)
     )}</div></div>
     <div class="kpi"><div class="kpi-label">CPC Médio</div><div class="kpi-val">${escapeHtml(
-      formatMoney(report.avgCpc, currency)
+      formatMoney(report.avgCpc, effectiveCurrency)
     )}</div></div>
     <div class="kpi"><div class="kpi-label">Conversões</div><div class="kpi-val">${escapeHtml(
       formatInt(report.totalConversions)
     )}</div></div>
     <div class="kpi"><div class="kpi-label">CPA / CPL Médio</div><div class="kpi-val">${escapeHtml(
-      formatMoney(report.avgCpa, currency)
+      formatMoney(report.avgCpa, effectiveCurrency)
     )}</div></div>
     <div class="kpi"><div class="kpi-label">ROAS Consolidado</div><div class="kpi-val">${
       report.consolidatedRoas !== null
@@ -530,7 +632,7 @@ export function CampaignsReportCharts({
   <div class="funnel">
     <div class="funnel-step"><strong>1. Impressões:</strong> ${escapeHtml(
       formatInt(report.totalImpressions)
-    )} (CPM ${escapeHtml(formatMoney(report.avgCpm, currency))})</div>
+    )} (CPM ${escapeHtml(formatMoney(report.avgCpm, effectiveCurrency))})</div>
     <div class="funnel-step"><strong>2. Cliques:</strong> ${escapeHtml(
       formatInt(report.totalClicks)
     )} (CTR ${escapeHtml(formatPct(report.avgCtr))})</div>
@@ -629,8 +731,12 @@ export function CampaignsReportCharts({
       if (compareMetric === "cpa") return r.cpa || 0;
       return r[compareMetric];
     });
-    return Math.max(1, cpaMaximo && compareMetric === "cpa" ? cpaMaximo : 0, ...vals);
-  }, [sortedCampaigns, compareMetric, cpaMaximo]);
+    return Math.max(
+      1,
+      effectiveCpaMaximo && compareMetric === "cpa" ? effectiveCpaMaximo : 0,
+      ...vals
+    );
+  }, [sortedCampaigns, compareMetric, effectiveCpaMaximo]);
 
   const ctrRatioWidth = Math.min(
     100,
@@ -660,11 +766,12 @@ export function CampaignsReportCharts({
           </h3>
           <p className="mt-0.5 text-[11px] text-slate-500">
             {companyName}
-            {accountName ? ` • ${accountName}` : ""} • Janela:{" "}
-            <strong>{WINDOW_LABELS[selectedWindow]}</strong>
+            {effectiveAccountLabel ? ` • ${effectiveAccountLabel}` : ""}
+            {selectedCampaignObj ? ` • ${selectedCampaignObj.name}` : ""} •
+            Janela: <strong>{WINDOW_LABELS[selectedWindow]}</strong>
             {report.lastUpdatedAt
               ? ` • Última sinc.: ${new Date(report.lastUpdatedAt).toLocaleString("pt-BR")}`
-              : " • Clique em Atualizar Métricas para sincronizar"}
+              : " • Clique em Sincronizar Meta & Métricas para atualizar"}
           </p>
         </div>
 
@@ -703,6 +810,86 @@ export function CampaignsReportCharts({
         </div>
       </div>
 
+      {/* Filtros do Relatório (Conta/BM & Campanha) */}
+      <div className="space-y-2.5">
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-[1fr_1.4fr_auto]">
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">
+              Filtrar por Conta / BM
+            </label>
+            <select
+              value={effectiveAccountId}
+              onChange={(e) => {
+                setSelectedAccountId(e.target.value);
+                setSelectedCampaignId("ALL");
+              }}
+              aria-label="Filtrar relatório por conta ou BM"
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-800"
+            >
+              <option value="ALL">
+                Todas as Contas ({accountOptions.length})
+              </option>
+              {accountOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">
+              Selecionar Campanha do Relatório
+            </label>
+            <select
+              value={effectiveCampaignId}
+              onChange={(e) => setSelectedCampaignId(e.target.value)}
+              aria-label="Selecionar campanha do relatório"
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-800"
+            >
+              <option value="ALL">
+                Todas as Campanhas ({validCampaignsInAccount.length})
+              </option>
+              {validCampaignsInAccount.map((cmp) => (
+                <option key={cmp.id} value={cmp.id}>
+                  {cmp.name} ({cmp.status})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {(effectiveAccountId !== "ALL" || effectiveCampaignId !== "ALL") && (
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedAccountId("ALL");
+                  setSelectedCampaignId("ALL");
+                }}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
+              >
+                Limpar filtros
+              </button>
+            </div>
+          )}
+        </div>
+
+        <details className="rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2 text-[11px] text-slate-600">
+          <summary className="cursor-pointer font-bold text-slate-700 hover:text-indigo-700">
+            Como usar os filtros e exportar o Relatório?
+          </summary>
+          <p className="mt-1.5 leading-relaxed">
+            Use <strong>Filtrar por Conta / BM</strong> e{" "}
+            <strong>Selecionar Campanha do Relatório</strong> (junto com a janela{" "}
+            <strong>4 / 7 / 14 / 30 dias</strong>) para gerar números de uma
+            campanha específica ou consolidados por conta/empresa. Todos os 8
+            KPIs, a Evolução Diária, o Funil Visual, <strong>Exportar CSV</strong>{" "}
+            e <strong>Imprimir / PDF</strong> geram exatamente o recorte
+            selecionado aqui.
+          </p>
+        </details>
+      </div>
+
       {exportNotice && (
         <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-[11px] font-semibold text-indigo-800">
           {exportNotice}
@@ -716,7 +903,7 @@ export function CampaignsReportCharts({
             Gasto Total
           </p>
           <p className="mt-1 text-lg font-extrabold text-slate-900">
-            {formatMoney(report.totalSpend, currency)}
+            {formatMoney(report.totalSpend, effectiveCurrency)}
           </p>
           <p className="mt-0.5 text-[10px] text-slate-500">
             {report.activeCount} ativa(s) • {report.pausedCount} pausada(s)
@@ -731,7 +918,7 @@ export function CampaignsReportCharts({
             {formatInt(report.totalImpressions)}
           </p>
           <p className="mt-0.5 text-[10px] text-slate-500">
-            CPM médio: {formatMoney(report.avgCpm, currency)}
+            CPM médio: {formatMoney(report.avgCpm, effectiveCurrency)}
           </p>
         </div>
 
@@ -752,7 +939,7 @@ export function CampaignsReportCharts({
             CPC Médio
           </p>
           <p className="mt-1 text-lg font-extrabold text-slate-900">
-            {formatMoney(report.avgCpc, currency)}
+            {formatMoney(report.avgCpc, effectiveCurrency)}
           </p>
           <p className="mt-0.5 text-[10px] text-slate-500">
             Custo médio por clique
@@ -779,15 +966,15 @@ export function CampaignsReportCharts({
             className={`mt-1 text-lg font-extrabold ${
               report.avgCpa === null
                 ? "text-slate-900"
-                : report.avgCpa <= cpaMaximo
+                : report.avgCpa <= effectiveCpaMaximo
                   ? "text-emerald-700"
                   : "text-rose-700"
             }`}
           >
-            {formatMoney(report.avgCpa, currency)}
+            {formatMoney(report.avgCpa, effectiveCurrency)}
           </p>
           <p className="mt-0.5 text-[10px] text-slate-500">
-            Meta teto: {formatMoney(cpaMaximo, currency)}
+            Meta teto: {formatMoney(effectiveCpaMaximo, effectiveCurrency)}
           </p>
         </div>
 
@@ -799,7 +986,7 @@ export function CampaignsReportCharts({
             className={`mt-1 text-lg font-extrabold ${
               report.consolidatedRoas === null
                 ? "text-slate-900"
-                : report.consolidatedRoas >= roasMinimo
+                : report.consolidatedRoas >= effectiveRoasMinimo
                   ? "text-emerald-700"
                   : "text-amber-700"
             }`}
@@ -809,7 +996,7 @@ export function CampaignsReportCharts({
               : "—"}
           </p>
           <p className="mt-0.5 text-[10px] text-slate-500">
-            Meta mínima: {roasMinimo.toFixed(1).replace(".", ",")}x
+            Meta mínima: {effectiveRoasMinimo.toFixed(1).replace(".", ",")}x
           </p>
         </div>
 
@@ -829,7 +1016,7 @@ export function CampaignsReportCharts({
             </span>
           </div>
           <p className="mt-1 text-[10px] text-slate-500">
-            {campaigns.length} campanha(s) no painel
+            {report.rows.length} campanha(s) no relatório
           </p>
         </div>
       </div>
@@ -895,7 +1082,10 @@ export function CampaignsReportCharts({
                 {/* Linhas guia horizontais */}
                 {[0, 0.25, 0.5, 0.75, 1].map((step) => {
                   const y = padTop + plotH * (1 - step);
-                  const valLabel = formatMoney(maxDailySpend * step, currency);
+                  const valLabel = formatMoney(
+                    maxDailySpend * step,
+                    effectiveCurrency
+                  );
                   return (
                     <g key={step}>
                       <line
@@ -1022,7 +1212,7 @@ export function CampaignsReportCharts({
               {hoveredPoint ? (
                 <div className="font-semibold text-slate-800">
                   <strong>{formatShortDate(hoveredPoint.date)}:</strong>{" "}
-                  {formatMoney(hoveredPoint.spend, currency)} •{" "}
+                  {formatMoney(hoveredPoint.spend, effectiveCurrency)} •{" "}
                   {formatInt(hoveredPoint.impressions)} impr. •{" "}
                   {formatInt(hoveredPoint.clicks)} cliques (
                   {formatPct(hoveredPoint.ctr)}) •{" "}
@@ -1056,7 +1246,7 @@ export function CampaignsReportCharts({
                   >
                     <div className="flex items-center justify-between font-bold text-slate-700">
                       <span>{wt.label}</span>
-                      <span>{formatMoney(wt.spend, currency)}</span>
+                      <span>{formatMoney(wt.spend, effectiveCurrency)}</span>
                     </div>
                     <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
                       <div
@@ -1113,7 +1303,7 @@ export function CampaignsReportCharts({
                   }}
                 >
                   {report.totalImpressions > 0
-                    ? `CPM ${formatMoney(report.avgCpm, currency)}`
+                    ? `CPM ${formatMoney(report.avgCpm, effectiveCurrency)}`
                     : ""}
                 </div>
               </div>
@@ -1135,7 +1325,7 @@ export function CampaignsReportCharts({
                   style={{ width: `${ctrRatioWidth}%` }}
                 >
                   {report.totalClicks > 0
-                    ? `CPC ${formatMoney(report.avgCpc, currency)}`
+                    ? `CPC ${formatMoney(report.avgCpc, effectiveCurrency)}`
                     : ""}
                 </div>
               </div>
@@ -1157,7 +1347,7 @@ export function CampaignsReportCharts({
                   style={{ width: `${convRatioWidth}%` }}
                 >
                   {report.totalConversions > 0
-                    ? `CPA ${formatMoney(report.avgCpa, currency)}`
+                    ? `CPA ${formatMoney(report.avgCpa, effectiveCurrency)}`
                     : ""}
                 </div>
               </div>
@@ -1220,13 +1410,19 @@ export function CampaignsReportCharts({
                 const cpaOverLimit =
                   compareMetric === "cpa" &&
                   row.cpa !== null &&
-                  row.cpa > cpaMaximo;
+                  row.cpa > effectiveCpaMaximo;
 
                 const formattedVal =
                   compareMetric === "spend"
-                    ? formatMoney(row.spend, row.campaign.currency || currency)
+                    ? formatMoney(
+                        row.spend,
+                        row.campaign.currency || effectiveCurrency
+                      )
                     : compareMetric === "cpa"
-                      ? formatMoney(row.cpa, row.campaign.currency || currency)
+                      ? formatMoney(
+                          row.cpa,
+                          row.campaign.currency || effectiveCurrency
+                        )
                       : formatInt(row[compareMetric]);
 
                 return (
@@ -1285,8 +1481,10 @@ export function CampaignsReportCharts({
               {compareMetric === "cpa" && (
                 <p className="text-[10px] text-slate-500">
                   Referência de meta: CPA Máximo{" "}
-                  <strong>{formatMoney(cpaMaximo, currency)}</strong> (barras em
-                  vermelho estão acima do teto).
+                  <strong>
+                    {formatMoney(effectiveCpaMaximo, effectiveCurrency)}
+                  </strong>{" "}
+                  (barras em vermelho estão acima do teto).
                 </p>
               )}
             </div>

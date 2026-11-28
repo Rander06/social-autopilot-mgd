@@ -1924,15 +1924,16 @@ export class CampaignOrchestratorService {
     }
 
     const metaAds = new MetaAdsService(secrets.meta_access_token);
-    const [permissions, remoteAccounts, savedAccounts] = await Promise.all([
+    const [permissions, bmData, savedAccounts] = await Promise.all([
       metaAds.checkAdsPermissions(),
-      metaAds.listAdAccounts(),
+      metaAds.listBusinessesWithAdAccounts(),
       listAdAccountsByCompany(companyId, "META"),
     ]);
 
     return {
       permissions,
-      remote_accounts: remoteAccounts,
+      businesses: bmData.businesses,
+      remote_accounts: bmData.accounts,
       saved_accounts: savedAccounts,
     };
   }
@@ -1942,6 +1943,8 @@ export class CampaignOrchestratorService {
     userId?: string | null;
     ad_account_id: string;
     account_name?: string;
+    business_id?: string | null;
+    business_name?: string | null;
     currency?: string;
     account_status?: number | null;
     is_default?: boolean;
@@ -1959,6 +1962,8 @@ export class CampaignOrchestratorService {
       provider: "META",
       ad_account_id: input.ad_account_id,
       account_name: input.account_name,
+      business_id: input.business_id,
+      business_name: input.business_name,
       currency: input.currency,
       account_status: input.account_status,
       is_default: input.is_default,
@@ -1970,6 +1975,61 @@ export class CampaignOrchestratorService {
       localizacao_base: input.localizacao_base,
       auto_pause_enabled: input.auto_pause_enabled,
     });
+  }
+
+  static async importBusinessAdAccounts(params: {
+    companyId: string;
+    userId?: string | null;
+    accounts: Array<{
+      ad_account_id: string;
+      account_name?: string;
+      currency?: string;
+      account_status?: number | null;
+      business_id?: string | null;
+      business_name?: string | null;
+    }>;
+  }): Promise<AdAccountConfig[]> {
+    const existingList = await listAdAccountsByCompany(params.companyId, "META");
+    let hasDefault = existingList.some((a) => a.is_default);
+
+    const savedAccounts: AdAccountConfig[] = [];
+    for (const item of params.accounts) {
+      const cleanId = item.ad_account_id?.trim();
+      if (!cleanId) continue;
+      const normalizedId = normalizeAdAccountId(cleanId);
+      const existing = existingList.find(
+        (a) => a.ad_account_id === normalizedId
+      );
+      const makeDefault = existing
+        ? existing.is_default
+        : !hasDefault && (item.account_status === 1 || savedAccounts.length === 0);
+
+      const saved = await upsertAdAccountConfig({
+        company_id: params.companyId,
+        user_id: params.userId || null,
+        provider: "META",
+        ad_account_id: normalizedId,
+        account_name: item.account_name?.trim() || existing?.account_name || normalizedId,
+        business_id:
+          item.business_id !== undefined
+            ? item.business_id
+            : existing?.business_id,
+        business_name:
+          item.business_name !== undefined
+            ? item.business_name
+            : existing?.business_name,
+        currency: item.currency || existing?.currency || "BRL",
+        account_status:
+          item.account_status !== undefined
+            ? item.account_status
+            : existing?.account_status,
+        is_default: makeDefault,
+      });
+
+      if (saved.is_default) hasDefault = true;
+      savedAccounts.push(saved);
+    }
+    return savedAccounts;
   }
 
   static async setDefaultAdAccount(

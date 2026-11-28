@@ -175,6 +175,8 @@ create table if not exists public.ad_accounts (
   provider text not null default 'META' check (provider in ('META', 'TIKTOK')),
   ad_account_id text not null,
   account_name text not null default '',
+  business_id text,
+  business_name text,
   currency text not null default 'BRL',
   account_status integer,
   is_default boolean not null default true,

@@ -98,6 +98,18 @@ export async function POST(request: NextRequest) {
         ad_account_id: adAccountId,
         account_name:
           typeof body.account_name === "string" ? body.account_name : undefined,
+        business_id:
+          typeof body.business_id === "string"
+            ? body.business_id
+            : body.business_id === null
+              ? null
+              : undefined,
+        business_name:
+          typeof body.business_name === "string"
+            ? body.business_name
+            : body.business_name === null
+              ? null
+              : undefined,
         currency: typeof body.currency === "string" ? body.currency : undefined,
         account_status:
           typeof body.account_status === "number"
@@ -133,6 +145,56 @@ export async function POST(request: NextRequest) {
       });
 
       return NextResponse.json({ account: saved });
+    }
+
+    if (action === "import_bm_ad_accounts") {
+      const rawAccounts = Array.isArray(body.accounts) ? body.accounts : [];
+      if (rawAccounts.length === 0) {
+        return NextResponse.json(
+          { error: "Nenhuma conta enviada para importar." },
+          { status: 400 }
+        );
+      }
+
+      const accounts = rawAccounts
+        .filter(
+          (item): item is Record<string, unknown> =>
+            Boolean(item) && typeof item === "object"
+        )
+        .map((item) => ({
+          ad_account_id: String(item.ad_account_id || "").trim(),
+          account_name:
+            typeof item.account_name === "string"
+              ? item.account_name
+              : undefined,
+          currency:
+            typeof item.currency === "string" ? item.currency : undefined,
+          account_status:
+            typeof item.account_status === "number"
+              ? item.account_status
+              : undefined,
+          business_id:
+            typeof item.business_id === "string"
+              ? item.business_id
+              : item.business_id === null
+                ? null
+                : undefined,
+          business_name:
+            typeof item.business_name === "string"
+              ? item.business_name
+              : item.business_name === null
+                ? null
+                : undefined,
+        }))
+        .filter((item) => Boolean(item.ad_account_id));
+
+      const imported =
+        await CampaignOrchestratorService.importBusinessAdAccounts({
+          companyId,
+          userId: session.userId,
+          accounts,
+        });
+      return NextResponse.json({ accounts: imported });
     }
 
     if (action === "set_default_ad_account") {

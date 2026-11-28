@@ -325,12 +325,20 @@ export interface AdInsightsSnapshot {
 
 export type AdsAIProviderPreference = "AUTO" | "GEMINI" | "OPENAI" | "CLAUDE";
 
+export interface MetaBusinessPortfolioSummary {
+  id: string;
+  name: string;
+  ad_account_count: number;
+}
+
 export interface AdAccountConfig {
   id: string;
   company_id: string;
   provider: AdProvider;
   ad_account_id: string;
   account_name: string;
+  business_id?: string | null;
+  business_name?: string | null;
   currency: string;
   account_status?: number | null;
   is_default: boolean;

@@ -247,13 +247,33 @@ export function PostExternalLinks({
   );
 }
 
+interface RemoteMetaBusiness {
+  id: string;
+  name: string;
+  ad_account_count?: number;
+}
+
 interface RemoteMetaAdAccount {
   id: string;
   name: string;
   currency: string;
   account_status: number;
+  business_id?: string | null;
   business_name: string | null;
+  ownership_type?: "OWNED" | "CLIENT" | "PERSONAL";
   is_active: boolean;
+}
+
+function formatAccountDisplayLabel(acc: {
+  account_name?: string | null;
+  ad_account_id: string;
+  business_name?: string | null;
+}): string {
+  const baseName = acc.account_name?.trim() || acc.ad_account_id;
+  if (acc.business_name?.trim()) {
+    return `${acc.business_name.trim()} › ${baseName}`;
+  }
+  return baseName;
 }
 
 interface AdsPermissionsState {
@@ -1023,8 +1043,8 @@ export function BoostCampaignModal({
                 >
                   {adAccounts.map((acc) => (
                     <option key={acc.id} value={acc.ad_account_id}>
-                      {acc.account_name} ({acc.ad_account_id} • {acc.currency})
-                      {acc.is_default ? " — Padrão" : ""}
+                      {formatAccountDisplayLabel(acc)} ({acc.ad_account_id} •{" "}
+                      {acc.currency}){acc.is_default ? " — Padrão" : ""}
                     </option>
                   ))}
                 </select>
@@ -2717,6 +2737,9 @@ export function CampaignsPanel({
     text: string;
   } | null>(null);
 
+  const [remoteBusinesses, setRemoteBusinesses] = useState<
+    RemoteMetaBusiness[]
+  >([]);
   const [remoteAccounts, setRemoteAccounts] = useState<RemoteMetaAdAccount[]>(
     []
   );
@@ -2749,6 +2772,8 @@ export function CampaignsPanel({
   );
   const [accId, setAccId] = useState("");
   const [accName, setAccName] = useState("");
+  const [accBusinessId, setAccBusinessId] = useState("");
+  const [accBusinessName, setAccBusinessName] = useState("");
   const [accCurrency, setAccCurrency] = useState("BRL");
   const [accStatus, setAccStatus] = useState<number | null>(null);
   const [cpaMax, setCpaMax] = useState("35");
@@ -2764,6 +2789,8 @@ export function CampaignsPanel({
   const resetAndCloseAccountForm = useCallback(() => {
     setAccId("");
     setAccName("");
+    setAccBusinessId("");
+    setAccBusinessName("");
     setAccCurrency("BRL");
     setAccStatus(null);
     setCpaMax("35");
@@ -2782,12 +2809,15 @@ export function CampaignsPanel({
     resetAndCloseAccountForm();
     setAdvisor(null);
     setMetricsDiagnosis(null);
+    setRemoteBusinesses([]);
     setRemoteAccounts([]);
   }, [companyId, resetAndCloseAccountForm]);
 
   const applyAccountToForm = useCallback((acc: AdAccountConfig) => {
     setAccId(acc.ad_account_id);
     setAccName(acc.account_name || acc.ad_account_id);
+    setAccBusinessId(acc.business_id || "");
+    setAccBusinessName(acc.business_name || "");
     setAccCurrency(acc.currency || "BRL");
     setAccStatus(acc.account_status ?? null);
     setCpaMax(String(acc.cpa_maximo ?? 35));
@@ -2805,6 +2835,8 @@ export function CampaignsPanel({
   const handleStartNewAccount = useCallback(() => {
     setAccId("");
     setAccName("");
+    setAccBusinessId("");
+    setAccBusinessName("");
     setAccCurrency("BRL");
     setAccStatus(null);
     setCpaMax("35");
@@ -2860,16 +2892,66 @@ export function CampaignsPanel({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Erro ao buscar contas Meta.");
       const list = (data.remote_accounts || []) as RemoteMetaAdAccount[];
+      const bms = (data.businesses || []) as RemoteMetaBusiness[];
+      setRemoteBusinesses(bms);
       setRemoteAccounts(list);
       setPermissions((data.permissions || null) as AdsPermissionsState | null);
       setNotice({
         type: "success",
-        text: `${list.length} conta(s) de anúncio encontrada(s) na Meta.`,
+        text:
+          bms.length > 0
+            ? `${bms.length} BM(s) e ${list.length} conta(s) de anúncio encontrada(s) na Meta.`
+            : `${list.length} conta(s) de anúncio encontrada(s) na Meta.`,
       });
     } catch (err) {
       setNotice({
         type: "error",
         text: err instanceof Error ? err.message : "Erro ao consultar Meta Ads.",
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleImportBusinessAccounts(
+    groupKey: string,
+    groupLabel: string,
+    groupAccounts: RemoteMetaAdAccount[]
+  ) {
+    if (groupAccounts.length === 0) return;
+    setBusyAction(`import-bm-${groupKey}`);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "import_bm_ad_accounts",
+          companyId,
+          accounts: groupAccounts.map((acc) => ({
+            ad_account_id: acc.id,
+            account_name: acc.name,
+            currency: acc.currency,
+            account_status: acc.account_status,
+            business_id: acc.business_id || null,
+            business_name: acc.business_name || null,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro ao importar contas da BM.");
+      await fetchAdsState();
+      setNotice({
+        type: "success",
+        text: `${groupAccounts.length} conta(s) de "${groupLabel}" sincronizada(s) nesta empresa!`,
+      });
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text:
+          err instanceof Error
+            ? err.message
+            : "Erro ao importar contas da BM.",
       });
     } finally {
       setBusyAction(null);
@@ -2896,6 +2978,8 @@ export function CampaignsPanel({
           companyId,
           ad_account_id: accId.trim(),
           account_name: accName.trim() || accId.trim(),
+          business_id: accBusinessId.trim() || null,
+          business_name: accBusinessName.trim() || null,
           currency: accCurrency.trim() || "BRL",
           account_status: accStatus,
           is_default: accIsDefault,
@@ -3464,11 +3548,14 @@ export function CampaignsPanel({
       <CampaignsReportCharts
         companyName={companyName || "Empresa"}
         accountName={
-          state?.default_ad_account?.account_name || accName || null
+          state?.default_ad_account
+            ? formatAccountDisplayLabel(state.default_ad_account)
+            : accName || null
         }
         currency={
           state?.default_ad_account?.currency || accCurrency || "BRL"
         }
+        adAccounts={state?.ad_accounts || []}
         campaigns={state?.campaigns || []}
         selectedWindow={selectedWindow}
         onSelectWindow={setSelectedWindow}
@@ -3518,91 +3605,192 @@ export function CampaignsPanel({
         </div>
 
         {(state?.ad_accounts?.length || 0) > 0 ? (
-          <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5">
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-[11px] font-extrabold text-slate-700">
-                Contas de Anúncios Conectadas ({state?.ad_accounts.length || 0})
+                Portfólios (BM) &amp; Contas de Anúncios Conectadas (
+                {state?.ad_accounts.length || 0})
               </p>
               <span className="text-[10px] text-slate-500">
                 Clique em Editar para ajustar metas/IA ou em Tornar Padrão
               </span>
             </div>
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-              {state?.ad_accounts.map((acc) => {
-                const isEditing =
-                  accountFormMode === "edit" && editingAccountRowId === acc.id;
-                return (
-                  <div
-                    key={acc.id}
-                    className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3 text-xs transition ${
-                      isEditing
-                        ? "border-indigo-400 bg-indigo-50/60"
-                        : "border-slate-200 bg-white"
-                    }`}
-                  >
-                    <div className="min-w-0 space-y-0.5">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="truncate font-extrabold text-slate-900">
-                          {acc.account_name}
-                        </span>
-                        {acc.is_default && (
-                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800">
-                            Padrão
+
+            {(() => {
+              const savedGroupsMap = new Map<
+                string,
+                {
+                  key: string;
+                  businessId: string | null;
+                  businessName: string | null;
+                  accounts: AdAccountConfig[];
+                }
+              >();
+
+              for (const acc of state?.ad_accounts || []) {
+                const bId = acc.business_id?.trim() || null;
+                const bName = acc.business_name?.trim() || null;
+                const key = bId
+                  ? `bm_${bId}`
+                  : bName
+                    ? `bname_${bName.toLowerCase()}`
+                    : "__PERSONAL__";
+                const existingGroup = savedGroupsMap.get(key);
+                if (existingGroup) {
+                  existingGroup.accounts.push(acc);
+                  if (!existingGroup.businessId && bId) {
+                    existingGroup.businessId = bId;
+                  }
+                  if (!existingGroup.businessName && bName) {
+                    existingGroup.businessName = bName;
+                  }
+                } else {
+                  savedGroupsMap.set(key, {
+                    key,
+                    businessId: bId,
+                    businessName: bName,
+                    accounts: [acc],
+                  });
+                }
+              }
+
+              const savedGroups = Array.from(savedGroupsMap.values()).sort(
+                (a, b) => {
+                  if (a.key === "__PERSONAL__" && b.key !== "__PERSONAL__") {
+                    return 1;
+                  }
+                  if (a.key !== "__PERSONAL__" && b.key === "__PERSONAL__") {
+                    return -1;
+                  }
+                  return (a.businessName || "").localeCompare(
+                    b.businessName || ""
+                  );
+                }
+              );
+
+              return (
+                <div className="space-y-3">
+                  {savedGroups.map((group) => (
+                    <div
+                      key={group.key}
+                      className="space-y-2 rounded-xl border border-slate-200/90 bg-white/70 p-3"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/70 pb-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="rounded-md bg-slate-800 px-2 py-0.5 text-[10px] font-extrabold text-white">
+                            {group.key === "__PERSONAL__"
+                              ? "Conta Pessoal (sem BM)"
+                              : `BM: ${group.businessName || group.businessId}`}
                           </span>
+                          {group.businessId && (
+                            <span className="font-mono text-[10px] text-slate-500">
+                              ID: {group.businessId}
+                            </span>
+                          )}
+                          <span className="text-[10px] font-bold text-slate-500">
+                            • {group.accounts.length} conta(s)
+                          </span>
+                        </div>
+                        {group.businessId && (
+                          <a
+                            href={`https://business.facebook.com/settings/ad-accounts?business_id=${encodeURIComponent(
+                              group.businessId
+                            )}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-700 hover:bg-slate-100"
+                          >
+                            Abrir BM ↗
+                          </a>
                         )}
-                        <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-800">
-                          IA: {acc.preferred_ai_provider || "AUTO"}
-                        </span>
                       </div>
-                      <p className="text-[10px] text-slate-600">
-                        <span className="font-mono">{acc.ad_account_id}</span> •{" "}
-                        {acc.currency} • CPA Máx:{" "}
-                        {formatMoney(acc.cpa_maximo, acc.currency)} • ROAS:{" "}
-                        {acc.roas_minimo}x
-                      </p>
+
+                      <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                        {group.accounts.map((acc) => {
+                          const isEditing =
+                            accountFormMode === "edit" &&
+                            editingAccountRowId === acc.id;
+                          return (
+                            <div
+                              key={acc.id}
+                              className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3 text-xs transition ${
+                                isEditing
+                                  ? "border-indigo-400 bg-indigo-50/60"
+                                  : "border-slate-200 bg-white"
+                              }`}
+                            >
+                              <div className="min-w-0 space-y-0.5">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="truncate font-extrabold text-slate-900">
+                                    {acc.account_name}
+                                  </span>
+                                  {acc.is_default && (
+                                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800">
+                                      Padrão
+                                    </span>
+                                  )}
+                                  <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-800">
+                                    IA: {acc.preferred_ai_provider || "AUTO"}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-600">
+                                  <span className="font-mono">
+                                    {acc.ad_account_id}
+                                  </span>{" "}
+                                  • {acc.currency} • CPA Máx:{" "}
+                                  {formatMoney(acc.cpa_maximo, acc.currency)} •
+                                  ROAS: {acc.roas_minimo}x
+                                </p>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1">
+                                <button
+                                  type="button"
+                                  disabled={busyAction !== null}
+                                  onClick={() => applyAccountToForm(acc)}
+                                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-700 hover:bg-slate-100"
+                                >
+                                  Editar
+                                </button>
+                                {!acc.is_default && (
+                                  <button
+                                    type="button"
+                                    disabled={busyAction !== null}
+                                    onClick={() =>
+                                      handleSetDefaultAdAccount(acc)
+                                    }
+                                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100"
+                                  >
+                                    Tornar Padrão
+                                  </button>
+                                )}
+                                <a
+                                  href={`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${encodeURIComponent(
+                                    stripAdAccountPrefix(acc.ad_account_id)
+                                  )}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-700 hover:bg-blue-100"
+                                >
+                                  Abrir Meta ↗
+                                </a>
+                                <button
+                                  type="button"
+                                  disabled={busyAction !== null}
+                                  onClick={() => handleDeleteAdAccount(acc)}
+                                  className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-100"
+                                >
+                                  Remover
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-1">
-                      <button
-                        type="button"
-                        disabled={busyAction !== null}
-                        onClick={() => applyAccountToForm(acc)}
-                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-700 hover:bg-slate-100"
-                      >
-                        Editar
-                      </button>
-                      {!acc.is_default && (
-                        <button
-                          type="button"
-                          disabled={busyAction !== null}
-                          onClick={() => handleSetDefaultAdAccount(acc)}
-                          className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100"
-                        >
-                          Tornar Padrão
-                        </button>
-                      )}
-                      <a
-                        href={`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${encodeURIComponent(
-                          stripAdAccountPrefix(acc.ad_account_id)
-                        )}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-700 hover:bg-blue-100"
-                      >
-                        Abrir Meta ↗
-                      </a>
-                      <button
-                        type="button"
-                        disabled={busyAction !== null}
-                        onClick={() => handleDeleteAdAccount(acc)}
-                        className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-100"
-                      >
-                        Remover
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         ) : (
           accountFormMode === "closed" && (
@@ -3618,23 +3806,25 @@ export function CampaignsPanel({
 
         <details className="rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-[11px] text-slate-600">
           <summary className="cursor-pointer font-bold text-slate-700 hover:text-indigo-700">
-            Como usar Múltiplas Contas de Anúncios por empresa/perfil?
+            Como usar Múltiplas Contas de Anúncios por BM e empresa/perfil?
           </summary>
           <ol className="mt-2 list-decimal space-y-1 pl-4 leading-relaxed">
             <li>
-              Clique em <strong>Buscar Contas na Meta</strong> para listar e
-              selecionar contas vinculadas ao token desta empresa ou clique em{" "}
-              <strong>+ Adicionar Nova Conta</strong> para abrir o cadastro.
+              Clique em <strong>Buscar Contas na Meta</strong> para listar suas{" "}
+              <strong>BMs (Portfólios Empresariais)</strong> e contas vinculadas.
+              Você pode importar todas as contas de uma BM em um clique ou
+              clicar em <strong>+ Adicionar Nova Conta</strong> manualmente.
             </li>
             <li>
-              Para editar uma conta já conectada sem expor os dados na tela,
-              clique em <strong>Editar</strong> no card dela; caso desista,
-              clique em <strong>Cancelar</strong> para limpar e fechar os
-              campos.
+              Para clientes <strong>autônomos sem BM</strong>, o sistema agrupa
+              automaticamente em <strong>Conta Pessoal (sem BM)</strong> — não é
+              obrigatório preencher BM.
             </li>
             <li>
-              Defina a <strong>IA Padrão desta Conta</strong>, as metas de CPA /
-              ROAS e clique em <strong>Salvar Conta &amp; Metas</strong>.
+              Para ajustar metas/IA de qualquer conta sem deixar dados expostos
+              na tela, clique em <strong>Editar</strong> no card dela; caso
+              desista, clique em <strong>Cancelar</strong> para limpar e fechar
+              os campos.
             </li>
           </ol>
         </details>
@@ -3649,56 +3839,191 @@ export function CampaignsPanel({
             </div>
           )}
 
-        {remoteAccounts.length > 0 && (
-          <div className="space-y-1.5 rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-[11px] font-bold text-slate-700">
-              Contas encontradas na sua Meta (clique para abrir o cadastro ou
-              editar):
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {remoteAccounts.map((acc) => (
-                <button
-                  key={acc.id}
-                  type="button"
-                  onClick={() => {
-                    const existing = state?.ad_accounts.find(
-                      (saved) =>
-                        saved.ad_account_id.toLowerCase() ===
-                        acc.id.toLowerCase()
+        {remoteAccounts.length > 0 &&
+          (() => {
+            const remoteGroupsMap = new Map<
+              string,
+              {
+                key: string;
+                businessId: string | null;
+                businessName: string;
+                accounts: RemoteMetaAdAccount[];
+              }
+            >();
+
+            for (const bm of remoteBusinesses) {
+              const key = `bm_${bm.id}`;
+              if (!remoteGroupsMap.has(key)) {
+                remoteGroupsMap.set(key, {
+                  key,
+                  businessId: bm.id,
+                  businessName: bm.name || `BM ${bm.id}`,
+                  accounts: [],
+                });
+              }
+            }
+
+            for (const acc of remoteAccounts) {
+              const bId = acc.business_id?.trim() || null;
+              const bName = acc.business_name?.trim() || null;
+              const key = bId
+                ? `bm_${bId}`
+                : bName
+                  ? `bname_${bName.toLowerCase()}`
+                  : "__PERSONAL__";
+              const existingGroup = remoteGroupsMap.get(key);
+              if (existingGroup) {
+                existingGroup.accounts.push(acc);
+              } else {
+                remoteGroupsMap.set(key, {
+                  key,
+                  businessId: bId,
+                  businessName:
+                    key === "__PERSONAL__"
+                      ? "Conta Pessoal (sem BM)"
+                      : bName || `BM ${bId}`,
+                  accounts: [acc],
+                });
+              }
+            }
+
+            const remoteGroups = Array.from(remoteGroupsMap.values()).filter(
+              (g) => g.accounts.length > 0
+            );
+            const savedIdsSet = new Set(
+              (state?.ad_accounts || []).map((a) =>
+                a.ad_account_id.toLowerCase()
+              )
+            );
+
+            return (
+              <div className="space-y-2.5 rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[11px] font-bold text-slate-700">
+                    Contas encontradas na sua Meta agrupadas por BM (clique em
+                    uma conta para abrir/editar ou importe a BM inteira):
+                  </p>
+                </div>
+                <div className="space-y-2.5">
+                  {remoteGroups.map((group) => {
+                    const importBusy =
+                      busyAction === `import-bm-${group.key}`;
+                    return (
+                      <div
+                        key={group.key}
+                        className="space-y-2 rounded-xl border border-slate-200 bg-white p-3"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="rounded bg-indigo-900 px-2 py-0.5 text-[10px] font-extrabold text-white">
+                              {group.key === "__PERSONAL__"
+                                ? "Conta Pessoal (sem BM)"
+                                : `BM: ${group.businessName}`}
+                            </span>
+                            {group.businessId && (
+                              <span className="font-mono text-[10px] text-slate-500">
+                                ID: {group.businessId}
+                              </span>
+                            )}
+                            <span className="text-[10px] text-slate-500">
+                              • {group.accounts.length} conta(s)
+                            </span>
+                          </div>
+                          {group.key !== "__PERSONAL__" && (
+                            <button
+                              type="button"
+                              disabled={busyAction !== null}
+                              onClick={() =>
+                                handleImportBusinessAccounts(
+                                  group.key,
+                                  group.businessName,
+                                  group.accounts
+                                )
+                              }
+                              className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
+                            >
+                              {importBusy
+                                ? "Importando..."
+                                : `Importar todas desta BM (${group.accounts.length})`}
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {group.accounts.map((acc) => {
+                            const isSaved = savedIdsSet.has(
+                              acc.id.toLowerCase()
+                            );
+                            const isSelected =
+                              accountFormMode !== "closed" &&
+                              accId.toLowerCase() === acc.id.toLowerCase();
+                            return (
+                              <button
+                                key={acc.id}
+                                type="button"
+                                onClick={() => {
+                                  const existing = state?.ad_accounts.find(
+                                    (saved) =>
+                                      saved.ad_account_id.toLowerCase() ===
+                                      acc.id.toLowerCase()
+                                  );
+                                  if (existing) {
+                                    applyAccountToForm({
+                                      ...existing,
+                                      business_id:
+                                        existing.business_id ||
+                                        acc.business_id ||
+                                        null,
+                                      business_name:
+                                        existing.business_name ||
+                                        acc.business_name ||
+                                        null,
+                                    });
+                                    return;
+                                  }
+                                  setCpaMax("35");
+                                  setRoasMin("2");
+                                  setMinClicks("50");
+                                  setDefaultLink("");
+                                  setBaseLocation("Brasil");
+                                  setAutoPause(false);
+                                  setAccPreferredAI("AUTO");
+                                  setAccId(acc.id);
+                                  setAccName(acc.name);
+                                  setAccBusinessId(acc.business_id || "");
+                                  setAccBusinessName(acc.business_name || "");
+                                  setAccCurrency(acc.currency);
+                                  setAccStatus(acc.account_status);
+                                  setAccIsDefault(
+                                    (state?.ad_accounts.length || 0) === 0
+                                  );
+                                  setEditingAccountRowId(null);
+                                  setAccountFormMode("create");
+                                }}
+                                className={`rounded-lg border px-3 py-1.5 text-left text-[11px] font-bold transition ${
+                                  isSelected
+                                    ? "border-indigo-500 bg-indigo-50 text-indigo-800"
+                                    : "border-slate-200 bg-slate-50/60 text-slate-700 hover:bg-slate-100"
+                                }`}
+                              >
+                                {acc.name} ({acc.id} • {acc.currency}){" "}
+                                {acc.is_active ? "• Ativa" : "• Inativa"}
+                                {acc.ownership_type === "CLIENT"
+                                  ? " • Cliente"
+                                  : acc.ownership_type === "OWNED"
+                                    ? " • Própria"
+                                    : ""}
+                                {isSaved ? " • ✓ Conectada" : ""}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     );
-                    if (existing) {
-                      applyAccountToForm(existing);
-                      return;
-                    }
-                    setCpaMax("35");
-                    setRoasMin("2");
-                    setMinClicks("50");
-                    setDefaultLink("");
-                    setBaseLocation("Brasil");
-                    setAutoPause(false);
-                    setAccPreferredAI("AUTO");
-                    setAccId(acc.id);
-                    setAccName(acc.name);
-                    setAccCurrency(acc.currency);
-                    setAccStatus(acc.account_status);
-                    setAccIsDefault((state?.ad_accounts.length || 0) === 0);
-                    setEditingAccountRowId(null);
-                    setAccountFormMode("create");
-                  }}
-                  className={`rounded-lg border px-3 py-1.5 text-left text-[11px] font-bold transition ${
-                    accountFormMode !== "closed" &&
-                    accId.toLowerCase() === acc.id.toLowerCase()
-                      ? "border-indigo-500 bg-indigo-50 text-indigo-800"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  {acc.name} ({acc.id} • {acc.currency}){" "}
-                  {acc.is_active ? "• Ativa" : "• Inativa"}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
         {accountFormMode !== "closed" && (
           <div className="space-y-4 rounded-xl border border-indigo-200 bg-indigo-50/20 p-4">
@@ -3745,6 +4070,28 @@ export function CampaignsPanel({
                   onChange={(e) => setAccName(e.target.value)}
                   placeholder="Conta Principal"
                   className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">
+                  BM / Portfólio Empresarial (opcional)
+                </label>
+                <input
+                  value={accBusinessName}
+                  onChange={(e) => setAccBusinessName(e.target.value)}
+                  placeholder="Ex: BM 01 (deixe vazio se pessoal)"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">
+                  ID da BM (opcional)
+                </label>
+                <input
+                  value={accBusinessId}
+                  onChange={(e) => setAccBusinessId(e.target.value)}
+                  placeholder="Ex: 123456789012345"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono"
                 />
               </div>
               <div>
@@ -4222,7 +4569,7 @@ export function CampaignsPanel({
         for (const acc of state?.ad_accounts || []) {
           accountNameMap.set(
             acc.ad_account_id,
-            acc.account_name || acc.ad_account_id
+            formatAccountDisplayLabel(acc)
           );
         }
         const distinctAccountIds = Array.from(
