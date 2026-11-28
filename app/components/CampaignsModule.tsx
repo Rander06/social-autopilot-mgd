@@ -9,7 +9,9 @@ import {
   AdGeoLocationSelection,
   AdInsightsWindow,
   AdProvider,
+  AdsAIProviderPreference,
   AdsAdvisorReport,
+  AdsMetricsAIDiagnosis,
   CreativePostInput,
   MetaAdObjective,
   ParsedCampaignPlan,
@@ -265,11 +267,29 @@ interface AdsDashboardStateResponse {
   has_meta_token: boolean;
   has_ig_user_id: boolean;
   has_fb_page_id: boolean;
+  available_ai_providers?: {
+    gemini: boolean;
+    openai: boolean;
+    claude: boolean;
+  };
   tiktok_ads_enabled: boolean;
   tiktok_ads_status_label: string;
   ad_accounts: AdAccountConfig[];
   default_ad_account: AdAccountConfig | null;
   campaigns: AdCampaignRecord[];
+}
+
+function formatAIProviderLabel(pref?: AdsAIProviderPreference | null): string {
+  switch (pref) {
+    case "GEMINI":
+      return "Google Gemini";
+    case "OPENAI":
+      return "OpenAI (GPT)";
+    case "CLAUDE":
+      return "Anthropic Claude";
+    default:
+      return "Automático (Gemini → OpenAI → Claude)";
+  }
 }
 
 function formatMoney(value: number | null | undefined, currency = "BRL"): string {
@@ -450,6 +470,11 @@ export function BoostCampaignModal({
 
   const selectedAccount =
     adAccounts.find((a) => a.ad_account_id === selectedAccountId) || null;
+  const [aiProviderChoice, setAiProviderChoice] =
+    useState<AdsAIProviderPreference>(
+      selectedAccount?.preferred_ai_provider || "AUTO"
+    );
+  const aiTouchedRef = useRef(false);
   const currency = selectedAccount?.currency || "BRL";
   const [destinationUrlInput, setDestinationUrlInput] = useState(
     selectedAccount?.link_destino_padrao || ""
@@ -478,10 +503,14 @@ export function BoostCampaignModal({
     if (selectedAccount?.localizacao_base && !locationTouchedRef.current) {
       setLocationInput(selectedAccount.localizacao_base);
     }
+    if (!aiTouchedRef.current) {
+      setAiProviderChoice(selectedAccount?.preferred_ai_provider || "AUTO");
+    }
   }, [
     selectedAccount?.ad_account_id,
     selectedAccount?.link_destino_padrao,
     selectedAccount?.localizacao_base,
+    selectedAccount?.preferred_ai_provider,
   ]);
 
   useEffect(() => {
@@ -533,6 +562,7 @@ export function BoostCampaignModal({
           channel,
           userPrompt,
           adAccountId: selectedAccountId || null,
+          aiProvider: aiProviderChoice,
         }),
       });
       const data = await res.json();
@@ -713,6 +743,7 @@ export function BoostCampaignModal({
           channel,
           userPrompt,
           adAccountId: selectedAccountId || null,
+          aiProvider: aiProviderChoice,
           overridePlan:
             Object.keys(overridePlan).length > 0 ? overridePlan : undefined,
         }),
@@ -978,42 +1009,82 @@ export function BoostCampaignModal({
             )}
           </div>
 
-          {/* Conta de Anúncios */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700">
-              Conta de Anúncios Meta Ads
-            </label>
-            {adAccounts.length > 0 ? (
+          {/* Conta de Anúncios & IA da Campanha */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs font-bold text-slate-700">
+                Conta de Anúncios Meta Ads
+              </label>
+              {adAccounts.length > 0 ? (
+                <select
+                  value={selectedAccountId}
+                  onChange={(e) => setSelectedAccountId(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800"
+                >
+                  {adAccounts.map((acc) => (
+                    <option key={acc.id} value={acc.ad_account_id}>
+                      {acc.account_name} ({acc.ad_account_id} • {acc.currency})
+                      {acc.is_default ? " — Padrão" : ""}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="mt-1 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  <span>
+                    Nenhuma conta de anúncios salva ainda nesta empresa.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenAccountSetup();
+                    }}
+                    className="rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-amber-700"
+                  >
+                    Configurar na aba Campanhas
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700">
+                IA para estruturar esta Campanha
+              </label>
               <select
-                value={selectedAccountId}
-                onChange={(e) => setSelectedAccountId(e.target.value)}
+                value={aiProviderChoice}
+                onChange={(e) => {
+                  aiTouchedRef.current = true;
+                  setAiProviderChoice(
+                    e.target.value as AdsAIProviderPreference
+                  );
+                }}
                 className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800"
               >
-                {adAccounts.map((acc) => (
-                  <option key={acc.id} value={acc.ad_account_id}>
-                    {acc.account_name} ({acc.ad_account_id} • {acc.currency})
-                    {acc.is_default ? " — Padrão" : ""}
-                  </option>
-                ))}
+                <option value="AUTO">
+                  Automático (Gemini → OpenAI → Claude)
+                </option>
+                <option value="GEMINI">Google Gemini</option>
+                <option value="OPENAI">OpenAI (GPT)</option>
+                <option value="CLAUDE">Anthropic Claude</option>
               </select>
-            ) : (
-              <div className="mt-1 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                <span>
-                  Nenhuma conta de anúncios salva ainda nesta empresa.
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenAccountSetup();
-                  }}
-                  className="rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-amber-700"
-                >
-                  Configurar na aba Campanhas
-                </button>
-              </div>
-            )}
+            </div>
           </div>
+
+          <details className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-[11px] text-slate-600">
+            <summary className="cursor-pointer font-bold text-slate-700 hover:text-indigo-700">
+              Como funciona a escolha de IA por campanha?
+            </summary>
+            <p className="mt-1.5 leading-relaxed">
+              Cada conta de anúncios tem uma IA padrão, mas aqui você pode
+              escolher qual IA desta empresa (Gemini, OpenAI ou Claude) vai
+              interpretar o seu objetivo em texto e estruturar verba, público e
+              posicionamento desta campanha. Em{" "}
+              <strong>Automático</strong>, o sistema usa as chaves configuradas
+              em Integrações com fallback automático caso alguma falhe. A opção
+              escolhida fica salva nesta campanha para análises futuras.
+            </p>
+          </details>
 
           {/* Comando em linguagem natural */}
           <div>
@@ -2653,6 +2724,10 @@ export function CampaignsPanel({
     null
   );
   const [advisor, setAdvisor] = useState<AdsAdvisorReport | null>(null);
+  const [metricsDiagnosis, setMetricsDiagnosis] =
+    useState<AdsMetricsAIDiagnosis | null>(null);
+  const [selectedAIProvider, setSelectedAIProvider] =
+    useState<AdsAIProviderPreference>("AUTO");
   const [selectedWindow, setSelectedWindow] = useState<AdInsightsWindow>("7d");
   const [accountFilter, setAccountFilter] = useState<string>("ALL");
   const [providerFilter, setProviderFilter] = useState<"ALL" | AdProvider>("ALL");
@@ -2665,7 +2740,13 @@ export function CampaignsPanel({
     missing_insights_scopes: string[];
   } | null>(null);
 
-  // Formulário de Conta de Anúncios & Perfil decide()
+  // Formulário de Conta de Anúncios & Perfil decide() (fechado por padrão)
+  const [accountFormMode, setAccountFormMode] = useState<
+    "closed" | "create" | "edit"
+  >("closed");
+  const [editingAccountRowId, setEditingAccountRowId] = useState<string | null>(
+    null
+  );
   const [accId, setAccId] = useState("");
   const [accName, setAccName] = useState("");
   const [accCurrency, setAccCurrency] = useState("BRL");
@@ -2676,6 +2757,33 @@ export function CampaignsPanel({
   const [defaultLink, setDefaultLink] = useState("");
   const [baseLocation, setBaseLocation] = useState("Brasil");
   const [autoPause, setAutoPause] = useState(false);
+  const [accPreferredAI, setAccPreferredAI] =
+    useState<AdsAIProviderPreference>("AUTO");
+  const [accIsDefault, setAccIsDefault] = useState(false);
+
+  const resetAndCloseAccountForm = useCallback(() => {
+    setAccId("");
+    setAccName("");
+    setAccCurrency("BRL");
+    setAccStatus(null);
+    setCpaMax("35");
+    setRoasMin("2");
+    setMinClicks("50");
+    setDefaultLink("");
+    setBaseLocation("Brasil");
+    setAutoPause(false);
+    setAccPreferredAI("AUTO");
+    setAccIsDefault(false);
+    setEditingAccountRowId(null);
+    setAccountFormMode("closed");
+  }, []);
+
+  useEffect(() => {
+    resetAndCloseAccountForm();
+    setAdvisor(null);
+    setMetricsDiagnosis(null);
+    setRemoteAccounts([]);
+  }, [companyId, resetAndCloseAccountForm]);
 
   const applyAccountToForm = useCallback((acc: AdAccountConfig) => {
     setAccId(acc.ad_account_id);
@@ -2688,7 +2796,28 @@ export function CampaignsPanel({
     setDefaultLink(acc.link_destino_padrao || "");
     setBaseLocation(acc.localizacao_base || "Brasil");
     setAutoPause(Boolean(acc.auto_pause_enabled));
+    setAccPreferredAI(acc.preferred_ai_provider || "AUTO");
+    setAccIsDefault(Boolean(acc.is_default));
+    setEditingAccountRowId(acc.id);
+    setAccountFormMode("edit");
   }, []);
+
+  const handleStartNewAccount = useCallback(() => {
+    setAccId("");
+    setAccName("");
+    setAccCurrency("BRL");
+    setAccStatus(null);
+    setCpaMax("35");
+    setRoasMin("2");
+    setMinClicks("50");
+    setDefaultLink("");
+    setBaseLocation("Brasil");
+    setAutoPause(false);
+    setAccPreferredAI("AUTO");
+    setAccIsDefault((state?.ad_accounts.length || 0) === 0);
+    setEditingAccountRowId(null);
+    setAccountFormMode("create");
+  }, [state?.ad_accounts.length]);
 
   const fetchAdsState = useCallback(async () => {
     setLoading(true);
@@ -2702,9 +2831,6 @@ export function CampaignsPanel({
       const parsed = data as AdsDashboardStateResponse;
       setState(parsed);
       onAccountsLoaded?.(parsed.ad_accounts || []);
-      if (parsed.default_ad_account) {
-        applyAccountToForm(parsed.default_ad_account);
-      }
     } catch (err) {
       setNotice({
         type: "error",
@@ -2713,7 +2839,7 @@ export function CampaignsPanel({
     } finally {
       setLoading(false);
     }
-  }, [companyId, applyAccountToForm, onAccountsLoaded]);
+  }, [companyId, onAccountsLoaded]);
 
   useEffect(() => {
     void fetchAdsState();
@@ -2736,13 +2862,6 @@ export function CampaignsPanel({
       const list = (data.remote_accounts || []) as RemoteMetaAdAccount[];
       setRemoteAccounts(list);
       setPermissions((data.permissions || null) as AdsPermissionsState | null);
-      if (list.length > 0 && !accId) {
-        const firstActive = list.find((a) => a.is_active) || list[0];
-        setAccId(firstActive.id);
-        setAccName(firstActive.name);
-        setAccCurrency(firstActive.currency);
-        setAccStatus(firstActive.account_status);
-      }
       setNotice({
         type: "success",
         text: `${list.length} conta(s) de anúncio encontrada(s) na Meta.`,
@@ -2779,18 +2898,20 @@ export function CampaignsPanel({
           account_name: accName.trim() || accId.trim(),
           currency: accCurrency.trim() || "BRL",
           account_status: accStatus,
-          is_default: true,
+          is_default: accIsDefault,
           cpa_maximo: Number(cpaMax) || 35,
           roas_minimo: Number(roasMin) || 2,
           amostra_minima_cliques: Number(minClicks) || 50,
           link_destino_padrao: defaultLink.trim() || null,
           localizacao_base: baseLocation.trim() || "Brasil",
           auto_pause_enabled: autoPause,
+          preferred_ai_provider: accPreferredAI,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Erro ao salvar conta.");
       await fetchAdsState();
+      resetAndCloseAccountForm();
       setNotice({
         type: "success",
         text: "Conta de anúncios e perfil de decisão salvos com sucesso!",
@@ -2799,6 +2920,85 @@ export function CampaignsPanel({
       setNotice({
         type: "error",
         text: err instanceof Error ? err.message : "Erro ao salvar conta.",
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleSetDefaultAdAccount(acc: AdAccountConfig) {
+    setBusyAction(`default-acc-${acc.id}`);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "set_default_ad_account",
+          companyId,
+          accountRowId: acc.id,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao definir conta padrão.");
+      }
+      await fetchAdsState();
+      setNotice({
+        type: "success",
+        text: `Conta "${acc.account_name}" definida como padrão desta empresa.`,
+      });
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text:
+          err instanceof Error
+            ? err.message
+            : "Erro ao alterar conta padrão.",
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleDeleteAdAccount(acc: AdAccountConfig) {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Remover a conta "${acc.account_name}" (${acc.ad_account_id}) desta empresa? Campanhas já criadas permanecem no histórico.`
+      )
+    ) {
+      return;
+    }
+    setBusyAction(`delete-acc-${acc.id}`);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "delete_ad_account",
+          companyId,
+          accountRowId: acc.id,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro ao remover conta.");
+      if (editingAccountRowId === acc.id || accId === acc.ad_account_id) {
+        resetAndCloseAccountForm();
+      }
+      if (accountFilter === acc.ad_account_id) {
+        setAccountFilter("ALL");
+      }
+      await fetchAdsState();
+      setNotice({
+        type: "success",
+        text: `Conta "${acc.account_name}" removida da lista desta empresa.`,
+      });
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Erro ao remover conta.",
       });
     } finally {
       setBusyAction(null);
@@ -2851,7 +3051,12 @@ export function CampaignsPanel({
       const res = await fetch("/api/ads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "get_advisor", companyId }),
+        body: JSON.stringify({
+          action: "get_advisor",
+          companyId,
+          aiProvider: selectedAIProvider,
+          adAccountId: accountFilter !== "ALL" ? accountFilter : null,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Erro ao gerar recomendações.");
@@ -2860,6 +3065,40 @@ export function CampaignsPanel({
       setNotice({
         type: "error",
         text: err instanceof Error ? err.message : "Erro no Consultor IA.",
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleAnalyzeMetricsWithAI(campaignId?: string) {
+    setBusyAction(campaignId ? `metrics-ai-${campaignId}` : "metrics-ai");
+    setNotice(null);
+    try {
+      const res = await fetch("/api/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "analyze_metrics_ai",
+          companyId,
+          campaignId: campaignId || null,
+          adAccountId: accountFilter !== "ALL" ? accountFilter : null,
+          aiProvider: selectedAIProvider,
+          window: selectedWindow,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao analisar métricas com IA.");
+      }
+      setMetricsDiagnosis(data.diagnosis as AdsMetricsAIDiagnosis);
+    } catch (err) {
+      setNotice({
+        type: "error",
+        text:
+          err instanceof Error
+            ? err.message
+            : "Erro ao gerar diagnóstico de métricas com IA.",
       });
     } finally {
       setBusyAction(null);
@@ -3109,6 +3348,40 @@ export function CampaignsPanel({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={selectedAIProvider}
+            onChange={(e) =>
+              setSelectedAIProvider(e.target.value as AdsAIProviderPreference)
+            }
+            aria-label="Escolher IA para métricas e consultor"
+            title="IA usada no Diagnóstico de Métricas e no Consultor de Verba & Copy"
+            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-800"
+          >
+            <option value="AUTO">
+              IA: Automático (Gemini → OpenAI → Claude)
+            </option>
+            <option value="GEMINI">
+              IA: Google Gemini
+              {state?.available_ai_providers &&
+              !state.available_ai_providers.gemini
+                ? " (chave ausente)"
+                : ""}
+            </option>
+            <option value="OPENAI">
+              IA: OpenAI (GPT)
+              {state?.available_ai_providers &&
+              !state.available_ai_providers.openai
+                ? " (chave ausente)"
+                : ""}
+            </option>
+            <option value="CLAUDE">
+              IA: Anthropic Claude
+              {state?.available_ai_providers &&
+              !state.available_ai_providers.claude
+                ? " (chave ausente)"
+                : ""}
+            </option>
+          </select>
           <button
             type="button"
             disabled={busyAction !== null}
@@ -3122,6 +3395,16 @@ export function CampaignsPanel({
           <button
             type="button"
             disabled={busyAction !== null}
+            onClick={() => handleAnalyzeMetricsWithAI()}
+            className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-xs font-extrabold text-indigo-800 hover:bg-indigo-100 disabled:opacity-60"
+          >
+            {busyAction === "metrics-ai"
+              ? "Analisando métricas..."
+              : "Diagnóstico IA (Métricas)"}
+          </button>
+          <button
+            type="button"
+            disabled={busyAction !== null}
             onClick={handleLoadAdvisor}
             className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm hover:opacity-95 disabled:opacity-60"
           >
@@ -3131,6 +3414,39 @@ export function CampaignsPanel({
           </button>
         </div>
       </div>
+
+      <details className="rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-[11px] text-slate-600 shadow-sm">
+        <summary className="cursor-pointer font-bold text-slate-800 hover:text-indigo-700">
+          Como usar a escolha de IA, Diagnóstico de Métricas e Consultor?
+        </summary>
+        <ul className="mt-2 list-disc space-y-1 pl-4 leading-relaxed">
+          <li>
+            <strong>Seletor de IA no topo:</strong> define qual motor (Gemini,
+            OpenAI ou Claude configurado nas Integrações desta empresa) gera o{" "}
+            <strong>Diagnóstico IA (Métricas)</strong> e o{" "}
+            <strong>Consultor IA (Verba &amp; Copy)</strong>. Em{" "}
+            <strong>Automático</strong>, o sistema respeita a preferência da
+            conta/campanha e faz fallback automático entre as chaves ativas.
+          </li>
+          <li>
+            <strong>Sincronizar Meta &amp; Métricas:</strong> puxa os números
+            mais recentes (4d, 7d, 14d, 30d), status real e alterações feitas no
+            Gerenciador da Meta. Rode antes de pedir análises se acabou de editar
+            ou ativar algo por lá.
+          </li>
+          <li>
+            <strong>Diagnóstico IA (Métricas):</strong> lê as métricas da janela
+            selecionada ({selectedWindow}) respeitando o filtro de{" "}
+            <strong>Conta</strong> abaixo (ou analisa uma única campanha pelo
+            botão <strong>Analisar IA</strong> no card dela).
+          </li>
+          <li>
+            <strong>Consultor IA (Verba &amp; Copy):</strong> recomenda onde
+            escalar ou pausar verba e cria 3 ganchos novos de copy para testar no
+            Estúdio Manual.
+          </li>
+        </ul>
+      </details>
 
       {notice && (
         <div
@@ -3172,26 +3488,22 @@ export function CampaignsPanel({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-extrabold text-slate-900">
-              Conta de Anúncios &amp; Perfil de Decisão (decide)
+              Contas de Anúncios &amp; Perfil de Decisão (decide)
             </h3>
             <p className="text-[11px] text-slate-500">
-              Defina a conta padrão e seus limites de CPA, ROAS e região para a
-              IA e o monitoramento automático.
+              Conecte uma ou mais contas de anúncios desta empresa, escolha a
+              conta padrão, defina a IA preferida e os limites de CPA/ROAS.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {accId.trim() && (
-              <a
-                href={`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${encodeURIComponent(
-                  stripAdAccountPrefix(accId)
-                )}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100"
-              >
-                Abrir Conta no Meta Ads ↗
-              </a>
-            )}
+            <button
+              type="button"
+              disabled={busyAction !== null}
+              onClick={handleStartNewAccount}
+              className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
+            >
+              + Adicionar Nova Conta
+            </button>
             <button
               type="button"
               disabled={busyAction !== null}
@@ -3204,6 +3516,128 @@ export function CampaignsPanel({
             </button>
           </div>
         </div>
+
+        {(state?.ad_accounts?.length || 0) > 0 ? (
+          <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[11px] font-extrabold text-slate-700">
+                Contas de Anúncios Conectadas ({state?.ad_accounts.length || 0})
+              </p>
+              <span className="text-[10px] text-slate-500">
+                Clique em Editar para ajustar metas/IA ou em Tornar Padrão
+              </span>
+            </div>
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+              {state?.ad_accounts.map((acc) => {
+                const isEditing =
+                  accountFormMode === "edit" && editingAccountRowId === acc.id;
+                return (
+                  <div
+                    key={acc.id}
+                    className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3 text-xs transition ${
+                      isEditing
+                        ? "border-indigo-400 bg-indigo-50/60"
+                        : "border-slate-200 bg-white"
+                    }`}
+                  >
+                    <div className="min-w-0 space-y-0.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="truncate font-extrabold text-slate-900">
+                          {acc.account_name}
+                        </span>
+                        {acc.is_default && (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800">
+                            Padrão
+                          </span>
+                        )}
+                        <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-800">
+                          IA: {acc.preferred_ai_provider || "AUTO"}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-600">
+                        <span className="font-mono">{acc.ad_account_id}</span> •{" "}
+                        {acc.currency} • CPA Máx:{" "}
+                        {formatMoney(acc.cpa_maximo, acc.currency)} • ROAS:{" "}
+                        {acc.roas_minimo}x
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={busyAction !== null}
+                        onClick={() => applyAccountToForm(acc)}
+                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-700 hover:bg-slate-100"
+                      >
+                        Editar
+                      </button>
+                      {!acc.is_default && (
+                        <button
+                          type="button"
+                          disabled={busyAction !== null}
+                          onClick={() => handleSetDefaultAdAccount(acc)}
+                          className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100"
+                        >
+                          Tornar Padrão
+                        </button>
+                      )}
+                      <a
+                        href={`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${encodeURIComponent(
+                          stripAdAccountPrefix(acc.ad_account_id)
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-700 hover:bg-blue-100"
+                      >
+                        Abrir Meta ↗
+                      </a>
+                      <button
+                        type="button"
+                        disabled={busyAction !== null}
+                        onClick={() => handleDeleteAdAccount(acc)}
+                        className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-100"
+                      >
+                        Remover
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          accountFormMode === "closed" && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-xs text-amber-900">
+              <span>
+                Nenhuma conta de anúncios conectada ainda nesta empresa. Clique
+                em <strong>Buscar Contas na Meta</strong> ou{" "}
+                <strong>+ Adicionar Nova Conta</strong> para configurar.
+              </span>
+            </div>
+          )
+        )}
+
+        <details className="rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-[11px] text-slate-600">
+          <summary className="cursor-pointer font-bold text-slate-700 hover:text-indigo-700">
+            Como usar Múltiplas Contas de Anúncios por empresa/perfil?
+          </summary>
+          <ol className="mt-2 list-decimal space-y-1 pl-4 leading-relaxed">
+            <li>
+              Clique em <strong>Buscar Contas na Meta</strong> para listar e
+              selecionar contas vinculadas ao token desta empresa ou clique em{" "}
+              <strong>+ Adicionar Nova Conta</strong> para abrir o cadastro.
+            </li>
+            <li>
+              Para editar uma conta já conectada sem expor os dados na tela,
+              clique em <strong>Editar</strong> no card dela; caso desista,
+              clique em <strong>Cancelar</strong> para limpar e fechar os
+              campos.
+            </li>
+            <li>
+              Defina a <strong>IA Padrão desta Conta</strong>, as metas de CPA /
+              ROAS e clique em <strong>Salvar Conta &amp; Metas</strong>.
+            </li>
+          </ol>
+        </details>
 
         {permissions &&
           (!permissions.has_ads_management || !permissions.has_ads_read) && (
@@ -3218,7 +3652,8 @@ export function CampaignsPanel({
         {remoteAccounts.length > 0 && (
           <div className="space-y-1.5 rounded-xl border border-slate-200 bg-slate-50 p-3">
             <p className="text-[11px] font-bold text-slate-700">
-              Contas encontradas na sua Meta (clique para selecionar):
+              Contas encontradas na sua Meta (clique para abrir o cadastro ou
+              editar):
             </p>
             <div className="flex flex-wrap gap-2">
               {remoteAccounts.map((acc) => (
@@ -3226,13 +3661,33 @@ export function CampaignsPanel({
                   key={acc.id}
                   type="button"
                   onClick={() => {
+                    const existing = state?.ad_accounts.find(
+                      (saved) =>
+                        saved.ad_account_id.toLowerCase() ===
+                        acc.id.toLowerCase()
+                    );
+                    if (existing) {
+                      applyAccountToForm(existing);
+                      return;
+                    }
+                    setCpaMax("35");
+                    setRoasMin("2");
+                    setMinClicks("50");
+                    setDefaultLink("");
+                    setBaseLocation("Brasil");
+                    setAutoPause(false);
+                    setAccPreferredAI("AUTO");
                     setAccId(acc.id);
                     setAccName(acc.name);
                     setAccCurrency(acc.currency);
                     setAccStatus(acc.account_status);
+                    setAccIsDefault((state?.ad_accounts.length || 0) === 0);
+                    setEditingAccountRowId(null);
+                    setAccountFormMode("create");
                   }}
                   className={`rounded-lg border px-3 py-1.5 text-left text-[11px] font-bold transition ${
-                    accId === acc.id
+                    accountFormMode !== "closed" &&
+                    accId.toLowerCase() === acc.id.toLowerCase()
                       ? "border-indigo-500 bg-indigo-50 text-indigo-800"
                       : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
                   }`}
@@ -3245,158 +3700,306 @@ export function CampaignsPanel({
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div>
-            <label className="block text-[11px] font-bold text-slate-600">
-              ID da Conta Meta Ads (act_...)
-            </label>
-            <input
-              value={accId}
-              onChange={(e) => setAccId(e.target.value)}
-              placeholder="act_123456789"
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-mono"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] font-bold text-slate-600">
-              Nome da Conta
-            </label>
-            <input
-              value={accName}
-              onChange={(e) => setAccName(e.target.value)}
-              placeholder="Conta Principal"
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] font-bold text-slate-600">
-              Moeda
-            </label>
-            <input
-              value={accCurrency}
-              onChange={(e) => setAccCurrency(e.target.value.toUpperCase())}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] font-bold text-slate-600">
-              Localização Base Padrão
-            </label>
-            <input
-              value={baseLocation}
-              onChange={(e) => setBaseLocation(e.target.value)}
-              placeholder="Ex: Brasil ou Uberaba"
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs"
-            />
-            <p className="mt-1 text-[10px] leading-snug text-slate-500">
-              Padrão sugerido para novas campanhas. Ao criar cada campanha, você
-              pode ajustar cidade, bairro ou pino com raio.
-            </p>
-          </div>
-          <div>
-            <label className="block text-[11px] font-bold text-slate-600">
-              CPA Máximo Aceitável ({accCurrency})
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              value={cpaMax}
-              onChange={(e) => setCpaMax(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold"
-            />
-            <p className="mt-1 text-[10px] leading-snug text-slate-500">
-              Valor máximo que você aceita pagar por conversa no WhatsApp, lead
-              ou venda. Ex.: R$ 15–35 para leads.
-            </p>
-          </div>
-          <div>
-            <label className="block text-[11px] font-bold text-slate-600">
-              ROAS Mínimo Desejado
-            </label>
-            <input
-              type="number"
-              step="0.1"
-              value={roasMin}
-              onChange={(e) => setRoasMin(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold"
-            />
-            <p className="mt-1 text-[10px] leading-snug text-slate-500">
-              Retorno mínimo por R$ 1 gasto (ex.: 2 = R$ 2 em vendas para cada
-              R$ 1 investido). Usado quando há venda rastreada no Pixel.
-            </p>
-          </div>
-          <div>
-            <label className="block text-[11px] font-bold text-slate-600">
-              Amostra Mínima (Cliques)
-            </label>
-            <input
-              type="number"
-              min={10}
-              value={minClicks}
-              onChange={(e) => setMinClicks(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold"
-            />
-            <p className="mt-1 text-[10px] leading-snug text-slate-500">
-              Cliques mínimos antes de escalar ou pausar por CPA alto (após 48h).
-              Ex.: 30 cliques p/ R$ 20/dia; 50 p/ R$ 40+/dia.
-            </p>
-          </div>
-          <div>
-            <label className="block text-[11px] font-bold text-slate-600">
-              Link Destino Padrão (WhatsApp / Site)
-            </label>
-            <input
-              value={defaultLink}
-              onChange={(e) => setDefaultLink(e.target.value)}
-              placeholder="https://wa.me/55..."
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs"
-            />
-          </div>
-        </div>
+        {accountFormMode !== "closed" && (
+          <div className="space-y-4 rounded-xl border border-indigo-200 bg-indigo-50/20 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-3">
+              <div>
+                <p className="text-xs font-extrabold text-slate-900">
+                  {accountFormMode === "edit"
+                    ? `Editando: ${accName || accId}`
+                    : "Adicionar Nova Conta de Anúncios"}
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  Preencha ou ajuste os campos abaixo e salve, ou clique em
+                  Cancelar para limpar e fechar.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={busyAction !== null}
+                onClick={resetAndCloseAccountForm}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+            </div>
 
-        <details className="rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-[11px] text-slate-600">
-          <summary className="cursor-pointer font-bold text-slate-700 hover:text-indigo-700">
-            Como o sistema usa esses 3 números (regra decide)?
-          </summary>
-          <ul className="mt-2 list-disc space-y-1 pl-4">
-            <li>
-              <strong>Primeiras 48h:</strong> sempre mantém em{" "}
-              <strong>MANTER</strong> para respeitar a fase de aprendizado da
-              Meta.
-            </li>
-            <li>
-              <strong>ESCALAR (+20%):</strong> após atingir os cliques mínimos
-              com CPA ≤ CPA Máximo (ou ROAS ≥ ROAS Mínimo) e sem fadiga
-              criativa.
-            </li>
-            <li>
-              <strong>PAUSAR:</strong> se gastar ≥ 2× o CPA Máximo com zero
-              conversões ou se o CPA passar de 1,5× o limite após a amostra
-              mínima.
-            </li>
-          </ul>
-        </details>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">
+                  ID da Conta Meta Ads (act_...)
+                </label>
+                <input
+                  value={accId}
+                  onChange={(e) => setAccId(e.target.value)}
+                  placeholder="act_123456789"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">
+                  Nome da Conta
+                </label>
+                <input
+                  value={accName}
+                  onChange={(e) => setAccName(e.target.value)}
+                  placeholder="Conta Principal"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">
+                  Moeda
+                </label>
+                <input
+                  value={accCurrency}
+                  onChange={(e) => setAccCurrency(e.target.value.toUpperCase())}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">
+                  Localização Base Padrão
+                </label>
+                <input
+                  value={baseLocation}
+                  onChange={(e) => setBaseLocation(e.target.value)}
+                  placeholder="Ex: Brasil ou Uberaba"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                />
+                <p className="mt-1 text-[10px] leading-snug text-slate-500">
+                  Padrão sugerido para novas campanhas. Ao criar cada campanha,
+                  você pode ajustar cidade, bairro ou pino com raio.
+                </p>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">
+                  CPA Máximo Aceitável ({accCurrency})
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={cpaMax}
+                  onChange={(e) => setCpaMax(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold"
+                />
+                <p className="mt-1 text-[10px] leading-snug text-slate-500">
+                  Valor máximo que você aceita pagar por conversa no WhatsApp,
+                  lead ou venda. Ex.: R$ 15–35 para leads.
+                </p>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">
+                  ROAS Mínimo Desejado
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={roasMin}
+                  onChange={(e) => setRoasMin(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold"
+                />
+                <p className="mt-1 text-[10px] leading-snug text-slate-500">
+                  Retorno mínimo por R$ 1 gasto (ex.: 2 = R$ 2 em vendas para
+                  cada R$ 1 investido). Usado quando há venda rastreada no Pixel.
+                </p>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">
+                  Amostra Mínima (Cliques)
+                </label>
+                <input
+                  type="number"
+                  min={10}
+                  value={minClicks}
+                  onChange={(e) => setMinClicks(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold"
+                />
+                <p className="mt-1 text-[10px] leading-snug text-slate-500">
+                  Cliques mínimos antes de escalar ou pausar por CPA alto (após
+                  48h). Ex.: 30 cliques p/ R$ 20/dia; 50 p/ R$ 40+/dia.
+                </p>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">
+                  Link Destino Padrão (WhatsApp / Site)
+                </label>
+                <input
+                  value={defaultLink}
+                  onChange={(e) => setDefaultLink(e.target.value)}
+                  placeholder="https://wa.me/55..."
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600">
+                  IA Padrão desta Conta
+                </label>
+                <select
+                  value={accPreferredAI}
+                  onChange={(e) =>
+                    setAccPreferredAI(
+                      e.target.value as AdsAIProviderPreference
+                    )
+                  }
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800"
+                >
+                  <option value="AUTO">
+                    Automático (Gemini → OpenAI → Claude)
+                  </option>
+                  <option value="GEMINI">Google Gemini</option>
+                  <option value="OPENAI">OpenAI (GPT)</option>
+                  <option value="CLAUDE">Anthropic Claude</option>
+                </select>
+                <p className="mt-1 text-[10px] leading-snug text-slate-500">
+                  IA pré-selecionada ao criar campanhas e analisar métricas
+                  desta conta.
+                </p>
+              </div>
+            </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-          <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
-            <input
-              type="checkbox"
-              checked={autoPause}
-              onChange={(e) => setAutoPause(e.target.checked)}
-            />
-            Piloto Automático: pausar automaticamente campanhas com gasto ≥ 2× CPA máximo e zero conversões (após 48h)
-          </label>
-          <button
-            type="submit"
-            disabled={busyAction !== null}
-            className="rounded-xl bg-slate-900 px-5 py-2.5 text-xs font-extrabold text-white hover:bg-slate-800 disabled:opacity-60"
-          >
-            {busyAction === "save_account"
-              ? "Salvando..."
-              : "Salvar Conta & Metas"}
-          </button>
-        </div>
+            <details className="rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-[11px] text-slate-600">
+              <summary className="cursor-pointer font-bold text-slate-700 hover:text-indigo-700">
+                Como o sistema usa esses 3 números (regra decide)?
+              </summary>
+              <ul className="mt-2 list-disc space-y-1 pl-4">
+                <li>
+                  <strong>Primeiras 48h:</strong> sempre mantém em{" "}
+                  <strong>MANTER</strong> para respeitar a fase de aprendizado
+                  da Meta.
+                </li>
+                <li>
+                  <strong>ESCALAR (+20%):</strong> após atingir os cliques
+                  mínimos com CPA ≤ CPA Máximo (ou ROAS ≥ ROAS Mínimo) e sem
+                  fadiga criativa.
+                </li>
+                <li>
+                  <strong>PAUSAR:</strong> se gastar ≥ 2× o CPA Máximo com zero
+                  conversões ou se o CPA passar de 1,5× o limite após a amostra
+                  mínima.
+                </li>
+              </ul>
+            </details>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+              <div className="space-y-1.5">
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={accIsDefault}
+                    onChange={(e) => setAccIsDefault(e.target.checked)}
+                  />
+                  Definir como conta padrão desta empresa
+                </label>
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={autoPause}
+                    onChange={(e) => setAutoPause(e.target.checked)}
+                  />
+                  Piloto Automático: pausar automaticamente campanhas com gasto
+                  ≥ 2× CPA máximo e zero conversões (após 48h)
+                </label>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={resetAndCloseAccountForm}
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={busyAction !== null}
+                  className="rounded-xl bg-slate-900 px-5 py-2.5 text-xs font-extrabold text-white hover:bg-slate-800 disabled:opacity-60"
+                >
+                  {busyAction === "save_account"
+                    ? "Salvando..."
+                    : accountFormMode === "edit"
+                      ? "Salvar Alterações"
+                      : "Salvar Conta & Metas"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </form>
+
+      {/* Diagnóstico IA das Métricas (por Conta ou Campanha) */}
+      {metricsDiagnosis && (
+        <div className="space-y-4 rounded-2xl border border-cyan-200 bg-cyan-50/40 p-6 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-extrabold text-cyan-950">
+                Diagnóstico IA de Métricas — {metricsDiagnosis.scope_label}
+              </h3>
+              <p className="text-[11px] text-cyan-800/80">
+                Gerado em{" "}
+                {new Date(metricsDiagnosis.generated_at).toLocaleString(
+                  "pt-BR"
+                )}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-white px-2.5 py-0.5 text-[10px] font-bold text-cyan-800">
+                Motor: {metricsDiagnosis.provider_used}
+              </span>
+              <button
+                type="button"
+                onClick={() => setMetricsDiagnosis(null)}
+                className="rounded-lg border border-cyan-200 bg-white px-2.5 py-1 text-[10px] font-bold text-cyan-800 hover:bg-cyan-100"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+
+          <p className="rounded-xl border border-cyan-200/80 bg-white p-3.5 text-xs leading-relaxed text-slate-800">
+            {metricsDiagnosis.summary}
+          </p>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="rounded-xl border border-emerald-200 bg-white p-3.5 text-xs">
+              <p className="font-extrabold text-emerald-900">Pontos Fortes</p>
+              <ul className="mt-1.5 list-disc space-y-1 pl-4 text-[11px] text-slate-700">
+                {metricsDiagnosis.highlights.length > 0 ? (
+                  metricsDiagnosis.highlights.map((item, idx) => (
+                    <li key={idx}>{item}</li>
+                  ))
+                ) : (
+                  <li>Sem destaques positivos relevantes ainda.</li>
+                )}
+              </ul>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-white p-3.5 text-xs">
+              <p className="font-extrabold text-amber-900">Alertas</p>
+              <ul className="mt-1.5 list-disc space-y-1 pl-4 text-[11px] text-slate-700">
+                {metricsDiagnosis.alerts.length > 0 ? (
+                  metricsDiagnosis.alerts.map((item, idx) => (
+                    <li key={idx}>{item}</li>
+                  ))
+                ) : (
+                  <li>Nenhum alerta crítico neste período.</li>
+                )}
+              </ul>
+            </div>
+            <div className="rounded-xl border border-indigo-200 bg-white p-3.5 text-xs">
+              <p className="font-extrabold text-indigo-900">Próximas Ações</p>
+              <ul className="mt-1.5 list-disc space-y-1 pl-4 text-[11px] text-slate-700">
+                {metricsDiagnosis.next_actions.length > 0 ? (
+                  metricsDiagnosis.next_actions.map((item, idx) => (
+                    <li key={idx}>{item}</li>
+                  ))
+                ) : (
+                  <li>Continue monitorando após atingir a amostra mínima.</li>
+                )}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Consultor IA (Verba & Novos Ganchos) */}
       {advisor && (
@@ -3782,6 +4385,12 @@ export function CampaignsPanel({
                             Fadiga Criativa
                           </span>
                         )}
+                        {cmp.ai_provider_preference &&
+                          cmp.ai_provider_preference !== "AUTO" && (
+                            <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-800">
+                              IA: {formatAIProviderLabel(cmp.ai_provider_preference)}
+                            </span>
+                          )}
                       </div>
                       <p className="mt-1.5 text-sm font-extrabold text-slate-900">
                         {cmp.name}
@@ -3810,6 +4419,18 @@ export function CampaignsPanel({
                         >
                           {adManagerLink.label}
                         </a>
+                      )}
+                      {cmp.provider === "META" && (
+                        <button
+                          type="button"
+                          disabled={busyAction !== null}
+                          onClick={() => handleAnalyzeMetricsWithAI(cmp.id)}
+                          className="rounded-lg border border-cyan-200 bg-cyan-50 px-2.5 py-1.5 text-[11px] font-bold text-cyan-800 hover:bg-cyan-100 disabled:opacity-60"
+                        >
+                          {busyAction === `metrics-ai-${cmp.id}`
+                            ? "Analisando..."
+                            : "Analisar IA"}
+                        </button>
                       )}
                       {cmp.provider === "META" &&
                         cmp.meta_campaign_id &&

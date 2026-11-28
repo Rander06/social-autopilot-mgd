@@ -4,9 +4,25 @@ import { getSessionFromRequest, SessionPayload } from "@/lib/crypto";
 import {
   AdChannel,
   AdGeoLocationSelection,
+  AdInsightsWindow,
+  AdsAIProviderPreference,
   CreativePostInput,
   ParsedCampaignPlan,
 } from "@/lib/types";
+
+function parseAIProviderPreference(raw: unknown): AdsAIProviderPreference | undefined {
+  if (typeof raw !== "string") return undefined;
+  const upper = raw.trim().toUpperCase();
+  if (
+    upper === "AUTO" ||
+    upper === "GEMINI" ||
+    upper === "OPENAI" ||
+    upper === "CLAUDE"
+  ) {
+    return upper;
+  }
+  return undefined;
+}
 
 function resolveCompanyScope(
   session: SessionPayload,
@@ -78,6 +94,7 @@ export async function POST(request: NextRequest) {
 
       const saved = await CampaignOrchestratorService.saveAdAccountSettings({
         companyId,
+        userId: session.userId,
         ad_account_id: adAccountId,
         account_name:
           typeof body.account_name === "string" ? body.account_name : undefined,
@@ -87,7 +104,10 @@ export async function POST(request: NextRequest) {
             ? body.account_status
             : undefined,
         is_default:
-          typeof body.is_default === "boolean" ? body.is_default : true,
+          typeof body.is_default === "boolean" ? body.is_default : false,
+        preferred_ai_provider: parseAIProviderPreference(
+          body.preferred_ai_provider
+        ),
         cpa_maximo:
           body.cpa_maximo !== undefined ? Number(body.cpa_maximo) : undefined,
         roas_minimo:
@@ -115,6 +135,48 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ account: saved });
     }
 
+    if (action === "set_default_ad_account") {
+      const accountId = String(
+        body.accountRowId || body.accountId || ""
+      ).trim();
+      if (!accountId) {
+        return NextResponse.json(
+          { error: "Informe accountRowId ou accountId." },
+          { status: 400 }
+        );
+      }
+      const account = await CampaignOrchestratorService.setDefaultAdAccount(
+        companyId,
+        accountId,
+        session.userId
+      );
+      if (!account) {
+        return NextResponse.json(
+          { error: "Conta de anúncios não encontrada para esta empresa." },
+          { status: 404 }
+        );
+      }
+      return NextResponse.json({ account });
+    }
+
+    if (action === "delete_ad_account") {
+      const accountId = String(
+        body.accountRowId || body.accountId || ""
+      ).trim();
+      if (!accountId) {
+        return NextResponse.json(
+          { error: "Informe accountRowId ou accountId para remover." },
+          { status: 400 }
+        );
+      }
+      const deleted = await CampaignOrchestratorService.deleteAdAccount(
+        companyId,
+        accountId,
+        session.userId
+      );
+      return NextResponse.json({ deleted });
+    }
+
     if (action === "preview_campaign") {
       const postId = String(body.postId || "").trim();
       const channel = (String(body.channel || "FACEBOOK").toUpperCase() ||
@@ -122,6 +184,7 @@ export async function POST(request: NextRequest) {
       const userPrompt = String(body.userPrompt || "").trim();
       const adAccountId =
         typeof body.adAccountId === "string" ? body.adAccountId : null;
+      const aiProvider = parseAIProviderPreference(body.aiProvider);
 
       if (!postId) {
         return NextResponse.json(
@@ -136,6 +199,7 @@ export async function POST(request: NextRequest) {
         channel,
         userPrompt,
         adAccountId,
+        aiProvider,
       });
       return NextResponse.json({ plan });
     }
@@ -147,6 +211,7 @@ export async function POST(request: NextRequest) {
       const userPrompt = String(body.userPrompt || "").trim();
       const adAccountId =
         typeof body.adAccountId === "string" ? body.adAccountId : null;
+      const aiProvider = parseAIProviderPreference(body.aiProvider);
       const overridePlan =
         body.overridePlan && typeof body.overridePlan === "object"
           ? (body.overridePlan as Partial<ParsedCampaignPlan>)
@@ -170,6 +235,7 @@ export async function POST(request: NextRequest) {
         channel,
         userPrompt,
         adAccountId,
+        aiProvider,
         overridePlan,
       });
 
@@ -207,9 +273,35 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "get_advisor") {
+      const aiProvider = parseAIProviderPreference(body.aiProvider);
+      const adAccountId =
+        typeof body.adAccountId === "string" ? body.adAccountId : null;
       const advice =
-        await CampaignOrchestratorService.getOptimizationAdvice(companyId);
+        await CampaignOrchestratorService.getOptimizationAdvice(companyId, {
+          aiProvider,
+          adAccountId,
+        });
       return NextResponse.json({ advice });
+    }
+
+    if (action === "analyze_metrics_ai") {
+      const campaignId =
+        typeof body.campaignId === "string" ? body.campaignId.trim() : null;
+      const adAccountId =
+        typeof body.adAccountId === "string" ? body.adAccountId.trim() : null;
+      const aiProvider = parseAIProviderPreference(body.aiProvider);
+      const rawWin = String(body.window || "7d");
+      const window: AdInsightsWindow =
+        rawWin === "4d" || rawWin === "14d" || rawWin === "30d" ? rawWin : "7d";
+
+      const diagnosis = await CampaignOrchestratorService.analyzeMetricsWithAI({
+        companyId,
+        campaignId,
+        adAccountId,
+        aiProvider,
+        window,
+      });
+      return NextResponse.json({ diagnosis });
     }
 
     if (action === "sync_post_engagement") {

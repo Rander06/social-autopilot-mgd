@@ -323,6 +323,8 @@ export interface AdInsightsSnapshot {
   raw_actions?: Array<{ action_type: string; value: string }>;
 }
 
+export type AdsAIProviderPreference = "AUTO" | "GEMINI" | "OPENAI" | "CLAUDE";
+
 export interface AdAccountConfig {
   id: string;
   company_id: string;
@@ -332,6 +334,7 @@ export interface AdAccountConfig {
   currency: string;
   account_status?: number | null;
   is_default: boolean;
+  preferred_ai_provider?: AdsAIProviderPreference;
   cpa_maximo: number;
   roas_minimo: number;
   amostra_minima_cliques: number;
@@ -378,6 +381,7 @@ export interface AdCampaignRecord {
   provider: AdProvider;
   channel: AdChannel;
   ad_account_id: string;
+  ai_provider_preference?: AdsAIProviderPreference;
   name: string;
   user_prompt: string;
   objective: string;
@@ -445,6 +449,19 @@ export interface ParsedCampaignPlan {
   url_tags?: string | null;
   reasoning: string;
   parser_provider: string;
+  ai_provider_preference?: AdsAIProviderPreference;
+}
+
+export interface AdsMetricsAIDiagnosis {
+  generated_at: string;
+  scope_label: string;
+  campaign_id?: string | null;
+  ad_account_id?: string | null;
+  provider_used: string;
+  summary: string;
+  highlights: string[];
+  alerts: string[];
+  next_actions: string[];
 }
 
 export interface AdsAdvisorReport {

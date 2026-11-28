@@ -13,6 +13,7 @@ import {
   appendAuditLog,
   createAdCampaignAdRecord,
   createAdCampaignRecord,
+  deleteAdAccountConfig,
   deleteAdCampaignRecord,
   getAdCampaignAdById,
   getAdCampaignById,
@@ -24,6 +25,7 @@ import {
   listAdCampaignAdsByCompany,
   listAdCampaignsByCompany,
   listPostsHistory,
+  setDefaultAdAccount,
   updateAdCampaignAdRecord,
   updateAdCampaignRecord,
   updatePostRecord,
@@ -40,7 +42,9 @@ import {
   AdInsightsSnapshot,
   AdInsightsWindow,
   AdInsightsWindowMetrics,
+  AdsAIProviderPreference,
   AdsAdvisorReport,
+  AdsMetricsAIDiagnosis,
   CreativePostInput,
   MetaAdObjective,
   ParsedCampaignPlan,
@@ -91,86 +95,164 @@ function defaultGoalForObjective(
   return "LINK_CLICKS";
 }
 
+function resolvePreferredAIOrder(
+  preferred?: AdsAIProviderPreference | null
+): Array<"GEMINI" | "OPENAI" | "CLAUDE"> {
+  const base: Array<"GEMINI" | "OPENAI" | "CLAUDE"> = [
+    "GEMINI",
+    "OPENAI",
+    "CLAUDE",
+  ];
+  if (
+    preferred === "GEMINI" ||
+    preferred === "OPENAI" ||
+    preferred === "CLAUDE"
+  ) {
+    return [preferred, ...base.filter((p) => p !== preferred)];
+  }
+  return base;
+}
+
+function extractJsonObjectString(text: string): string {
+  const cleaned = text
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return cleaned.slice(start, end + 1);
+  }
+  return cleaned;
+}
+
 async function runStructuredJsonWithCompanyAI<T>(params: {
   geminiKey?: string | null;
   openaiKey?: string | null;
+  anthropicKey?: string | null;
+  preferredProvider?: AdsAIProviderPreference | null;
   systemPrompt: string;
   userPrompt: string;
   geminiSchema: Record<string, unknown>;
   openaiSchema: { name: string; schema: Record<string, unknown> };
 }): Promise<{ data: T; provider: string } | null> {
-  if (params.geminiKey?.trim()) {
-    const ai = new GoogleGenAI({ apiKey: params.geminiKey.trim() });
-    for (const model of [
-      "gemini-3.8-flash",
-      "gemini-3.5-flash",
-      "gemini-3.5-flash-lite",
-    ]) {
+  const order = resolvePreferredAIOrder(params.preferredProvider);
+
+  for (const provider of order) {
+    if (provider === "GEMINI" && params.geminiKey?.trim()) {
+      const ai = new GoogleGenAI({ apiKey: params.geminiKey.trim() });
+      for (const model of [
+        "gemini-3.8-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+      ]) {
+        try {
+          const response = await Promise.race([
+            ai.models.generateContent({
+              model,
+              contents: `${params.systemPrompt}\n\n${params.userPrompt}`,
+              config: {
+                responseMimeType: "application/json",
+                responseSchema: params.geminiSchema as never,
+                temperature: 0.2,
+              },
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("Timeout Gemini Ads")), 12_000)
+            ),
+          ]);
+          if (response.text) {
+            return {
+              data: JSON.parse(response.text) as T,
+              provider: `GEMINI (${model})`,
+            };
+          }
+        } catch {
+          // tenta próximo modelo
+        }
+      }
+    }
+
+    if (provider === "OPENAI" && params.openaiKey?.trim()) {
       try {
-        const response = await Promise.race([
-          ai.models.generateContent({
-            model,
-            contents: `${params.systemPrompt}\n\n${params.userPrompt}`,
-            config: {
-              responseMimeType: "application/json",
-              responseSchema: params.geminiSchema as never,
-              temperature: 0.2,
+        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${params.openaiKey.trim()}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "gpt-4.1-mini",
+            temperature: 0.2,
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: params.openaiSchema.name,
+                strict: true,
+                schema: params.openaiSchema.schema,
+              },
             },
+            messages: [
+              { role: "system", content: params.systemPrompt },
+              { role: "user", content: params.userPrompt },
+            ],
           }),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("Timeout Gemini Ads")), 12_000)
-          ),
-        ]);
-        if (response.text) {
+          signal: AbortSignal.timeout(14_000),
+        });
+        const data = (await res.json()) as {
+          choices?: Array<{ message?: { content?: string } }>;
+        };
+        const text = data.choices?.[0]?.message?.content;
+        if (res.ok && text) {
           return {
-            data: JSON.parse(response.text) as T,
-            provider: `GEMINI (${model})`,
+            data: JSON.parse(text) as T,
+            provider: "OPENAI (gpt-4.1-mini)",
           };
         }
       } catch {
-        // tenta próximo modelo
+        // fallback próximo provedor
       }
     }
-  }
 
-  if (params.openaiKey?.trim()) {
-    try {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${params.openaiKey.trim()}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gpt-4.1-mini",
-          temperature: 0.2,
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: params.openaiSchema.name,
-              strict: true,
-              schema: params.openaiSchema.schema,
+    if (provider === "CLAUDE" && params.anthropicKey?.trim()) {
+      for (const model of ["claude-sonnet-4-5", "claude-3-5-haiku-latest"]) {
+        try {
+          const res = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "x-api-key": params.anthropicKey.trim(),
+              "anthropic-version": "2023-06-01",
+              "Content-Type": "application/json",
             },
-          },
-          messages: [
-            { role: "system", content: params.systemPrompt },
-            { role: "user", content: params.userPrompt },
-          ],
-        }),
-        signal: AbortSignal.timeout(14_000),
-      });
-      const data = (await res.json()) as {
-        choices?: Array<{ message?: { content?: string } }>;
-      };
-      const text = data.choices?.[0]?.message?.content;
-      if (res.ok && text) {
-        return {
-          data: JSON.parse(text) as T,
-          provider: "OPENAI (gpt-4.1-mini)",
-        };
+            body: JSON.stringify({
+              model,
+              max_tokens: 1500,
+              temperature: 0.2,
+              messages: [
+                {
+                  role: "user",
+                  content: `${params.systemPrompt}\n\n${params.userPrompt}\n\nResponda EXCLUSIVAMENTE um JSON válido respeitando exatamente este JSON Schema:\n${JSON.stringify(params.openaiSchema.schema)}`,
+                },
+              ],
+            }),
+            signal: AbortSignal.timeout(14_000),
+          });
+          const data = (await res.json()) as {
+            content?: Array<{ type: string; text?: string }>;
+          };
+          const text = data.content?.find((c) => c.type === "text")?.text;
+          if (res.ok && text) {
+            return {
+              data: JSON.parse(extractJsonObjectString(text)) as T,
+              provider: `CLAUDE (${model})`,
+            };
+          }
+        } catch {
+          // fallback próximo modelo/provedor
+        }
       }
-    } catch {
-      // fallback determinístico abaixo
     }
   }
 
@@ -322,8 +404,17 @@ export class CampaignLauncherService {
     postCaption: string;
     adAccount: AdAccountConfig | null;
     channel: AdChannel;
-    keys: { gemini?: string | null; openai?: string | null };
+    aiProvider?: AdsAIProviderPreference;
+    keys: {
+      gemini?: string | null;
+      openai?: string | null;
+      anthropic?: string | null;
+    };
   }): Promise<ParsedCampaignPlan> {
+    const effectiveAI: AdsAIProviderPreference =
+      params.aiProvider && params.aiProvider !== "AUTO"
+        ? params.aiProvider
+        : params.adAccount?.preferred_ai_provider || "AUTO";
     const currency = (params.adAccount?.currency || "BRL").toUpperCase();
     const minCents = getMinimumDailyBudgetCents(currency);
     const defaultLocation = params.adAccount?.localizacao_base || "Brasil";
@@ -364,6 +455,8 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
     const aiRes = await runStructuredJsonWithCompanyAI<RawAiPlan>({
       geminiKey: params.keys.gemini,
       openaiKey: params.keys.openai,
+      anthropicKey: params.keys.anthropic,
+      preferredProvider: effectiveAI,
       systemPrompt,
       userPrompt,
       geminiSchema: {
@@ -427,12 +520,15 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
     });
 
     if (!aiRes) {
-      return deterministicFallbackParse({
-        userPrompt: params.userPrompt,
-        postHeadline: params.postHeadline,
-        adAccount: params.adAccount,
-        currency,
-      });
+      return {
+        ...deterministicFallbackParse({
+          userPrompt: params.userPrompt,
+          postHeadline: params.postHeadline,
+          adAccount: params.adAccount,
+          currency,
+        }),
+        ai_provider_preference: effectiveAI,
+      };
     }
 
     const raw = aiRes.data;
@@ -484,6 +580,7 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
         String(raw.reasoning || "").trim() ||
         "Parâmetros estruturados automaticamente via IA.",
       parser_provider: aiRes.provider,
+      ai_provider_preference: effectiveAI,
     };
   }
 
@@ -630,6 +727,7 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
     channel: AdChannel;
     userPrompt: string;
     adAccountId?: string | null;
+    aiProvider?: AdsAIProviderPreference;
     overridePlan?: Partial<ParsedCampaignPlan>;
   }): Promise<{
     campaign: AdCampaignRecord;
@@ -706,6 +804,11 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
       );
     }
 
+    const effectiveAI: AdsAIProviderPreference =
+      params.aiProvider && params.aiProvider !== "AUTO"
+        ? params.aiProvider
+        : selectedAccount?.preferred_ai_provider || "AUTO";
+
     const parsed = await CampaignLauncherService.parseCampaignPromptWithAI({
       companyName: company?.name || "Empresa",
       userPrompt: params.userPrompt,
@@ -716,9 +819,11 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
         "",
       adAccount: selectedAccount,
       channel: params.channel,
+      aiProvider: effectiveAI,
       keys: {
         gemini: secrets.gemini_api_key,
         openai: secrets.openai_api_key,
+        anthropic: secrets.anthropic_api_key,
       },
     });
 
@@ -841,6 +946,7 @@ Pedido do usuário: "${params.userPrompt || "Impulsionar post para gerar mais vi
         provider: "META",
         channel: params.channel,
         ad_account_id: created.adAccountId,
+        ai_provider_preference: effectiveAI,
         name: plan.name,
         user_prompt: params.userPrompt,
         objective: plan.objective,
@@ -1533,13 +1639,37 @@ export class MetricsFetcherWorker {
  */
 export class BudgetAndCreativeAdvisor {
   static async generateAdvisorRecommendations(
-    companyId: string
+    companyId: string,
+    options?: {
+      aiProvider?: AdsAIProviderPreference;
+      adAccountId?: string | null;
+    }
   ): Promise<AdsAdvisorReport> {
-    const [campaigns, posts, secrets] = await Promise.all([
+    const [allCampaigns, posts, secrets, accounts] = await Promise.all([
       listAdCampaignsByCompany(companyId, 60),
       listPostsHistory(companyId, 60),
       getCompanySecrets(companyId),
+      listAdAccountsByCompany(companyId, "META"),
     ]);
+
+    const scopedAccId =
+      options?.adAccountId && options.adAccountId !== "ALL"
+        ? normalizeAdAccountId(options.adAccountId)
+        : "";
+    const campaigns = scopedAccId
+      ? allCampaigns.filter((c) => c.ad_account_id === scopedAccId)
+      : allCampaigns;
+    const targetAccount =
+      (scopedAccId
+        ? accounts.find((a) => a.ad_account_id === scopedAccId)
+        : null) ||
+      accounts.find((a) => a.is_default) ||
+      accounts[0] ||
+      null;
+    const preferredProvider: AdsAIProviderPreference =
+      options?.aiProvider && options.aiProvider !== "AUTO"
+        ? options.aiProvider
+        : targetAccount?.preferred_ai_provider || "AUTO";
 
     const budgetRecommendations: AdsAdvisorReport["budget_recommendations"] = [];
 
@@ -1613,6 +1743,8 @@ export class BudgetAndCreativeAdvisor {
       }>({
         geminiKey: secrets.gemini_api_key,
         openaiKey: secrets.openai_api_key,
+        anthropicKey: secrets.anthropic_api_key,
+        preferredProvider,
         systemPrompt:
           "Você é um diretor criativo e estrategista de Meta Ads. Com base nos posts impulsionados que mais converteram ou cansaram (fadiga), sugira 3 novos ganchos inéditos em português do Brasil para o cliente testar nos próximos posts orgânicos e impulsionamentos.",
         userPrompt: `Posts impulsionados recentes:\n${JSON.stringify(topPosts, null, 2)}`,
@@ -1769,6 +1901,11 @@ export class CampaignOrchestratorService {
       has_meta_token: Boolean(secrets.meta_access_token),
       has_ig_user_id: Boolean(secrets.ig_user_id),
       has_fb_page_id: Boolean(secrets.fb_page_id),
+      available_ai_providers: {
+        gemini: Boolean(secrets.gemini_api_key?.trim()),
+        openai: Boolean(secrets.openai_api_key?.trim()),
+        claude: Boolean(secrets.anthropic_api_key?.trim()),
+      },
       tiktok_ads_enabled: false,
       tiktok_ads_status_label: "Em breve (aguardando TikTok Marketing API)",
       ad_accounts: adAccounts,
@@ -1802,11 +1939,13 @@ export class CampaignOrchestratorService {
 
   static async saveAdAccountSettings(input: {
     companyId: string;
+    userId?: string | null;
     ad_account_id: string;
     account_name?: string;
     currency?: string;
     account_status?: number | null;
     is_default?: boolean;
+    preferred_ai_provider?: AdsAIProviderPreference;
     cpa_maximo?: number;
     roas_minimo?: number;
     amostra_minima_cliques?: number;
@@ -1816,12 +1955,14 @@ export class CampaignOrchestratorService {
   }) {
     return upsertAdAccountConfig({
       company_id: input.companyId,
+      user_id: input.userId || null,
       provider: "META",
       ad_account_id: input.ad_account_id,
       account_name: input.account_name,
       currency: input.currency,
       account_status: input.account_status,
       is_default: input.is_default,
+      preferred_ai_provider: input.preferred_ai_provider,
       cpa_maximo: input.cpa_maximo,
       roas_minimo: input.roas_minimo,
       amostra_minima_cliques: input.amostra_minima_cliques,
@@ -1831,12 +1972,29 @@ export class CampaignOrchestratorService {
     });
   }
 
+  static async setDefaultAdAccount(
+    companyId: string,
+    accountRowId: string,
+    userId?: string | null
+  ) {
+    return setDefaultAdAccount(companyId, accountRowId, userId);
+  }
+
+  static async deleteAdAccount(
+    companyId: string,
+    accountRowId: string,
+    userId?: string | null
+  ) {
+    return deleteAdAccountConfig(companyId, accountRowId, userId);
+  }
+
   static async previewCampaignPlan(params: {
     companyId: string;
     postId: string;
     channel: AdChannel;
     userPrompt: string;
     adAccountId?: string | null;
+    aiProvider?: AdsAIProviderPreference;
   }) {
     if (params.channel === "TIKTOK") {
       throw new Error(
@@ -1873,9 +2031,11 @@ export class CampaignOrchestratorService {
       postCaption: post.content_json?.legenda || "",
       adAccount: selectedAccount,
       channel: params.channel,
+      aiProvider: params.aiProvider,
       keys: {
         gemini: secrets.gemini_api_key,
         openai: secrets.openai_api_key,
+        anthropic: secrets.anthropic_api_key,
       },
     });
   }
@@ -2762,8 +2922,222 @@ export class CampaignOrchestratorService {
     return MetricsFetcherWorker.syncCompanyCampaignMetrics(companyId);
   }
 
-  static async getOptimizationAdvice(companyId: string) {
-    return BudgetAndCreativeAdvisor.generateAdvisorRecommendations(companyId);
+  static async getOptimizationAdvice(
+    companyId: string,
+    options?: {
+      aiProvider?: AdsAIProviderPreference;
+      adAccountId?: string | null;
+    }
+  ) {
+    return BudgetAndCreativeAdvisor.generateAdvisorRecommendations(
+      companyId,
+      options
+    );
+  }
+
+  static async analyzeMetricsWithAI(params: {
+    companyId: string;
+    campaignId?: string | null;
+    adAccountId?: string | null;
+    aiProvider?: AdsAIProviderPreference;
+    window?: AdInsightsWindow;
+  }): Promise<AdsMetricsAIDiagnosis> {
+    const windowKey: AdInsightsWindow = params.window || "7d";
+    const [state, secrets] = await Promise.all([
+      CampaignOrchestratorService.getAdsDashboardState(params.companyId),
+      getCompanySecrets(params.companyId),
+    ]);
+
+    const normalizedAccFilter =
+      params.adAccountId && params.adAccountId !== "ALL"
+        ? normalizeAdAccountId(params.adAccountId)
+        : null;
+
+    let targetCampaigns = state.campaigns.filter((c) => c.provider === "META");
+    if (params.campaignId) {
+      targetCampaigns = targetCampaigns.filter(
+        (c) => c.id === params.campaignId
+      );
+      if (targetCampaigns.length === 0) {
+        throw new Error(
+          "Campanha não encontrada para análise de métricas nesta empresa."
+        );
+      }
+    } else if (normalizedAccFilter) {
+      targetCampaigns = targetCampaigns.filter(
+        (c) => c.ad_account_id === normalizedAccFilter
+      );
+    }
+
+    const singleCampaign =
+      targetCampaigns.length === 1 ? targetCampaigns[0] : null;
+    const effectiveAccountId =
+      singleCampaign?.ad_account_id || normalizedAccFilter || null;
+    const matchingAccount = effectiveAccountId
+      ? state.ad_accounts.find(
+          (a) => a.ad_account_id === effectiveAccountId
+        ) || null
+      : state.default_ad_account;
+
+    const preferredProvider: AdsAIProviderPreference =
+      params.aiProvider && params.aiProvider !== "AUTO"
+        ? params.aiProvider
+        : singleCampaign?.ai_provider_preference &&
+            singleCampaign.ai_provider_preference !== "AUTO"
+          ? singleCampaign.ai_provider_preference
+          : matchingAccount?.preferred_ai_provider &&
+              matchingAccount.preferred_ai_provider !== "AUTO"
+            ? matchingAccount.preferred_ai_provider
+            : "AUTO";
+
+    const scopeLabel = singleCampaign
+      ? `Campanha "${singleCampaign.name}" (janela ${windowKey})`
+      : normalizedAccFilter
+        ? `Conta ${
+            matchingAccount?.account_name || normalizedAccFilter
+          } • ${targetCampaigns.length} campanha(s) (janela ${windowKey})`
+        : `Todas as contas (${targetCampaigns.length} campanha(s) • janela ${windowKey})`;
+
+    if (targetCampaigns.length === 0) {
+      return {
+        generated_at: new Date().toISOString(),
+        scope_label: scopeLabel,
+        campaign_id: params.campaignId || null,
+        ad_account_id: effectiveAccountId,
+        provider_used: "DETERMINISTIC_FALLBACK",
+        summary:
+          "Nenhuma campanha Meta encontrada neste filtro ainda. Crie e impulsione um post ou clique em 'Sincronizar Meta & Métricas' primeiro.",
+        highlights: [],
+        alerts: ["Sem campanhas disponíveis para analisar neste escopo."],
+        next_actions: [
+          "Impulsione um post publicado na aba Campanhas para iniciar os dados.",
+        ],
+      };
+    }
+
+    const metricsDigest = targetCampaigns.slice(0, 12).map((c) => {
+      const wMetrics = c.last_insights_json?.windows?.[windowKey];
+      const base = c.last_insights_json;
+      return {
+        id: c.id,
+        name: c.name,
+        status: c.status,
+        ad_account_id: c.ad_account_id,
+        daily_budget_reais: Number((c.daily_budget_cents / 100).toFixed(2)),
+        currency: c.currency,
+        objective: c.objective,
+        last_verdict: c.last_verdict,
+        last_verdict_reason: c.last_verdict_reason,
+        spend: Number(wMetrics?.spend ?? base?.spend ?? 0),
+        impressions: Number(wMetrics?.impressions ?? base?.impressions ?? 0),
+        clicks: Number(wMetrics?.clicks ?? base?.clicks ?? 0),
+        ctr: Number(wMetrics?.ctr ?? base?.ctr ?? 0),
+        cpc: Number(wMetrics?.cpc ?? base?.cpc ?? 0),
+        conversions: Number(wMetrics?.conversions ?? base?.conversions ?? 0),
+        cpa: wMetrics?.cpa ?? base?.cpa ?? null,
+        roas: wMetrics?.roas ?? base?.roas ?? null,
+        creative_fatigue: Boolean(base?.creative_fatigue),
+      };
+    });
+
+    const aiRes = await runStructuredJsonWithCompanyAI<{
+      summary: string;
+      highlights: string[];
+      alerts: string[];
+      next_actions: string[];
+    }>({
+      geminiKey: secrets.gemini_api_key,
+      openaiKey: secrets.openai_api_key,
+      anthropicKey: secrets.anthropic_api_key,
+      preferredProvider,
+      systemPrompt:
+        "Você é um analista sênior de tráfego pago (Meta Ads) para um SaaS multiempresa brasileiro. Analise os números reais fornecidos (gasto, impressões, cliques, CTR, CPC, conversões, CPA, ROAS, fadiga criativa e metas CPA máximo/ROAS mínimo) em português do Brasil claro e prático. Não invente números fora do JSON enviado. Se uma campanha tiver 0 gasto ou pouca amostra, diga isso claramente.",
+      userPrompt: `Escopo: ${scopeLabel}\nMetas da conta referência: CPA máximo = ${
+        matchingAccount?.cpa_maximo ?? 35
+      } ${matchingAccount?.currency || "BRL"}, ROAS mínimo = ${
+        matchingAccount?.roas_minimo ?? 2
+      }, Amostra mínima = ${
+        matchingAccount?.amostra_minima_cliques ?? 50
+      } cliques.\n\nDados das campanhas (${windowKey}):\n${JSON.stringify(
+        metricsDigest,
+        null,
+        2
+      )}`,
+      geminiSchema: {
+        type: Type.OBJECT,
+        properties: {
+          summary: { type: Type.STRING },
+          highlights: { type: Type.ARRAY, items: { type: Type.STRING } },
+          alerts: { type: Type.ARRAY, items: { type: Type.STRING } },
+          next_actions: { type: Type.ARRAY, items: { type: Type.STRING } },
+        },
+        required: ["summary", "highlights", "alerts", "next_actions"],
+      },
+      openaiSchema: {
+        name: "ads_metrics_diagnosis",
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string" },
+            highlights: { type: "array", items: { type: "string" } },
+            alerts: { type: "array", items: { type: "string" } },
+            next_actions: { type: "array", items: { type: "string" } },
+          },
+          required: ["summary", "highlights", "alerts", "next_actions"],
+        },
+      },
+    });
+
+    if (aiRes?.data) {
+      return {
+        generated_at: new Date().toISOString(),
+        scope_label: scopeLabel,
+        campaign_id: params.campaignId || null,
+        ad_account_id: effectiveAccountId,
+        provider_used: aiRes.provider,
+        summary: aiRes.data.summary,
+        highlights: aiRes.data.highlights || [],
+        alerts: aiRes.data.alerts || [],
+        next_actions: aiRes.data.next_actions || [],
+      };
+    }
+
+    const totalSpend = metricsDigest.reduce((acc, item) => acc + item.spend, 0);
+    const totalClicks = metricsDigest.reduce((acc, item) => acc + item.clicks, 0);
+    const totalConv = metricsDigest.reduce(
+      (acc, item) => acc + item.conversions,
+      0
+    );
+
+    return {
+      generated_at: new Date().toISOString(),
+      scope_label: scopeLabel,
+      campaign_id: params.campaignId || null,
+      ad_account_id: effectiveAccountId,
+      provider_used: "DETERMINISTIC_FALLBACK",
+      summary: `Resumo determinístico (${windowKey}): gasto acumulado de ${
+        matchingAccount?.currency || "BRL"
+      } ${totalSpend.toFixed(
+        2
+      )}, ${totalClicks} clique(s) e ${totalConv} conversão(ões). Configure uma chave Gemini, OpenAI ou Claude na aba Integrações para análise narrativa completa.`,
+      highlights: [
+        totalConv > 0
+          ? `${totalConv} conversão(ões) registrada(s) no período.`
+          : "Nenhuma conversão registrada ainda no período selecionado.",
+      ],
+      alerts: metricsDigest
+        .filter((m) => m.creative_fatigue || m.last_verdict === "PAUSAR")
+        .map(
+          (m) =>
+            `${m.name}: ${
+              m.last_verdict_reason || "Fadiga criativa ou CPA acima do limite."
+            }`
+        ),
+      next_actions: [
+        "Clique em 'Sincronizar Meta & Métricas' após 24–48h de veiculação para atualizar a janela selecionada.",
+      ],
+    };
   }
 
   static async syncOrganicPostMetrics(companyId: string, limit = 25): Promise<{

@@ -16,6 +16,7 @@ import {
   AdDecisionVerdict,
   AdInsightsSnapshot,
   AdProvider,
+  AdsAIProviderPreference,
   AuditLogItem,
   BrandSettings,
   Company,
@@ -2968,6 +2969,14 @@ export async function markCompanyCompletedTipsSeen(
   }
 }
 
+function normalizeAdsAIProvider(raw?: unknown): AdsAIProviderPreference {
+  const upper = String(raw || "").trim().toUpperCase();
+  if (upper === "GEMINI" || upper === "OPENAI" || upper === "CLAUDE") {
+    return upper;
+  }
+  return "AUTO";
+}
+
 function normalizeAdAccountRow(row: AdAccountConfig): AdAccountConfig {
   return {
     ...row,
@@ -2975,6 +2984,7 @@ function normalizeAdAccountRow(row: AdAccountConfig): AdAccountConfig {
       row.account_status !== null && row.account_status !== undefined
         ? Number(row.account_status)
         : null,
+    preferred_ai_provider: normalizeAdsAIProvider(row.preferred_ai_provider),
     cpa_maximo: Number(row.cpa_maximo ?? 35),
     roas_minimo: Number(row.roas_minimo ?? 2),
     amostra_minima_cliques: Number(row.amostra_minima_cliques ?? 50),
@@ -2984,17 +2994,22 @@ function normalizeAdAccountRow(row: AdAccountConfig): AdAccountConfig {
 }
 
 function normalizeAdCampaignRow(row: AdCampaignRecord): AdCampaignRecord {
+  const targetingObj =
+    row.targeting_json && typeof row.targeting_json === "object"
+      ? row.targeting_json
+      : {};
   return {
     ...row,
+    ai_provider_preference: normalizeAdsAIProvider(
+      row.ai_provider_preference ??
+        (targetingObj as Record<string, unknown>)._ai_provider_preference
+    ),
     daily_budget_cents: Number(row.daily_budget_cents ?? 2000),
     duration_days:
       row.duration_days !== null && row.duration_days !== undefined
         ? Number(row.duration_days)
         : null,
-    targeting_json:
-      row.targeting_json && typeof row.targeting_json === "object"
-        ? row.targeting_json
-        : {},
+    targeting_json: targetingObj,
     last_insights_json:
       row.last_insights_json && typeof row.last_insights_json === "object"
         ? row.last_insights_json
@@ -3052,22 +3067,29 @@ export async function upsertAdAccountConfig(input: {
   currency?: string;
   account_status?: number | null;
   is_default?: boolean;
+  preferred_ai_provider?: AdsAIProviderPreference;
   cpa_maximo?: number;
   roas_minimo?: number;
   amostra_minima_cliques?: number;
   link_destino_padrao?: string | null;
   localizacao_base?: string;
   auto_pause_enabled?: boolean;
+  user_id?: string | null;
 }): Promise<AdAccountConfig> {
   const provider: AdProvider = input.provider || "META";
   const normalizedAdAccountId = normalizeMetaAdAccountId(input.ad_account_id);
   const nowIso = new Date().toISOString();
-  const isDefault = input.is_default !== false;
 
   const existingList = await listAdAccountsByCompany(input.company_id, provider);
   const existing = existingList.find(
     (a) => a.ad_account_id === normalizedAdAccountId
   );
+  const isDefault =
+    existingList.length === 0
+      ? true
+      : input.is_default !== undefined
+        ? Boolean(input.is_default)
+        : Boolean(existing?.is_default);
 
   const entry: AdAccountConfig = {
     id: existing?.id || generateId("adacc"),
@@ -3082,6 +3104,10 @@ export async function upsertAdAccountConfig(input: {
         ? input.account_status
         : (existing?.account_status ?? null),
     is_default: isDefault,
+    preferred_ai_provider:
+      input.preferred_ai_provider !== undefined
+        ? normalizeAdsAIProvider(input.preferred_ai_provider)
+        : normalizeAdsAIProvider(existing?.preferred_ai_provider),
     cpa_maximo: Number(input.cpa_maximo ?? existing?.cpa_maximo ?? 35),
     roas_minimo: Number(input.roas_minimo ?? existing?.roas_minimo ?? 2),
     amostra_minima_cliques: Number(
@@ -3117,32 +3143,57 @@ export async function upsertAdAccountConfig(input: {
         );
       }
 
-      if (existing) {
-        await sbRequest(`ad_accounts?id=eq.${encodeURIComponent(entry.id)}`, {
-          method: "PATCH",
-          headers: { Prefer: "return=minimal" },
-          body: JSON.stringify({
-            account_name: entry.account_name,
-            currency: entry.currency,
-            account_status: entry.account_status,
-            is_default: entry.is_default,
-            cpa_maximo: entry.cpa_maximo,
-            roas_minimo: entry.roas_minimo,
-            amostra_minima_cliques: entry.amostra_minima_cliques,
-            link_destino_padrao: entry.link_destino_padrao,
-            localizacao_base: entry.localizacao_base,
-            auto_pause_enabled: entry.auto_pause_enabled,
-            updated_at: entry.updated_at,
-          }),
-        });
-      } else {
-        await sbRequest("ad_accounts", {
-          method: "POST",
-          headers: { Prefer: "return=minimal" },
-          body: JSON.stringify(entry),
-        });
+      const patchPayload = {
+        account_name: entry.account_name,
+        currency: entry.currency,
+        account_status: entry.account_status,
+        is_default: entry.is_default,
+        preferred_ai_provider: entry.preferred_ai_provider,
+        cpa_maximo: entry.cpa_maximo,
+        roas_minimo: entry.roas_minimo,
+        amostra_minima_cliques: entry.amostra_minima_cliques,
+        link_destino_padrao: entry.link_destino_padrao,
+        localizacao_base: entry.localizacao_base,
+        auto_pause_enabled: entry.auto_pause_enabled,
+        updated_at: entry.updated_at,
+      };
+
+      try {
+        if (existing) {
+          await sbRequest(`ad_accounts?id=eq.${encodeURIComponent(entry.id)}`, {
+            method: "PATCH",
+            headers: { Prefer: "return=minimal" },
+            body: JSON.stringify(patchPayload),
+          });
+        } else {
+          await sbRequest("ad_accounts", {
+            method: "POST",
+            headers: { Prefer: "return=minimal" },
+            body: JSON.stringify(entry),
+          });
+        }
+        persistedInSupabase = true;
+      } catch {
+        // Fallback seguro se a coluna preferred_ai_provider ainda não tiver sido adicionada via migration
+        const { preferred_ai_provider: _omitPatch, ...legacyPatch } = patchPayload;
+        const { preferred_ai_provider: _omitEntry, ...legacyEntry } = entry;
+        void _omitPatch;
+        void _omitEntry;
+        if (existing) {
+          await sbRequest(`ad_accounts?id=eq.${encodeURIComponent(entry.id)}`, {
+            method: "PATCH",
+            headers: { Prefer: "return=minimal" },
+            body: JSON.stringify(legacyPatch),
+          });
+        } else {
+          await sbRequest("ad_accounts", {
+            method: "POST",
+            headers: { Prefer: "return=minimal" },
+            body: JSON.stringify(legacyEntry),
+          });
+        }
+        persistedInSupabase = true;
       }
-      persistedInSupabase = true;
     } catch {
       // Fallback para memória caso a tabela ainda não exista no Supabase
     }
@@ -3172,17 +3223,129 @@ export async function upsertAdAccountConfig(input: {
 
   await appendAuditLog({
     company_id: input.company_id,
+    user_id: input.user_id || null,
     action: "AD_ACCOUNT_CONFIG_SAVED",
     details_json: {
       provider,
       ad_account_id: normalizedAdAccountId,
       is_default: isDefault,
+      preferred_ai_provider: entry.preferred_ai_provider,
       cpa_maximo: entry.cpa_maximo,
       roas_minimo: entry.roas_minimo,
     },
   });
 
   return normalizeAdAccountRow(entry);
+}
+
+export async function setDefaultAdAccount(
+  companyId: string,
+  accountRowId: string,
+  userId?: string | null
+): Promise<AdAccountConfig | null> {
+  const accounts = await listAdAccountsByCompany(companyId);
+  const target = accounts.find((a) => a.id === accountRowId);
+  if (!target) return null;
+
+  const nowIso = new Date().toISOString();
+  if (isSupabaseConfigured()) {
+    try {
+      await sbRequest(
+        `ad_accounts?company_id=eq.${encodeURIComponent(
+          companyId
+        )}&provider=eq.${encodeURIComponent(target.provider)}`,
+        {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ is_default: false }),
+        }
+      );
+      await sbRequest(
+        `ad_accounts?id=eq.${encodeURIComponent(
+          target.id
+        )}&company_id=eq.${encodeURIComponent(companyId)}`,
+        {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ is_default: true, updated_at: nowIso }),
+        }
+      );
+    } catch {
+      // fallback memória
+    }
+  }
+
+  for (const acc of getMemDb().ad_accounts) {
+    if (acc.company_id === companyId && acc.provider === target.provider) {
+      acc.is_default = acc.id === target.id;
+      if (acc.id === target.id) acc.updated_at = nowIso;
+    }
+  }
+
+  await appendAuditLog({
+    company_id: companyId,
+    user_id: userId || null,
+    action: "AD_ACCOUNT_DEFAULT_CHANGED",
+    details_json: {
+      ad_account_row_id: target.id,
+      ad_account_id: target.ad_account_id,
+    },
+  });
+
+  return normalizeAdAccountRow({ ...target, is_default: true, updated_at: nowIso });
+}
+
+export async function deleteAdAccountConfig(
+  companyId: string,
+  accountRowId: string,
+  userId?: string | null
+): Promise<boolean> {
+  const accounts = await listAdAccountsByCompany(companyId);
+  const target = accounts.find((a) => a.id === accountRowId);
+  if (!target) return false;
+
+  let deleted = false;
+  if (isSupabaseConfigured()) {
+    try {
+      await sbRequest(
+        `ad_accounts?id=eq.${encodeURIComponent(
+          accountRowId
+        )}&company_id=eq.${encodeURIComponent(companyId)}`,
+        { method: "DELETE" }
+      );
+      deleted = true;
+    } catch {
+      // fallback memória
+    }
+  }
+
+  const mem = getMemDb();
+  const before = mem.ad_accounts.length;
+  mem.ad_accounts = mem.ad_accounts.filter(
+    (a) => !(a.id === accountRowId && a.company_id === companyId)
+  );
+  const removed = deleted || mem.ad_accounts.length < before;
+
+  if (removed && target.is_default) {
+    const remaining = await listAdAccountsByCompany(companyId, target.provider);
+    if (remaining[0]) {
+      await setDefaultAdAccount(companyId, remaining[0].id, userId);
+    }
+  }
+
+  if (removed) {
+    await appendAuditLog({
+      company_id: companyId,
+      user_id: userId || null,
+      action: "AD_ACCOUNT_DELETED",
+      details_json: {
+        ad_account_row_id: target.id,
+        ad_account_id: target.ad_account_id,
+      },
+    });
+  }
+
+  return removed;
 }
 
 export async function listAdCampaignsByCompany(
@@ -3265,6 +3428,7 @@ export async function createAdCampaignRecord(input: {
   provider?: AdProvider;
   channel: AdChannel;
   ad_account_id: string;
+  ai_provider_preference?: AdsAIProviderPreference;
   name: string;
   user_prompt?: string;
   objective: string;
@@ -3284,6 +3448,7 @@ export async function createAdCampaignRecord(input: {
   created_by_user_id?: string | null;
 }): Promise<AdCampaignRecord> {
   const nowIso = new Date().toISOString();
+  const aiPref = normalizeAdsAIProvider(input.ai_provider_preference);
   const entry: AdCampaignRecord = {
     id: generateId("adcmp"),
     company_id: input.company_id,
@@ -3291,6 +3456,7 @@ export async function createAdCampaignRecord(input: {
     provider: input.provider || "META",
     channel: input.channel,
     ad_account_id: normalizeMetaAdAccountId(input.ad_account_id),
+    ai_provider_preference: aiPref,
     name: input.name,
     user_prompt: input.user_prompt || "",
     objective: input.objective,
@@ -3300,7 +3466,10 @@ export async function createAdCampaignRecord(input: {
     currency: (input.currency || "BRL").toUpperCase(),
     duration_days:
       input.duration_days !== undefined ? input.duration_days : null,
-    targeting_json: input.targeting_json || {},
+    targeting_json: {
+      ...(input.targeting_json || {}),
+      _ai_provider_preference: aiPref,
+    },
     source_story_id: input.source_story_id || null,
     meta_campaign_id: input.meta_campaign_id || null,
     meta_adset_id: input.meta_adset_id || null,
@@ -3320,12 +3489,23 @@ export async function createAdCampaignRecord(input: {
   let persistedInSupabase = false;
   if (isSupabaseConfigured()) {
     try {
-      await sbRequest("ad_campaigns", {
-        method: "POST",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify(entry),
-      });
-      persistedInSupabase = true;
+      try {
+        await sbRequest("ad_campaigns", {
+          method: "POST",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify(entry),
+        });
+        persistedInSupabase = true;
+      } catch {
+        const { ai_provider_preference: _omitAi, ...legacyEntry } = entry;
+        void _omitAi;
+        await sbRequest("ad_campaigns", {
+          method: "POST",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify(legacyEntry),
+        });
+        persistedInSupabase = true;
+      }
     } catch {
       // Fallback para memória
     }
