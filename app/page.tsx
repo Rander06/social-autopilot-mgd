@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import packageJson from "../package.json";
+
+const APP_VERSION = packageJson.version;
 import {
   AI_PHOTO_PROMPT_EXAMPLES,
   LUMINOUS_THEME_PRESETS,
@@ -1269,10 +1272,35 @@ export default function SaasAppPage() {
   // Navigation
   const [viewScope, setViewScope] = useState<"client" | "admin">("client");
   const [clientTab, setClientTab] = useState<ClientTab>("dashboard");
+  const [configMenuOpen, setConfigMenuOpen] = useState(false);
+  const configMenuRef = useRef<HTMLDivElement | null>(null);
   const [lightboxState, setLightboxState] = useState<{
     images: string[];
     title: string;
   } | null>(null);
+
+  useEffect(() => {
+    if (!configMenuOpen) return;
+    function handleOutsideClick(e: MouseEvent) {
+      if (
+        configMenuRef.current &&
+        !configMenuRef.current.contains(e.target as Node)
+      ) {
+        setConfigMenuOpen(false);
+      }
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setConfigMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleOutsideClick);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [configMenuOpen]);
   const [adminTab, setAdminTab] = useState<AdminTab>("overview");
   const [globalNotice, setGlobalNotice] = useState<{
     type: "success" | "error";
@@ -3599,6 +3627,76 @@ export default function SaasAppPage() {
               </>
             )}
 
+            <div ref={configMenuRef} className="relative">
+              <button
+                type="button"
+                aria-expanded={configMenuOpen}
+                aria-haspopup="menu"
+                onClick={() => setConfigMenuOpen((prev) => !prev)}
+                className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold transition ${
+                  viewScope === "client" &&
+                  (clientTab === "brand" ||
+                    clientTab === "integrations" ||
+                    clientTab === "support")
+                    ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-sm"
+                    : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                <span>Configurações</span>
+                {unseenCompletedTips.length > 0 && (
+                  <span className="rounded-full bg-emerald-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">
+                    {unseenCompletedTips.length}
+                  </span>
+                )}
+                <span className="text-[10px] opacity-80">
+                  {configMenuOpen ? "▲" : "▾"}
+                </span>
+              </button>
+
+              {configMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute left-0 top-full z-40 mt-2 w-56 max-w-[calc(100vw-2rem)] space-y-1 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl sm:left-auto sm:right-0"
+                >
+                  {(
+                    [
+                      ["brand", "Identidade Visual"],
+                      ["integrations", "Integrações"],
+                      ["support", "Suporte"],
+                    ] as Array<[ClientTab, string]>
+                  ).map(([menuKey, menuLabel]) => {
+                    const active =
+                      viewScope === "client" && clientTab === menuKey;
+                    return (
+                      <button
+                        key={menuKey}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setViewScope("client");
+                          setClientTab(menuKey);
+                          setConfigMenuOpen(false);
+                        }}
+                        className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs font-bold transition ${
+                          active
+                            ? "bg-indigo-50 text-indigo-700"
+                            : "text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        <span>{menuLabel}</span>
+                        {menuKey === "support" &&
+                          unseenCompletedTips.length > 0 && (
+                            <span className="rounded-full bg-emerald-400 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">
+                              {unseenCompletedTips.length}
+                            </span>
+                          )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             <button
               type="button"
               onClick={handleLogout}
@@ -4208,14 +4306,11 @@ export default function SaasAppPage() {
             <nav className="flex flex-nowrap gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
               {(
                 [
-                  ["dashboard", "Dashboard da Empresa"],
-                  ["topics", "Meus Assuntos & Produtos"],
-                  ["studio", "Estúdio Manual (Preview)"],
-                  ["brand", "Identidade Visual"],
-                  ["integrations", "Integrações (Multi-IA & Redes)"],
+                  ["dashboard", "Dashboard"],
+                  ["topics", "Assuntos & Produtos"],
+                  ["studio", "Estúdio Manual"],
                   ["history", "Histórico de Posts"],
                   ["campaigns", "Campanhas"],
-                  ["support", "Suporte"],
                 ] as Array<[ClientTab, string]>
               ).map(([tabKey, label]) => (
                 <button
@@ -4231,11 +4326,6 @@ export default function SaasAppPage() {
                   {tabKey === "dashboard" && pendingDrafts.length > 0 && (
                     <span className="ml-2 rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] text-slate-900">
                       {pendingDrafts.length}
-                    </span>
-                  )}
-                  {tabKey === "support" && unseenCompletedTips.length > 0 && (
-                    <span className="ml-2 rounded-full bg-emerald-400 px-1.5 py-0.5 text-[10px] text-slate-900">
-                      {unseenCompletedTips.length}
                     </span>
                   )}
                 </button>
@@ -8188,7 +8278,7 @@ export default function SaasAppPage() {
       <footer className="mx-auto mt-10 flex max-w-7xl flex-wrap items-center justify-between gap-3 border-t border-slate-200/80 px-4 py-6 text-xs text-slate-500 md:px-8">
         <span>
           © {new Date().getFullYear()} Social PilotFlow SaaS • Meu Gestor
-          Digital
+          Digital • (versão: {APP_VERSION})
         </span>
         <div className="flex items-center gap-4">
           <Link
