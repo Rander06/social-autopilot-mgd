@@ -91,7 +91,7 @@ export default function SuportePage() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Erro ao enviar dica.");
+      if (!res.ok) throw new Error(data.error || "Erro ao enviar sugestão.");
       setTipMessage("");
       setSession((prev) => ({
         ...prev,
@@ -101,12 +101,12 @@ export default function SuportePage() {
       }));
       setFeedback({
         type: "success",
-        text: "Dica enviada com sucesso para o painel administrativo! Obrigado por contribuir.",
+        text: "Sugestão enviada com sucesso para o painel administrativo! Obrigado por contribuir.",
       });
     } catch (err) {
       setFeedback({
         type: "error",
-        text: err instanceof Error ? err.message : "Erro ao enviar dica.",
+        text: err instanceof Error ? err.message : "Erro ao enviar sugestão.",
       });
     } finally {
       setSubmitting(false);
@@ -148,7 +148,7 @@ export default function SuportePage() {
             />
             <div>
               <h1 className="text-xl font-extrabold text-slate-900">
-                Suporte &amp; Caixa de Dicas
+                Suporte
               </h1>
               <p className="text-xs text-slate-500">
                 Social PilotFlow SaaS • Atendimento oficial e sugestões de melhoria
@@ -170,7 +170,7 @@ export default function SuportePage() {
               <span className="inline-flex rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-indigo-700">
                 Suporte por E-mail
               </span>
-              <h2 className="mt-2 text-base font-extrabold text-slate-900">
+              <h2 className="mt-2 break-all text-base font-extrabold text-slate-900">
                 {SUPPORT_EMAIL}
               </h2>
               <p className="mt-1 text-xs text-slate-600">
@@ -226,11 +226,11 @@ export default function SuportePage() {
           </div>
         </section>
 
-        {/* Caixa de Dicas */}
+        {/* Caixa de Sugestões */}
         <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-5">
           <div>
             <h2 className="text-base font-extrabold text-slate-900">
-              Dê sua dica para melhorar o projeto
+              Dê sua sugestão para melhorar o projeto
             </h2>
             <p className="mt-1 text-xs leading-relaxed text-slate-600">
               {TIP_ENCOURAGEMENT_TEXT}
@@ -242,8 +242,8 @@ export default function SuportePage() {
           ) : !session.authenticated ? (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
               <span>
-                Faça login na sua conta PilotFlow para enviar sua dica identificada
-                e acompanhar quando ela for atendida.
+                Faça login na sua conta PilotFlow para enviar sua sugestão
+                identificada e acompanhar quando ela for atendida.
               </span>
               <Link
                 href="/"
@@ -258,8 +258,8 @@ export default function SuportePage() {
                 <div className="space-y-2 rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-xs text-emerald-950">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="font-extrabold">
-                      Boa notícia! {unseenCompleted.length} dica(s) sua(s) foram
-                      atendidas:
+                      Boa notícia! {unseenCompleted.length} sugestão(ões) sua(s)
+                      foram atendida(s):
                     </p>
                     <button
                       type="button"
@@ -321,7 +321,7 @@ export default function SuportePage() {
                     disabled={submitting}
                     className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:opacity-95 disabled:opacity-60"
                   >
-                    {submitting ? "Enviando..." : "Enviar Dica"}
+                    {submitting ? "Enviando..." : "Enviar Sugestão"}
                   </button>
                 </div>
               </form>
@@ -329,7 +329,7 @@ export default function SuportePage() {
               {session.tips.length > 0 && (
                 <div className="space-y-2 border-t border-slate-200 pt-4">
                   <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
-                    Suas Dicas Enviadas ({session.tips.length})
+                    Suas Sugestões Enviadas ({session.tips.length})
                   </h3>
                   <div className="space-y-2">
                     {session.tips.map((tip) => (

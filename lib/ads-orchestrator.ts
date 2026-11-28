@@ -1915,6 +1915,65 @@ export class CampaignOrchestratorService {
     };
   }
 
+  private static async syncSavedAccountsBusinessMetadata(
+    companyId: string,
+    remoteAccounts: Array<{
+      id: string;
+      business_id: string | null;
+      business_name: string | null;
+      account_status: number;
+    }>,
+    savedAccounts: AdAccountConfig[]
+  ): Promise<{ savedAccounts: AdAccountConfig[]; updatedCount: number }> {
+    const remoteById = new Map(
+      remoteAccounts.map((r) => [normalizeAdAccountId(r.id), r])
+    );
+
+    let updatedCount = 0;
+    const nextSaved: AdAccountConfig[] = [];
+
+    for (const saved of savedAccounts) {
+      const normalizedId = normalizeAdAccountId(saved.ad_account_id);
+      const remote = remoteById.get(normalizedId);
+      if (!remote) {
+        nextSaved.push(saved);
+        continue;
+      }
+
+      const needsBusinessIdUpdate =
+        Boolean(remote.business_id) &&
+        remote.business_id !== (saved.business_id || null);
+      const needsBusinessNameUpdate =
+        Boolean(remote.business_name) &&
+        remote.business_name !== (saved.business_name || null);
+      const needsStatusUpdate =
+        remote.account_status !== (saved.account_status ?? null);
+
+      if (
+        !needsBusinessIdUpdate &&
+        !needsBusinessNameUpdate &&
+        !needsStatusUpdate
+      ) {
+        nextSaved.push(saved);
+        continue;
+      }
+
+      const updated = await upsertAdAccountConfig({
+        company_id: companyId,
+        provider: "META",
+        ad_account_id: saved.ad_account_id,
+        business_id: remote.business_id ?? saved.business_id ?? null,
+        business_name: remote.business_name ?? saved.business_name ?? null,
+        account_status: remote.account_status,
+        is_default: saved.is_default,
+      });
+      updatedCount += 1;
+      nextSaved.push(updated);
+    }
+
+    return { savedAccounts: nextSaved, updatedCount };
+  }
+
   static async syncRemoteAdAccounts(companyId: string) {
     const secrets = await getCompanySecrets(companyId);
     if (!secrets.meta_access_token) {
@@ -1930,11 +1989,19 @@ export class CampaignOrchestratorService {
       listAdAccountsByCompany(companyId, "META"),
     ]);
 
+    const { savedAccounts: refreshedSaved, updatedCount } =
+      await CampaignOrchestratorService.syncSavedAccountsBusinessMetadata(
+        companyId,
+        bmData.accounts,
+        savedAccounts
+      );
+
     return {
       permissions,
       businesses: bmData.businesses,
       remote_accounts: bmData.accounts,
-      saved_accounts: savedAccounts,
+      saved_accounts: refreshedSaved,
+      updated_bm_count: updatedCount,
     };
   }
 
@@ -2979,6 +3046,23 @@ export class CampaignOrchestratorService {
   }
 
   static async refreshMetricsNow(companyId: string) {
+    try {
+      const savedAccounts = await listAdAccountsByCompany(companyId, "META");
+      if (savedAccounts.some((acc) => !acc.business_id)) {
+        const secrets = await getCompanySecrets(companyId);
+        if (secrets.meta_access_token) {
+          const metaAds = new MetaAdsService(secrets.meta_access_token);
+          const bmData = await metaAds.listBusinessesWithAdAccounts();
+          await CampaignOrchestratorService.syncSavedAccountsBusinessMetadata(
+            companyId,
+            bmData.accounts,
+            savedAccounts
+          );
+        }
+      }
+    } catch {
+      // Sincronização automática de BM é não-bloqueante
+    }
     return MetricsFetcherWorker.syncCompanyCampaignMetrics(companyId);
   }
 

@@ -23,6 +23,7 @@ import {
   PostExternalLinks,
   PostOrganicMetricsBar,
 } from "./components/CampaignsModule";
+import { ImageLightboxModal } from "./components/ImageLightboxModal";
 import {
   AdAccountConfig,
   AIProvider,
@@ -343,8 +344,8 @@ function buildIntegTestRows(
       entry.valid === true
         ? "ok"
         : entry.configured === false
-        ? "unconfigured"
-        : "error";
+          ? "unconfigured"
+          : "error";
 
     let detail = "";
     if (key === "meta" && status === "ok") {
@@ -643,8 +644,8 @@ function PromptGuidePanel({
           type="button"
           onClick={() => setGuideTab("template")}
           className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${guideTab === "template"
-              ? "bg-indigo-600 text-white shadow-2xs"
-              : "border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-100/60"
+            ? "bg-indigo-600 text-white shadow-2xs"
+            : "border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-100/60"
             }`}
         >
           1. Preencher aqui
@@ -653,8 +654,8 @@ function PromptGuidePanel({
           type="button"
           onClick={() => setGuideTab("external_ai")}
           className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${guideTab === "external_ai"
-              ? "bg-indigo-600 text-white shadow-2xs"
-              : "border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-100/60"
+            ? "bg-indigo-600 text-white shadow-2xs"
+            : "border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-100/60"
             }`}
         >
           2. Criar no ChatGPT / Gemini (com foto)
@@ -838,13 +839,13 @@ function PublishTargetsSelector({
     (availableNetworks.tiktok ? 1 : 0);
 
   return (
-    <div className="space-y-3 rounded-xl border border-indigo-200 bg-indigo-50/40 p-3.5">
+    <div className="space-y-3 rounded-xl border border-indigo-200 bg-indigo-50/40 p-3 sm:p-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs font-extrabold uppercase tracking-wider text-indigo-950">
           {label}
         </span>
         {visibleCount > 0 && (
-          <span className="rounded-full bg-white px-2.5 py-0.5 text-[10px] font-extrabold text-indigo-700 ring-1 ring-indigo-200">
+          <span className="max-w-full break-words rounded-full bg-white px-2.5 py-0.5 text-[10px] font-extrabold leading-snug text-indigo-700 ring-1 ring-indigo-200">
             {hasFeed && hasVertical
               ? "1080×1080 (Feed) + 1080×1920 (Stories/TikTok)"
               : hasVertical
@@ -880,8 +881,8 @@ function PublishTargetsSelector({
           {availableNetworks.instagram && (
             <div
               className={`overflow-hidden rounded-xl border p-3 transition ${igActive
-                  ? "border-indigo-300 bg-white shadow-xs"
-                  : "border-slate-200 bg-white/70 opacity-80"
+                ? "border-indigo-300 bg-white shadow-xs"
+                : "border-slate-200 bg-white/70 opacity-80"
                 }`}
             >
               <label className="flex cursor-pointer items-center justify-between gap-2 border-b border-slate-100 pb-2">
@@ -913,8 +914,8 @@ function PublishTargetsSelector({
                 </span>
                 <span
                   className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${igActive
-                      ? "bg-emerald-100 text-emerald-800"
-                      : "bg-slate-200 text-slate-600"
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-slate-200 text-slate-600"
                     }`}
                 >
                   {igActive ? "Ativado" : "Desativado"}
@@ -922,52 +923,58 @@ function PublishTargetsSelector({
               </label>
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <label
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${value.ig_feed
-                      ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
-                      : "border-slate-200 bg-slate-50/60 text-slate-600"
+                  className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition sm:w-auto sm:justify-start sm:gap-1.5 ${value.ig_feed
+                    ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
+                    : "border-slate-200 bg-slate-50/60 text-slate-600"
                     }`}
                 >
-                  <input
-                    type="checkbox"
-                    checked={value.ig_feed}
-                    onChange={() => togglePlacement("ig_feed")}
-                    className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
-                  />
-                  <span>Post / Feed</span>
+                  <span className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={value.ig_feed}
+                      onChange={() => togglePlacement("ig_feed")}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
+                    />
+                    <span>Post / Feed</span>
+                  </span>
                   <span className="font-mono text-[10px] font-bold text-slate-500">
                     (1080×1080)
                   </span>
                 </label>
 
                 <label
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${value.ig_stories
-                      ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
-                      : "border-slate-200 bg-slate-50/60 text-slate-600"
+                  className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition sm:w-auto sm:justify-start sm:gap-1.5 ${value.ig_stories
+                    ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
+                    : "border-slate-200 bg-slate-50/60 text-slate-600"
                     }`}
                 >
-                  <input
-                    type="checkbox"
-                    checked={value.ig_stories}
-                    onChange={() => togglePlacement("ig_stories")}
-                    className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
-                  />
-                  <span>Story</span>
+                  <span className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={value.ig_stories}
+                      onChange={() => togglePlacement("ig_stories")}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
+                    />
+                    <span>Story</span>
+                  </span>
                   <span className="font-mono text-[10px] font-bold text-indigo-600">
                     (1080×1920)
                   </span>
                 </label>
 
                 <div
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-200/80 bg-slate-50/50 px-2.5 py-1.5 text-xs text-slate-400"
+                  className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-200/80 bg-slate-50/50 px-2.5 py-1.5 text-xs text-slate-400 sm:w-auto sm:justify-start sm:gap-1.5"
                   title="Reels exige arquivo de vídeo MP4; disponível em breve"
                 >
-                  <input
-                    type="checkbox"
-                    disabled
-                    checked={false}
-                    className="h-3.5 w-3.5 shrink-0 rounded border-slate-200"
-                  />
-                  <span>Reel (Vídeo)</span>
+                  <span className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      disabled
+                      checked={false}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-slate-200"
+                    />
+                    <span>Reel (Vídeo)</span>
+                  </span>
                   <span className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[9px] font-bold text-slate-500">
                     Em breve
                   </span>
@@ -980,8 +987,8 @@ function PublishTargetsSelector({
           {availableNetworks.facebook && (
             <div
               className={`overflow-hidden rounded-xl border p-3 transition ${fbActive
-                  ? "border-indigo-300 bg-white shadow-xs"
-                  : "border-slate-200 bg-white/70 opacity-80"
+                ? "border-indigo-300 bg-white shadow-xs"
+                : "border-slate-200 bg-white/70 opacity-80"
                 }`}
             >
               <label className="flex cursor-pointer items-center justify-between gap-2 border-b border-slate-100 pb-2">
@@ -1013,8 +1020,8 @@ function PublishTargetsSelector({
                 </span>
                 <span
                   className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${fbActive
-                      ? "bg-emerald-100 text-emerald-800"
-                      : "bg-slate-200 text-slate-600"
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-slate-200 text-slate-600"
                     }`}
                 >
                   {fbActive ? "Ativado" : "Desativado"}
@@ -1022,36 +1029,40 @@ function PublishTargetsSelector({
               </label>
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <label
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${value.fb_feed
-                      ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
-                      : "border-slate-200 bg-slate-50/60 text-slate-600"
+                  className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition sm:w-auto sm:justify-start sm:gap-1.5 ${value.fb_feed
+                    ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
+                    : "border-slate-200 bg-slate-50/60 text-slate-600"
                     }`}
                 >
-                  <input
-                    type="checkbox"
-                    checked={value.fb_feed}
-                    onChange={() => togglePlacement("fb_feed")}
-                    className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
-                  />
-                  <span>Post / Feed</span>
+                  <span className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={value.fb_feed}
+                      onChange={() => togglePlacement("fb_feed")}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
+                    />
+                    <span>Post / Feed</span>
+                  </span>
                   <span className="font-mono text-[10px] font-bold text-slate-500">
                     (1080×1080)
                   </span>
                 </label>
 
                 <label
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${value.fb_stories
-                      ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
-                      : "border-slate-200 bg-slate-50/60 text-slate-600"
+                  className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition sm:w-auto sm:justify-start sm:gap-1.5 ${value.fb_stories
+                    ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
+                    : "border-slate-200 bg-slate-50/60 text-slate-600"
                     }`}
                 >
-                  <input
-                    type="checkbox"
-                    checked={value.fb_stories}
-                    onChange={() => togglePlacement("fb_stories")}
-                    className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
-                  />
-                  <span>Story</span>
+                  <span className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={value.fb_stories}
+                      onChange={() => togglePlacement("fb_stories")}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
+                    />
+                    <span>Story</span>
+                  </span>
                   <span className="font-mono text-[10px] font-bold text-indigo-600">
                     (1080×1920)
                   </span>
@@ -1064,8 +1075,8 @@ function PublishTargetsSelector({
           {availableNetworks.tiktok && (
             <div
               className={`overflow-hidden rounded-xl border p-3 transition ${ttActive
-                  ? "border-indigo-300 bg-white shadow-xs"
-                  : "border-slate-200 bg-white/70 opacity-80"
+                ? "border-indigo-300 bg-white shadow-xs"
+                : "border-slate-200 bg-white/70 opacity-80"
                 }`}
             >
               <label className="flex cursor-pointer items-center justify-between gap-2 border-b border-slate-100 pb-2">
@@ -1080,8 +1091,8 @@ function PublishTargetsSelector({
                 </span>
                 <span
                   className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${ttActive
-                      ? "bg-emerald-100 text-emerald-800"
-                      : "bg-slate-200 text-slate-600"
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-slate-200 text-slate-600"
                     }`}
                 >
                   {ttActive ? "Ativado" : "Desativado"}
@@ -1089,18 +1100,20 @@ function PublishTargetsSelector({
               </label>
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <label
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${value.tiktok_feed
-                      ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
-                      : "border-slate-200 bg-slate-50/60 text-slate-600"
+                  className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition sm:w-auto sm:justify-start sm:gap-1.5 ${value.tiktok_feed
+                    ? "border-indigo-200 bg-indigo-50/70 text-indigo-950"
+                    : "border-slate-200 bg-slate-50/60 text-slate-600"
                     }`}
                 >
-                  <input
-                    type="checkbox"
-                    checked={value.tiktok_feed}
-                    onChange={() => togglePlacement("tiktok_feed")}
-                    className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
-                  />
-                  <span>Post / Photo Mode</span>
+                  <span className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={value.tiktok_feed}
+                      onChange={() => togglePlacement("tiktok_feed")}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600"
+                    />
+                    <span>Post / Photo Mode</span>
+                  </span>
                   <span className="font-mono text-[10px] font-bold text-indigo-600">
                     (1080×1920)
                   </span>
@@ -1163,7 +1176,7 @@ function ImageModelGuide({
         <select
           value={value}
           onChange={(e) => onChange(e.target.value as ImageAIProvider | "")}
-          className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs font-bold text-slate-800"
+          className="mt-1 w-full max-w-full truncate rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs font-bold text-slate-800"
         >
           {allowDefault && (
             <option value="">Usar padrão das Integrações (padrão)</option>
@@ -1256,6 +1269,10 @@ export default function SaasAppPage() {
   // Navigation
   const [viewScope, setViewScope] = useState<"client" | "admin">("client");
   const [clientTab, setClientTab] = useState<ClientTab>("dashboard");
+  const [lightboxState, setLightboxState] = useState<{
+    images: string[];
+    title: string;
+  } | null>(null);
   const [adminTab, setAdminTab] = useState<AdminTab>("overview");
   const [globalNotice, setGlobalNotice] = useState<{
     type: "success" | "error";
@@ -1773,7 +1790,7 @@ export default function SaasAppPage() {
         setLoginMode("credentials");
         setAuthFeedback(
           data.message ||
-            "Conta criada! Enviamos um link de confirmação para o seu e-mail."
+          "Conta criada! Enviamos um link de confirmação para o seu e-mail."
         );
         return;
       }
@@ -1812,7 +1829,7 @@ export default function SaasAppPage() {
       }
       setAuthFeedback(
         data.message ||
-          "Reenviamos o link de confirmação para o seu e-mail."
+        "Reenviamos o link de confirmação para o seu e-mail."
       );
     } catch {
       setLoginError("Erro de conexão ao reenviar confirmação.");
@@ -2111,8 +2128,8 @@ export default function SaasAppPage() {
       provider === "GEMINI"
         ? "Gemini"
         : provider === "OPENAI"
-        ? "OpenAI"
-        : "Anthropic Claude";
+          ? "OpenAI"
+          : "Anthropic Claude";
     if (
       typeof window !== "undefined" &&
       !window.confirm(
@@ -2129,10 +2146,10 @@ export default function SaasAppPage() {
           ? provider !== "OPENAI" && workspace.integrations.has_openai_key
             ? "OPENAI"
             : provider !== "GEMINI" && workspace.integrations.has_gemini_key
-            ? "GEMINI"
-            : provider === "GEMINI"
-            ? "OPENAI"
-            : "GEMINI"
+              ? "GEMINI"
+              : provider === "GEMINI"
+                ? "OPENAI"
+                : "GEMINI"
           : integTextAi;
 
       const integrationsPayload: Record<string, unknown> = {
@@ -2641,7 +2658,7 @@ export default function SaasAppPage() {
       : undefined;
     const savedStoryUrls =
       Array.isArray(post.story_image_urls_json) &&
-      post.story_image_urls_json.length > 0
+        post.story_image_urls_json.length > 0
         ? post.story_image_urls_json
         : Array.isArray(post.content_json?.story_image_urls)
           ? post.content_json.story_image_urls
@@ -2651,9 +2668,9 @@ export default function SaasAppPage() {
     const targets = savedTargets
       ? { ...savedTargets }
       : defaultPublishTargets(
-          matchedTopic || { aspect_ratio: post.aspect_ratio },
-          workspace?.integrations.tiktok_enabled
-        );
+        matchedTopic || { aspect_ratio: post.aspect_ratio },
+        workspace?.integrations.tiktok_enabled
+      );
     if (
       savedStoryUrls.length > 0 &&
       !targets.ig_stories &&
@@ -2994,18 +3011,18 @@ export default function SaasAppPage() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Erro ao enviar dica.");
+      if (!res.ok) throw new Error(data.error || "Erro ao enviar sugestão.");
       if (data.workspace) setWorkspace(data.workspace);
       if (data.adminSnapshot) setAdminSnapshot(data.adminSnapshot);
       setTipMessage("");
       setGlobalNotice({
         type: "success",
-        text: "Sua dica foi enviada para o painel administrativo! Obrigado por contribuir.",
+        text: "Sua sugestão foi enviada para o painel administrativo! Obrigado por contribuir.",
       });
     } catch (err) {
       setGlobalNotice({
         type: "error",
-        text: err instanceof Error ? err.message : "Erro ao enviar dica.",
+        text: err instanceof Error ? err.message : "Erro ao enviar sugestão.",
       });
     } finally {
       setSubmittingTip(false);
@@ -3054,20 +3071,20 @@ export default function SaasAppPage() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Erro ao atualizar dica.");
+      if (!res.ok) throw new Error(data.error || "Erro ao atualizar sugestão.");
       if (data.adminSnapshot) setAdminSnapshot(data.adminSnapshot);
       if (data.workspace) setWorkspace(data.workspace);
       setGlobalNotice({
         type: "success",
         text:
           nextStatus === "COMPLETED"
-            ? "Dica marcada como concluída! O cliente receberá a notificação."
-            : "Dica reaberta como pendente.",
+            ? "Sugestão marcada como concluída! O cliente receberá a notificação."
+            : "Sugestão reaberta como pendente.",
       });
     } catch (err) {
       setGlobalNotice({
         type: "error",
-        text: err instanceof Error ? err.message : "Erro ao atualizar dica.",
+        text: err instanceof Error ? err.message : "Erro ao atualizar sugestão.",
       });
     } finally {
       setUpdatingTipId(null);
@@ -3135,9 +3152,9 @@ export default function SaasAppPage() {
                   setLoginError(null);
                   setAuthFeedback(null);
                 }}
-                className={`rounded-lg py-2 text-xs font-bold transition ${authScreen === key
-                    ? "bg-white text-indigo-700 shadow-sm"
-                    : "text-slate-600 hover:text-slate-900"
+                className={`rounded-lg px-1.5 py-2 text-[11px] font-bold leading-tight transition sm:px-2 sm:text-xs ${authScreen === key
+                  ? "bg-white text-indigo-700 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
                   }`}
               >
                 {label}
@@ -3184,8 +3201,8 @@ export default function SaasAppPage() {
                   type="button"
                   onClick={() => setLoginMode("credentials")}
                   className={`rounded-lg py-1.5 text-[11px] font-bold transition ${loginMode === "credentials"
-                      ? "bg-white text-indigo-700 shadow-xs"
-                      : "text-slate-600"
+                    ? "bg-white text-indigo-700 shadow-xs"
+                    : "text-slate-600"
                     }`}
                 >
                   E-mail e Senha
@@ -3194,8 +3211,8 @@ export default function SaasAppPage() {
                   type="button"
                   onClick={() => setLoginMode("cron")}
                   className={`rounded-lg py-1.5 text-[11px] font-bold transition ${loginMode === "cron"
-                      ? "bg-white text-indigo-700 shadow-xs"
-                      : "text-slate-600"
+                    ? "bg-white text-indigo-700 shadow-xs"
+                    : "text-slate-600"
                     }`}
                 >
                   Token CRON_SECRET
@@ -3360,8 +3377,8 @@ export default function SaasAppPage() {
                   type="button"
                   onClick={() => setRecoveryMethod("email")}
                   className={`rounded-lg py-1.5 text-[11px] font-bold transition ${recoveryMethod === "email"
-                      ? "bg-white text-indigo-700 shadow-xs"
-                      : "text-slate-600"
+                    ? "bg-white text-indigo-700 shadow-xs"
+                    : "text-slate-600"
                     }`}
                 >
                   Enviar Link p/ E-mail
@@ -3370,8 +3387,8 @@ export default function SaasAppPage() {
                   type="button"
                   onClick={() => setRecoveryMethod("reset")}
                   className={`rounded-lg py-1.5 text-[11px] font-bold transition ${recoveryMethod === "reset"
-                      ? "bg-white text-indigo-700 shadow-xs"
-                      : "text-slate-600"
+                    ? "bg-white text-indigo-700 shadow-xs"
+                    : "text-slate-600"
                     }`}
                 >
                   Definir Nova Senha
@@ -3516,14 +3533,14 @@ export default function SaasAppPage() {
               className="h-10 w-10 rounded-xl border border-slate-200 bg-white object-cover shadow-sm"
             />
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-extrabold text-slate-900">
                   Social PilotFlow SaaS
                 </span>
                 <span
                   className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${databaseMode === "supabase"
-                      ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                      : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
+                    ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                    : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
                     }`}
                 >
                   {databaseMode === "supabase"
@@ -3541,13 +3558,13 @@ export default function SaasAppPage() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:gap-2.5">
             {user.role === "SUPER_ADMIN" && adminSnapshot && (
               <>
                 <select
                   value={workspace.company.id}
                   onChange={(e) => handleSwitchCompany(e.target.value)}
-                  className="max-w-full truncate rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500 sm:max-w-xs"
+                  className="w-full max-w-full truncate rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500 sm:w-auto sm:max-w-xs"
                   title="Trocar empresa ativa (Impersonate)"
                 >
                   {adminSnapshot.companies.map((c) => (
@@ -3562,8 +3579,8 @@ export default function SaasAppPage() {
                     type="button"
                     onClick={() => setViewScope("client")}
                     className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${viewScope === "client"
-                        ? "bg-white text-indigo-700 shadow-sm"
-                        : "text-slate-600"
+                      ? "bg-white text-indigo-700 shadow-sm"
+                      : "text-slate-600"
                       }`}
                   >
                     Painel da Empresa
@@ -3572,8 +3589,8 @@ export default function SaasAppPage() {
                     type="button"
                     onClick={() => setViewScope("admin")}
                     className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${viewScope === "admin"
-                        ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-sm"
-                        : "text-slate-600"
+                      ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-sm"
+                      : "text-slate-600"
                       }`}
                   >
                     Super Admin
@@ -3609,8 +3626,8 @@ export default function SaasAppPage() {
         {globalNotice && (
           <div
             className={`flex items-center justify-between rounded-2xl border px-4 py-3 text-sm font-semibold shadow-sm ${globalNotice.type === "success"
-                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                : "border-rose-200 bg-rose-50 text-rose-800"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : "border-rose-200 bg-rose-50 text-rose-800"
               }`}
           >
             <span>{globalNotice.text}</span>
@@ -3627,13 +3644,13 @@ export default function SaasAppPage() {
         {/* ==================== VISÃO SUPER ADMIN ==================== */}
         {viewScope === "admin" && user.role === "SUPER_ADMIN" && adminSnapshot && (
           <div className="space-y-6">
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-nowrap gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
               {(
                 [
                   ["overview", "Dashboard Executivo SaaS"],
                   ["companies", "Empresas Clientes"],
                   ["plans", "Planos & Limites"],
-                  ["tips", "Dicas & Melhorias"],
+                  ["tips", "Sugestões & Melhorias"],
                   ["audit", "Auditoria & Logs Globais"],
                 ] as Array<[AdminTab, string]>
               ).map(([tabKey, label]) => (
@@ -3641,9 +3658,9 @@ export default function SaasAppPage() {
                   key={tabKey}
                   type="button"
                   onClick={() => setAdminTab(tabKey)}
-                  className={`rounded-xl px-4 py-2.5 text-xs font-bold transition ${adminTab === tabKey
-                      ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md shadow-indigo-500/20"
-                      : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  className={`shrink-0 whitespace-nowrap rounded-xl px-3.5 py-2 text-xs font-bold transition sm:px-4 sm:py-2.5 ${adminTab === tabKey
+                    ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md shadow-indigo-500/20"
+                    : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                     }`}
                 >
                   {label}
@@ -3708,50 +3725,52 @@ export default function SaasAppPage() {
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-6">
                   <h2 className="text-base font-extrabold text-slate-900">
                     Saúde Rápida das Empresas
                   </h2>
                   <div className="mt-4 overflow-x-auto">
-                    <table className="w-full text-left text-xs">
+                    <table className="w-full min-w-[640px] text-left text-xs">
                       <thead>
                         <tr className="border-b border-slate-200 text-slate-500">
-                          <th className="pb-2">Empresa</th>
-                          <th className="pb-2">Plano</th>
-                          <th className="pb-2">Uso Mês</th>
-                          <th className="pb-2">Vencimento</th>
-                          <th className="pb-2">Status</th>
-                          <th className="pb-2 text-right">Acesso</th>
+                          <th className="px-2 pb-2 first:pl-0">Empresa</th>
+                          <th className="px-2 pb-2">Plano</th>
+                          <th className="px-2 pb-2 whitespace-nowrap">Uso Mês</th>
+                          <th className="px-2 pb-2 whitespace-nowrap">Vencimento</th>
+                          <th className="px-2 pb-2">Status</th>
+                          <th className="px-2 pb-2 pr-0 text-right">Acesso</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {adminSnapshot.companies.map((c) => (
                           <tr key={c.id}>
-                            <td className="py-3 font-bold text-slate-900">
+                            <td className="py-3 pr-2 font-bold text-slate-900">
                               {c.name}
                             </td>
-                            <td className="py-3">{c.plan_name}</td>
-                            <td className="py-3">
+                            <td className="px-2 py-3 whitespace-nowrap">
+                              {c.plan_name}
+                            </td>
+                            <td className="px-2 py-3 whitespace-nowrap">
                               {c.posts_used_month}/{c.plan_limit}
                             </td>
-                            <td className="py-3">
+                            <td className="px-2 py-3 whitespace-nowrap">
                               {new Date(c.expires_at).toLocaleDateString(
                                 "pt-BR"
                               )}
                             </td>
-                            <td className="py-3">
+                            <td className="px-2 py-3 whitespace-nowrap">
                               <span
                                 className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${c.status === "ACTIVE"
-                                    ? "bg-emerald-50 text-emerald-700"
-                                    : c.status === "TRIAL"
-                                      ? "bg-cyan-50 text-cyan-700"
-                                      : "bg-rose-50 text-rose-700"
+                                  ? "bg-emerald-50 text-emerald-700"
+                                  : c.status === "TRIAL"
+                                    ? "bg-cyan-50 text-cyan-700"
+                                    : "bg-rose-50 text-rose-700"
                                   }`}
                               >
                                 {c.status}
                               </span>
                             </td>
-                            <td className="py-3 text-right">
+                            <td className="py-3 pl-2 text-right whitespace-nowrap">
                               <button
                                 type="button"
                                 onClick={() => handleSwitchCompany(c.id)}
@@ -3883,10 +3902,10 @@ export default function SaasAppPage() {
                             </span>
                             <span
                               className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${c.status === "ACTIVE"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : c.status === "TRIAL"
-                                    ? "bg-cyan-100 text-cyan-800"
-                                    : "bg-rose-100 text-rose-800"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : c.status === "TRIAL"
+                                  ? "bg-cyan-100 text-cyan-800"
+                                  : "bg-rose-100 text-rose-800"
                                 }`}
                             >
                               {c.status}
@@ -3995,12 +4014,12 @@ export default function SaasAppPage() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h2 className="text-base font-extrabold text-slate-900">
-                      Dicas e Melhorias dos Clientes ({(adminSnapshot.tips || []).length})
+                      Sugestões e Melhorias dos Clientes ({(adminSnapshot.tips || []).length})
                     </h2>
                     <p className="text-xs text-slate-500">
                       Ordenadas por data de envio (mais recentes primeiro). Ao marcar
                       como concluído, o cliente recebe automaticamente o aviso de que
-                      a dica foi atendida.
+                      a sugestão foi atendida.
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
@@ -4016,8 +4035,8 @@ export default function SaasAppPage() {
                         type="button"
                         onClick={() => setAdminTipFilter(filterKey)}
                         className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${adminTipFilter === filterKey
-                            ? "bg-indigo-600 text-white"
-                            : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                          ? "bg-indigo-600 text-white"
+                          : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
                           }`}
                       >
                         {filterLabel}
@@ -4040,7 +4059,7 @@ export default function SaasAppPage() {
                   if (sortedTips.length === 0) {
                     return (
                       <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-xs text-slate-500">
-                        Nenhuma dica encontrada neste filtro.
+                        Nenhuma sugestão encontrada neste filtro.
                       </div>
                     );
                   }
@@ -4051,16 +4070,16 @@ export default function SaasAppPage() {
                         <div
                           key={tip.id}
                           className={`rounded-2xl border p-4 text-xs transition ${tip.status === "COMPLETED"
-                              ? "border-emerald-200 bg-emerald-50/40"
-                              : "border-slate-200 bg-slate-50/70"
+                            ? "border-emerald-200 bg-emerald-50/40"
+                            : "border-slate-200 bg-slate-50/70"
                             }`}
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="flex flex-wrap items-center gap-2">
                               <span
                                 className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${tip.status === "COMPLETED"
-                                    ? "bg-emerald-100 text-emerald-800"
-                                    : "bg-amber-100 text-amber-800"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-amber-100 text-amber-800"
                                   }`}
                               >
                                 {tip.status === "COMPLETED"
@@ -4124,7 +4143,7 @@ export default function SaasAppPage() {
                                     [tip.id]: e.target.value,
                                   }))
                                 }
-                                placeholder="Mensagem opcional ao cliente (se vazio, envia: Sua dica foi atendida!)"
+                                placeholder="Mensagem opcional ao cliente (se vazio, envia: Sua sugestão foi atendida!)"
                                 className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-500"
                               />
                               <button
@@ -4186,7 +4205,7 @@ export default function SaasAppPage() {
         {viewScope === "client" && (
           <div className="space-y-6">
             {/* Abas Cliente */}
-            <nav className="flex flex-wrap gap-2">
+            <nav className="flex flex-nowrap gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
               {(
                 [
                   ["dashboard", "Dashboard da Empresa"],
@@ -4196,16 +4215,16 @@ export default function SaasAppPage() {
                   ["integrations", "Integrações (Multi-IA & Redes)"],
                   ["history", "Histórico de Posts"],
                   ["campaigns", "Campanhas"],
-                  ["support", "Suporte & Dicas"],
+                  ["support", "Suporte"],
                 ] as Array<[ClientTab, string]>
               ).map(([tabKey, label]) => (
                 <button
                   key={tabKey}
                   type="button"
                   onClick={() => setClientTab(tabKey)}
-                  className={`rounded-xl px-4 py-2.5 text-xs font-bold transition ${clientTab === tabKey
-                      ? "bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-500 text-white shadow-md shadow-indigo-500/20"
-                      : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  className={`shrink-0 whitespace-nowrap rounded-xl px-3.5 py-2 text-xs font-bold transition sm:px-4 sm:py-2.5 ${clientTab === tabKey
+                    ? "bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-500 text-white shadow-md shadow-indigo-500/20"
+                    : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                     }`}
                 >
                   {label}
@@ -4230,7 +4249,7 @@ export default function SaasAppPage() {
                   <div className="space-y-2 rounded-2xl border border-emerald-300 bg-emerald-50 p-4 text-xs text-emerald-950 shadow-xs">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-sm font-extrabold text-emerald-900">
-                        Boa notícia! Sua dica de melhoria foi atendida
+                        Boa notícia! Sua sugestão de melhoria foi atendida
                       </p>
                       <div className="flex items-center gap-2">
                         <button
@@ -4238,7 +4257,7 @@ export default function SaasAppPage() {
                           onClick={() => setClientTab("support")}
                           className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100/60"
                         >
-                          Ver em Suporte &amp; Dicas
+                          Ver em Suporte
                         </button>
                         <button
                           type="button"
@@ -4369,11 +4388,11 @@ export default function SaasAppPage() {
                     {(() => {
                       const fbOk = Boolean(
                         workspace.integrations.has_meta_token &&
-                          workspace.integrations.fb_page_id
+                        workspace.integrations.fb_page_id
                       );
                       const igOk = Boolean(
                         workspace.integrations.has_meta_token &&
-                          workspace.integrations.ig_user_id
+                        workspace.integrations.ig_user_id
                       );
                       const tiktokOk = Boolean(
                         workspace.integrations.has_tiktok_token
@@ -4381,7 +4400,7 @@ export default function SaasAppPage() {
                       const r2Ok = Boolean(
                         (workspace.integrations.has_r2_access_key &&
                           workspace.integrations.r2_bucket_name) ||
-                          workspace.integrations.using_global_r2_fallback
+                        workspace.integrations.using_global_r2_fallback
                       );
                       return (
                         <>
@@ -4589,7 +4608,7 @@ export default function SaasAppPage() {
                     </button>
                   </div>
 
-                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-7">
+                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-7">
                     {WEEKDAY_LABELS.map((day) => {
                       const daySlots = workspace.topics
                         .filter(
@@ -4664,9 +4683,9 @@ export default function SaasAppPage() {
                       .toLowerCase();
                     const hasActiveTopicFilters = Boolean(
                       searchTerm ||
-                        topicsStatusFilter !== "ACTIVE" ||
-                        topicsFormatFilter !== "ALL" ||
-                        topicsDayFilter.length > 0
+                      topicsStatusFilter !== "ACTIVE" ||
+                      topicsFormatFilter !== "ALL" ||
+                      topicsDayFilter.length > 0
                     );
 
                     const filteredTopics = workspace.topics.filter((t) => {
@@ -4717,7 +4736,7 @@ export default function SaasAppPage() {
 
                     return (
                       <>
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
                           <h2 className="text-base font-extrabold text-slate-900">
                             Assuntos &amp; Produtos ({workspace.topics.length})
                           </h2>
@@ -4782,18 +4801,17 @@ export default function SaasAppPage() {
                             <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                               Dia da semana
                             </p>
-                            <div className="flex flex-wrap gap-1">
+                            <div className="grid grid-cols-4 gap-1 sm:flex sm:flex-wrap">
                               <button
                                 type="button"
                                 onClick={() => {
                                   setTopicsDayFilter([]);
                                   setTopicsVisibleCount(10);
                                 }}
-                                className={`rounded-lg px-2 py-1 text-[11px] font-bold transition ${
-                                  topicsDayFilter.length === 0
+                                className={`rounded-lg px-2 py-1.5 text-center text-[11px] font-bold transition sm:py-1 ${topicsDayFilter.length === 0
                                     ? "bg-indigo-600 text-white"
                                     : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-                                }`}
+                                  }`}
                               >
                                 Todos
                               </button>
@@ -4813,11 +4831,10 @@ export default function SaasAppPage() {
                                       );
                                       setTopicsVisibleCount(10);
                                     }}
-                                    className={`rounded-lg px-2 py-1 text-[11px] font-bold transition ${
-                                      selected
+                                    className={`rounded-lg px-2 py-1.5 text-center text-[11px] font-bold transition sm:py-1 ${selected
                                         ? "bg-indigo-600 text-white"
                                         : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-                                    }`}
+                                      }`}
                                   >
                                     {d.short}
                                   </button>
@@ -4863,11 +4880,10 @@ export default function SaasAppPage() {
                             return (
                               <div
                                 key={t.id}
-                                className={`rounded-2xl border p-4 transition ${
-                                  editingTopicId === t.id
+                                className={`rounded-2xl border p-4 transition ${editingTopicId === t.id
                                     ? "border-indigo-500 bg-indigo-50/40 shadow-sm"
                                     : "border-slate-200 bg-white"
-                                }`}
+                                  }`}
                               >
                                 <div className="flex flex-wrap items-start justify-between gap-2">
                                   <div className="min-w-0 flex-1">
@@ -4876,11 +4892,10 @@ export default function SaasAppPage() {
                                         {t.title}
                                       </h3>
                                       <span
-                                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                          t.is_active
+                                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${t.is_active
                                             ? "bg-emerald-100 text-emerald-700"
                                             : "bg-slate-200 text-slate-600"
-                                        }`}
+                                          }`}
                                       >
                                         {t.is_active ? "Ativo" : "Pausado"}
                                       </span>
@@ -4998,30 +5013,30 @@ export default function SaasAppPage() {
 
                         {(remainingTopicsCount > 0 ||
                           topicsVisibleCount > 10) && (
-                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                            {remainingTopicsCount > 0 && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setTopicsVisibleCount((prev) => prev + 10)
-                                }
-                                className="flex-1 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm hover:opacity-95"
-                              >
-                                + Carregar mais 10 assuntos (restam{" "}
-                                {remainingTopicsCount})
-                              </button>
-                            )}
-                            {topicsVisibleCount > 10 && (
-                              <button
-                                type="button"
-                                onClick={() => setTopicsVisibleCount(10)}
-                                className="rounded-xl border border-slate-200 bg-slate-100 px-3.5 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-200"
-                              >
-                                Mostrar apenas 10
-                              </button>
-                            )}
-                          </div>
-                        )}
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                              {remainingTopicsCount > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setTopicsVisibleCount((prev) => prev + 10)
+                                  }
+                                  className="flex-1 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm hover:opacity-95"
+                                >
+                                  + Carregar mais 10 assuntos (restam{" "}
+                                  {remainingTopicsCount})
+                                </button>
+                              )}
+                              {topicsVisibleCount > 10 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setTopicsVisibleCount(10)}
+                                  className="rounded-xl border border-slate-200 bg-slate-100 px-3.5 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-200"
+                                >
+                                  Mostrar apenas 10
+                                </button>
+                              )}
+                            </div>
+                          )}
                       </>
                     );
                   })()}
@@ -5030,7 +5045,7 @@ export default function SaasAppPage() {
                 {/* Editor de Assunto */}
                 <form
                   onSubmit={handleSaveTopic}
-                  className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-7"
+                  className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-6 lg:col-span-7"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="text-base font-extrabold text-slate-900">
@@ -5041,7 +5056,7 @@ export default function SaasAppPage() {
                     <select
                       value={topicTemplateId}
                       onChange={(e) => applyNicheTemplate(e.target.value)}
-                      className="max-w-full truncate rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-800 outline-none sm:w-auto"
+                      className="w-full max-w-full truncate rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-800 outline-none sm:w-auto sm:py-1.5"
                     >
                       <option value="custom">
                         Carregar Exemplo de Prompt...
@@ -5122,11 +5137,11 @@ export default function SaasAppPage() {
                   </div>
 
                   {/* Dias da Semana e Horário */}
-                  <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 sm:p-4">
                     <p className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
                       Dia e Horas Exclusivos Deste Assunto (Horário de Brasília)
                     </p>
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="grid grid-cols-7 gap-1 sm:flex sm:flex-wrap sm:gap-1.5">
                       {WEEKDAY_LABELS.map((d) => {
                         const checked = topicDays.includes(d.value);
                         return (
@@ -5140,9 +5155,9 @@ export default function SaasAppPage() {
                                   : [...prev, d.value].sort()
                               )
                             }
-                            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${checked
-                                ? "bg-indigo-600 text-white"
-                                : "border border-slate-200 bg-white text-slate-600"
+                            className={`rounded-lg px-1 py-1.5 text-center text-[11px] font-bold transition sm:px-3 sm:text-xs ${checked
+                              ? "bg-indigo-600 text-white"
+                              : "border border-slate-200 bg-white text-slate-600"
                               }`}
                           >
                             {d.short}
@@ -5150,32 +5165,34 @@ export default function SaasAppPage() {
                         );
                       })}
                     </div>
-                    <div className="flex flex-wrap items-center gap-1.5 border-t border-slate-200/80 pt-2.5">
-                      <span className="text-[11px] font-bold text-slate-600">
-                        Horários por dia:
-                      </span>
-                      {topicTimes.map((time) => (
-                        <span
-                          key={time}
-                          className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-bold text-indigo-800"
-                        >
-                          {time}
-                          {topicTimes.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setTopicTimes((prev) =>
-                                  prev.filter((t) => t !== time)
-                                )
-                              }
-                              title="Remover horário"
-                              className="ml-0.5 text-indigo-500 hover:text-rose-600"
-                            >
-                              ×
-                            </button>
-                          )}
+                    <div className="flex flex-col gap-2.5 border-t border-slate-200/80 pt-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] font-bold text-slate-600">
+                          Horários por dia:
                         </span>
-                      ))}
+                        {topicTimes.map((time) => (
+                          <span
+                            key={time}
+                            className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-bold text-indigo-800"
+                          >
+                            {time}
+                            {topicTimes.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setTopicTimes((prev) =>
+                                    prev.filter((t) => t !== time)
+                                  )
+                                }
+                                title="Remover horário"
+                                className="ml-0.5 text-indigo-500 hover:text-rose-600"
+                              >
+                                ×
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
                       <select
                         value=""
                         onChange={(e) => {
@@ -5185,7 +5202,7 @@ export default function SaasAppPage() {
                             Array.from(new Set([...prev, val])).sort()
                           );
                         }}
-                        className="ml-auto rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-800"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-800 sm:w-auto sm:py-1.5"
                       >
                         <option value="">+ Adicionar horário</option>
                         {SCHEDULE_TIME_SLOTS.filter(
@@ -5277,7 +5294,7 @@ export default function SaasAppPage() {
                   />
 
                   {/* Estilo Visual da Arte */}
-                  <div className="rounded-xl border border-cyan-200 bg-cyan-50/50 p-4 space-y-2">
+                  <div className="space-y-2 rounded-xl border border-cyan-200 bg-cyan-50/50 p-3.5 sm:p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <label className="text-xs font-extrabold uppercase tracking-wider text-cyan-900">
                         Estilo Visual Padrão Deste Assunto
@@ -5324,7 +5341,7 @@ export default function SaasAppPage() {
                     <button
                       type="submit"
                       disabled={savingTopic}
-                      className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-6 py-3 text-xs font-bold text-white shadow-md"
+                      className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-6 py-3 text-center text-xs font-bold text-white shadow-md sm:w-auto"
                     >
                       {savingTopic ? "Salvando..." : "Salvar Assunto"}
                     </button>
@@ -5336,7 +5353,7 @@ export default function SaasAppPage() {
             {/* ---------- ABA 3: ESTÚDIO MANUAL & PREVIEW EDITÁVEL ---------- */}
             {clientTab === "studio" && (
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-                <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-5">
+                <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-6 lg:col-span-5">
                   <h2 className="text-base font-extrabold text-slate-900">
                     Estúdio de Criação Manual
                   </h2>
@@ -5348,7 +5365,7 @@ export default function SaasAppPage() {
                     <select
                       value={studioTopicId}
                       onChange={(e) => handleSelectStudioTopic(e.target.value)}
-                      className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-semibold outline-none focus:border-indigo-500"
+                      className="mt-1 w-full max-w-full truncate rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-semibold outline-none focus:border-indigo-500"
                     >
                       <option value="__free__">
                         Prompt Livre Avulso (Escrever agora)
@@ -5408,14 +5425,14 @@ export default function SaasAppPage() {
                       value={studioPrice}
                       onChange={(e) => setStudioPrice(e.target.value)}
                       placeholder="Preço (ex: 12x R$149,90)"
-                      className="rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-500"
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-500"
                     />
                     <select
                       value={studioFormat}
                       onChange={(e) =>
                         setStudioFormat(e.target.value as PostFormat)
                       }
-                      className="rounded-xl border border-slate-200 px-2.5 py-2 text-xs font-bold"
+                      className="w-full rounded-xl border border-slate-200 px-2.5 py-2 text-xs font-bold"
                     >
                       <option value="SINGLE">Imagem Única</option>
                       <option value="CAROUSEL">Carrossel</option>
@@ -5430,7 +5447,7 @@ export default function SaasAppPage() {
                           setStudioSlides(Number(e.target.value))
                         }
                         title="Quantidade de slides (2 a 8)"
-                        className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold"
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold"
                       />
                     )}
                   </div>
@@ -5613,7 +5630,7 @@ export default function SaasAppPage() {
                 {/* Preview Editável + Logs */}
                 <div
                   id="studio-preview-section"
-                  className="scroll-mt-24 space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm lg:col-span-7"
+                  className="scroll-mt-24 space-y-4 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-6 lg:col-span-7"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="text-base font-extrabold text-slate-900">
@@ -5627,7 +5644,7 @@ export default function SaasAppPage() {
                   </div>
 
                   {!studioPreview ? (
-                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 p-10 text-center text-xs text-slate-500">
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 p-6 text-center text-xs text-slate-500 sm:p-10">
                       Clique em <strong>&quot;Gerar Nova Prévia (IA)&quot;</strong>{" "}
                       para visualizar as artes geradas no Cloudflare R2, ou abra
                       um <strong>Rascunho Pendente</strong> no Dashboard para
@@ -5748,7 +5765,7 @@ export default function SaasAppPage() {
                                           alt={`Arte Feed ${idx + 1}`}
                                           className="aspect-square w-full object-cover"
                                         />
-                                        <span className="absolute bottom-2 right-2 rounded-lg bg-slate-900/80 px-2 py-1 text-[10px] font-bold text-white opacity-90 group-hover:opacity-100">
+                                        <span className="absolute bottom-2 right-2 rounded-lg bg-slate-900/80 px-1.5 py-0.5 text-[9px] font-bold text-white opacity-90 group-hover:opacity-100 sm:px-2 sm:py-1 sm:text-[10px]">
                                           Slide {idx + 1} (1080×1080) • HD ↗
                                         </span>
                                       </a>
@@ -5816,7 +5833,7 @@ export default function SaasAppPage() {
                                     </span>
                                   </div>
                                 </div>
-                                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3">
                                   {verticalUrls.map((url, idx) => (
                                     <div
                                       key={`vert-${url}-${idx}`}
@@ -5835,7 +5852,7 @@ export default function SaasAppPage() {
                                           alt={`Arte Vertical ${idx + 1}`}
                                           className="aspect-[9/16] w-full object-cover"
                                         />
-                                        <span className="absolute bottom-2 right-2 rounded-lg bg-indigo-950/85 px-2 py-1 text-[10px] font-bold text-white opacity-90 group-hover:opacity-100">
+                                        <span className="absolute bottom-1.5 right-1.5 rounded-lg bg-indigo-950/85 px-1.5 py-0.5 text-[9px] font-bold text-white opacity-90 group-hover:opacity-100 sm:bottom-2 sm:right-2 sm:px-2 sm:py-1 sm:text-[10px]">
                                           Slide {idx + 1} (1080×1920) ↗
                                         </span>
                                       </a>
@@ -5933,7 +5950,7 @@ export default function SaasAppPage() {
                           </div>
                         )}
 
-                      <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                      <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 sm:p-4">
                         <p className="text-xs font-extrabold text-indigo-700">
                           Editar Textos Gerados ({studioPreview.providerUsed})
                         </p>
@@ -6209,12 +6226,12 @@ export default function SaasAppPage() {
                           />
                         </div>
 
-                        <div className="flex flex-wrap gap-2 pt-1">
+                        <div className="grid grid-cols-1 gap-2 pt-1 sm:flex sm:flex-wrap sm:items-center">
                           <button
                             type="button"
                             disabled={studioAction !== "idle" || Boolean(approvingPostId)}
                             onClick={handleSaveDraftTextOnly}
-                            className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
+                            className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-center text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
                           >
                             {studioAction === "saving_draft"
                               ? "Salvando Rascunho..."
@@ -6225,7 +6242,7 @@ export default function SaasAppPage() {
                             type="button"
                             disabled={studioAction !== "idle" || Boolean(approvingPostId)}
                             onClick={handleCancelStudioEdit}
-                            className="rounded-xl border border-slate-200 bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200 disabled:opacity-60"
+                            className="rounded-xl border border-slate-200 bg-slate-100 px-4 py-2 text-center text-xs font-bold text-slate-700 hover:bg-slate-200 disabled:opacity-60"
                           >
                             Cancelar e Voltar
                           </button>
@@ -6240,7 +6257,7 @@ export default function SaasAppPage() {
                               onClick={() =>
                                 handleDeleteDraft(studioPreview.draftPostId!)
                               }
-                              className="ml-auto rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100"
+                              className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-center text-xs font-bold text-rose-700 hover:bg-rose-100 sm:ml-auto"
                             >
                               Excluir Rascunho
                             </button>
@@ -6294,8 +6311,8 @@ export default function SaasAppPage() {
                           })
                         }
                         className={`rounded-xl border p-3 text-left transition ${brandForm.theme_preset === preset.id
-                            ? "border-indigo-500 bg-indigo-50/50"
-                            : "border-slate-200 bg-white hover:bg-slate-50"
+                          ? "border-indigo-500 bg-indigo-50/50"
+                          : "border-slate-200 bg-white hover:bg-slate-50"
                           }`}
                       >
                         <div className="flex items-center justify-between">
@@ -6323,7 +6340,7 @@ export default function SaasAppPage() {
                     ))}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
                     {(
                       [
                         ["primary_color", "Primária"],
@@ -6362,8 +6379,8 @@ export default function SaasAppPage() {
                         </span>
                         <span
                           className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${brandForm.logo_url || brandForm.logo_dark_url
-                              ? "bg-emerald-100 text-emerald-800"
-                              : "bg-slate-200 text-slate-600"
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-slate-200 text-slate-600"
                             }`}
                         >
                           {brandForm.logo_url && brandForm.logo_dark_url
@@ -6782,13 +6799,12 @@ export default function SaasAppPage() {
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2">
                                   <span
-                                    className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-                                      row.status === "ok"
+                                    className={`h-2.5 w-2.5 shrink-0 rounded-full ${row.status === "ok"
                                         ? "bg-emerald-500"
                                         : row.status === "error"
-                                        ? "bg-rose-500"
-                                        : "bg-slate-400"
-                                    }`}
+                                          ? "bg-rose-500"
+                                          : "bg-slate-400"
+                                      }`}
                                   />
                                   <p className="text-xs font-bold text-slate-900">
                                     {row.label}
@@ -6799,19 +6815,18 @@ export default function SaasAppPage() {
                                 </p>
                               </div>
                               <span
-                                className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-extrabold ${
-                                  row.status === "ok"
+                                className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-extrabold ${row.status === "ok"
                                     ? "border border-emerald-200 bg-emerald-100 text-emerald-800"
                                     : row.status === "error"
-                                    ? "border border-rose-200 bg-rose-100 text-rose-800"
-                                    : "border border-slate-300/70 bg-slate-200/80 text-slate-600"
-                                }`}
+                                      ? "border border-rose-200 bg-rose-100 text-rose-800"
+                                      : "border border-slate-300/70 bg-slate-200/80 text-slate-600"
+                                  }`}
                               >
                                 {row.status === "ok"
                                   ? "OK"
                                   : row.status === "error"
-                                  ? "Erro"
-                                  : "Não configurada"}
+                                    ? "Erro"
+                                    : "Não configurada"}
                               </span>
                             </div>
                           ))}
@@ -7114,9 +7129,9 @@ export default function SaasAppPage() {
                       </p>
                       <span
                         className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${workspace.integrations.has_r2_access_key &&
-                            workspace.integrations.r2_bucket_name
-                            ? "bg-emerald-100 text-emerald-800"
-                            : "bg-slate-200 text-slate-700"
+                          workspace.integrations.r2_bucket_name
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-slate-200 text-slate-700"
                           }`}
                       >
                         {workspace.integrations.has_r2_access_key &&
@@ -7197,8 +7212,8 @@ export default function SaasAppPage() {
                         </span>
                         <span
                           className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${workspace.integrations.has_tiktok_token
-                              ? "bg-emerald-100 text-emerald-800"
-                              : "bg-slate-200 text-slate-600"
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-slate-200 text-slate-600"
                             }`}
                         >
                           {workspace.integrations.has_tiktok_token
@@ -7552,12 +7567,12 @@ export default function SaasAppPage() {
                 const sortedFilteredPosts =
                   historySortBy === "ENGAGEMENT"
                     ? [...filteredPosts].sort((a, b) => {
-                        const diff =
-                          (b.organic_metrics?.engagement_score ?? -1) -
-                          (a.organic_metrics?.engagement_score ?? -1);
-                        if (diff !== 0) return diff;
-                        return b.created_at.localeCompare(a.created_at);
-                      })
+                      const diff =
+                        (b.organic_metrics?.engagement_score ?? -1) -
+                        (a.organic_metrics?.engagement_score ?? -1);
+                      if (diff !== 0) return diff;
+                      return b.created_at.localeCompare(a.created_at);
+                    })
                     : filteredPosts;
 
                 const topHistoryScore = filteredPosts.reduce(
@@ -7594,22 +7609,20 @@ export default function SaasAppPage() {
                           <button
                             type="button"
                             onClick={() => setHistorySortBy("RECENT")}
-                            className={`rounded-lg px-2.5 py-1 font-bold ${
-                              historySortBy === "RECENT"
+                            className={`rounded-lg px-2.5 py-1 font-bold ${historySortBy === "RECENT"
                                 ? "bg-slate-900 text-white"
                                 : "text-slate-600 hover:bg-white"
-                            }`}
+                              }`}
                           >
                             Mais Recentes
                           </button>
                           <button
                             type="button"
                             onClick={() => setHistorySortBy("ENGAGEMENT")}
-                            className={`rounded-lg px-2.5 py-1 font-bold ${
-                              historySortBy === "ENGAGEMENT"
+                            className={`rounded-lg px-2.5 py-1 font-bold ${historySortBy === "ENGAGEMENT"
                                 ? "bg-amber-500 text-white"
                                 : "text-slate-600 hover:bg-white"
-                            }`}
+                              }`}
                           >
                             🔥 Melhor Engajamento
                           </button>
@@ -7743,9 +7756,14 @@ export default function SaasAppPage() {
                                   <div className="relative h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-slate-200">
                                     <button
                                       type="button"
-                                      onClick={() => handleOpenDraftInStudio(p)}
-                                      className="block h-full w-full"
-                                      title="Clique para visualizar e editar no Estúdio"
+                                      onClick={() =>
+                                        setLightboxState({
+                                          images: p.image_urls_json,
+                                          title: p.headline,
+                                        })
+                                      }
+                                      className="block h-full w-full cursor-zoom-in"
+                                      title="Clique para ampliar a imagem"
                                     >
                                       {/* eslint-disable-next-line @next/next/no-img-element */}
                                       <img
@@ -7792,10 +7810,10 @@ export default function SaasAppPage() {
                                   <div className="flex flex-wrap items-center justify-between gap-1.5">
                                     <span
                                       className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${p.status === "PENDING_APPROVAL"
-                                          ? "bg-amber-100 text-amber-800"
-                                          : p.status === "ERROR"
-                                            ? "bg-rose-100 text-rose-700"
-                                            : "bg-emerald-100 text-emerald-700"
+                                        ? "bg-amber-100 text-amber-800"
+                                        : p.status === "ERROR"
+                                          ? "bg-rose-100 text-rose-700"
+                                          : "bg-emerald-100 text-emerald-700"
                                         }`}
                                     >
                                       {p.status === "PENDING_APPROVAL"
@@ -7829,7 +7847,7 @@ export default function SaasAppPage() {
                                             topHistoryScore > 0 &&
                                             (p.organic_metrics
                                               ?.engagement_score || 0) ===
-                                              topHistoryScore
+                                            topHistoryScore
                                           }
                                         />
                                       </div>
@@ -7959,7 +7977,7 @@ export default function SaasAppPage() {
               />
             )}
 
-            {/* ---------- ABA 8: SUPORTE & CAIXA DE DICAS ---------- */}
+            {/* ---------- ABA 8: SUPORTE ---------- */}
             {clientTab === "support" && (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -8030,11 +8048,11 @@ export default function SaasAppPage() {
                   </div>
                 </div>
 
-                {/* Caixa de Dicas de Melhoria */}
+                {/* Caixa de Sugestões de Melhoria */}
                 <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
                   <div>
                     <h2 className="text-base font-extrabold text-slate-900">
-                      Dê sua dica para melhorar o projeto
+                      Dê sua sugestão para melhorar o projeto
                     </h2>
                     <p className="mt-1 text-xs leading-relaxed text-slate-600">
                       {TIP_ENCOURAGEMENT_TEXT}
@@ -8044,8 +8062,8 @@ export default function SaasAppPage() {
                   {unseenCompletedTips.length > 0 && (
                     <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-xs text-emerald-900">
                       <span className="font-bold">
-                        Você tem {unseenCompletedTips.length} dica(s) marcada(s)
-                        como atendida(s) abaixo!
+                        Você tem {unseenCompletedTips.length} sugestão(ões)
+                        marcada(s) como atendida(s) abaixo!
                       </span>
                       <button
                         type="button"
@@ -8065,12 +8083,12 @@ export default function SaasAppPage() {
                       maxLength={2000}
                       value={tipMessage}
                       onChange={(e) => setTipMessage(e.target.value)}
-                      placeholder="Descreva sua dica, ideia ou necessidade com o máximo de detalhes (onde você usaria, como gostaria que funcionasse e qual problema isso resolve no seu dia a dia)..."
+                      placeholder="Descreva sua sugestão, ideia ou necessidade com o máximo de detalhes (onde você usaria, como gostaria que funcionasse e qual problema isso resolve no seu dia a dia)..."
                       className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500"
                     />
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-[11px] text-slate-500">
-                        Sua dica vai direto para o painel administrativo do
+                        Sua sugestão vai direto para o painel administrativo do
                         PilotFlow em ordem de data.
                       </span>
                       <button
@@ -8078,18 +8096,19 @@ export default function SaasAppPage() {
                         disabled={submittingTip}
                         className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:opacity-95 disabled:opacity-60"
                       >
-                        {submittingTip ? "Enviando..." : "Enviar Dica"}
+                        {submittingTip ? "Enviando..." : "Enviar Sugestão"}
                       </button>
                     </div>
                   </form>
 
                   <div className="space-y-2 border-t border-slate-100 pt-4">
                     <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
-                      Minhas Dicas Enviadas ({(workspace.tips || []).length})
+                      Minhas Sugestões Enviadas ({(workspace.tips || []).length})
                     </h3>
                     {(workspace.tips || []).length === 0 ? (
                       <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-4 text-center text-xs text-slate-500">
-                        Você ainda não enviou nenhuma dica. Envie a primeira acima!
+                        Você ainda não enviou nenhuma sugestão. Envie a primeira
+                        acima!
                       </p>
                     ) : (
                       <div className="space-y-2">
@@ -8097,15 +8116,15 @@ export default function SaasAppPage() {
                           <div
                             key={tip.id}
                             className={`rounded-xl border p-4 text-xs ${tip.status === "COMPLETED"
-                                ? "border-emerald-200 bg-emerald-50/50"
-                                : "border-slate-200 bg-slate-50/60"
+                              ? "border-emerald-200 bg-emerald-50/50"
+                              : "border-slate-200 bg-slate-50/60"
                               }`}
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <span
                                 className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${tip.status === "COMPLETED"
-                                    ? "bg-emerald-100 text-emerald-800"
-                                    : "bg-amber-100 text-amber-800"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-amber-100 text-amber-800"
                                   }`}
                               >
                                 {tip.status === "COMPLETED"
@@ -8176,7 +8195,7 @@ export default function SaasAppPage() {
             href="/suporte"
             className="font-semibold text-indigo-600 hover:underline"
           >
-            Suporte &amp; Dicas
+            Suporte
           </Link>
           <Link
             href="/termos"
@@ -8192,6 +8211,14 @@ export default function SaasAppPage() {
           </Link>
         </div>
       </footer>
+
+      {lightboxState && (
+        <ImageLightboxModal
+          images={lightboxState.images}
+          title={lightboxState.title}
+          onClose={() => setLightboxState(null)}
+        />
+      )}
     </div>
   );
 }

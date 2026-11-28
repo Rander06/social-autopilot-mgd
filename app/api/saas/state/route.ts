@@ -1101,13 +1101,13 @@ export async function POST(request: NextRequest) {
       const message = String(body.message || "").trim();
       if (message.length < 5) {
         return NextResponse.json(
-          { error: "Descreva sua dica com pelo menos 5 caracteres." },
+          { error: "Descreva sua sugestão com pelo menos 5 caracteres." },
           { status: 400 }
         );
       }
       if (message.length > 2000) {
         return NextResponse.json(
-          { error: "A dica deve ter no máximo 2000 caracteres." },
+          { error: "A sugestão deve ter no máximo 2000 caracteres." },
           { status: 400 }
         );
       }
@@ -1139,7 +1139,7 @@ export async function POST(request: NextRequest) {
       const tipId = String(body.tipId || "").trim();
       if (!tipId) {
         return NextResponse.json(
-          { error: "ID da dica não informado." },
+          { error: "ID da sugestão não informado." },
           { status: 400 }
         );
       }
@@ -1154,7 +1154,7 @@ export async function POST(request: NextRequest) {
       });
       if (!tip) {
         return NextResponse.json(
-          { error: "Dica não encontrada." },
+          { error: "Sugestão não encontrada." },
           { status: 404 }
         );
       }

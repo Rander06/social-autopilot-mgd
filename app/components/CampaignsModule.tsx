@@ -19,6 +19,7 @@ import {
   PostOrganicMetrics,
 } from "@/lib/types";
 import { CampaignsReportCharts } from "./CampaignsReportCharts";
+import { ImageLightboxModal } from "./ImageLightboxModal";
 
 export function PostOrganicMetricsBar({
   metrics,
@@ -781,8 +782,8 @@ export function BoostCampaignModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
-      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-2.5 backdrop-blur-xs sm:p-4">
+      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl sm:p-6">
         <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-4">
           <div>
             <h3 className="text-base font-extrabold text-slate-900">
@@ -1699,8 +1700,8 @@ function AddCreativesModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
-      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-2.5 backdrop-blur-xs sm:p-4">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl sm:p-6">
         <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-4">
           <div>
             <h3 className="text-base font-extrabold text-slate-900">
@@ -2143,10 +2144,10 @@ function EditCampaignModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-2.5 backdrop-blur-xs sm:p-4">
       <form
         onSubmit={(e) => void handleSubmit(e)}
-        className="max-h-[92vh] w-full max-w-2xl space-y-4 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+        className="max-h-[92vh] w-full max-w-2xl space-y-4 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl sm:p-6"
       >
         <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
           <div>
@@ -2605,10 +2606,10 @@ function EditAdModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-2.5 backdrop-blur-xs sm:p-4">
       <form
         onSubmit={(e) => void handleSubmit(e)}
-        className="max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+        className="max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl sm:p-6"
       >
         <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
           <div>
@@ -2762,6 +2763,10 @@ export function CampaignsPanel({
     has_read_insights: boolean;
     missing_insights_scopes: string[];
   } | null>(null);
+  const [lightboxState, setLightboxState] = useState<{
+    images: string[];
+    title: string;
+  } | null>(null);
 
   // Formulário de Conta de Anúncios & Perfil decide() (fechado por padrão)
   const [accountFormMode, setAccountFormMode] = useState<
@@ -2893,14 +2898,37 @@ export function CampaignsPanel({
       if (!res.ok) throw new Error(data.error || "Erro ao buscar contas Meta.");
       const list = (data.remote_accounts || []) as RemoteMetaAdAccount[];
       const bms = (data.businesses || []) as RemoteMetaBusiness[];
+      const updatedSaved = Array.isArray(data.saved_accounts)
+        ? (data.saved_accounts as AdAccountConfig[])
+        : null;
       setRemoteBusinesses(bms);
       setRemoteAccounts(list);
       setPermissions((data.permissions || null) as AdsPermissionsState | null);
+      if (updatedSaved) {
+        setState((prev) =>
+          prev
+            ? {
+                ...prev,
+                ad_accounts: updatedSaved,
+                default_ad_account:
+                  updatedSaved.find((a) => a.is_default) ||
+                  updatedSaved[0] ||
+                  null,
+              }
+            : prev
+        );
+        onAccountsLoaded?.(updatedSaved);
+      }
+      const updatedBmCount = Number(data.updated_bm_count || 0);
       setNotice({
         type: "success",
         text:
           bms.length > 0
-            ? `${bms.length} BM(s) e ${list.length} conta(s) de anúncio encontrada(s) na Meta.`
+            ? `${bms.length} BM(s) e ${list.length} conta(s) encontrada(s) na Meta${
+                updatedBmCount > 0
+                  ? ` (${updatedBmCount} conta(s) conectada(s) associada(s) à BM automaticamente)`
+                  : ""
+              }.`
             : `${list.length} conta(s) de anúncio encontrada(s) na Meta.`,
       });
     } catch (err) {
@@ -3394,7 +3422,7 @@ export function CampaignsPanel({
   return (
     <div className="space-y-6">
       {/* Cabeçalho Campanhas */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-6">
         <div>
           <h2 className="text-lg font-extrabold text-slate-900">Campanhas</h2>
           <p className="mt-0.5 text-xs text-slate-500">
@@ -3431,7 +3459,7 @@ export function CampaignsPanel({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           <select
             value={selectedAIProvider}
             onChange={(e) =>
@@ -3439,7 +3467,7 @@ export function CampaignsPanel({
             }
             aria-label="Escolher IA para métricas e consultor"
             title="IA usada no Diagnóstico de Métricas e no Consultor de Verba & Copy"
-            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-800"
+            className="w-full max-w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-800 sm:w-auto"
           >
             <option value="AUTO">
               IA: Automático (Gemini → OpenAI → Claude)
@@ -3470,7 +3498,7 @@ export function CampaignsPanel({
             type="button"
             disabled={busyAction !== null}
             onClick={handleRefreshMetrics}
-            className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2.5 text-xs font-extrabold text-cyan-800 hover:bg-cyan-100 disabled:opacity-60"
+            className="w-full rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2.5 text-center text-xs font-extrabold text-cyan-800 hover:bg-cyan-100 disabled:opacity-60 sm:w-auto"
           >
             {busyAction === "refresh_metrics"
               ? "Sincronizando..."
@@ -3480,7 +3508,7 @@ export function CampaignsPanel({
             type="button"
             disabled={busyAction !== null}
             onClick={() => handleAnalyzeMetricsWithAI()}
-            className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-xs font-extrabold text-indigo-800 hover:bg-indigo-100 disabled:opacity-60"
+            className="w-full rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-center text-xs font-extrabold text-indigo-800 hover:bg-indigo-100 disabled:opacity-60 sm:w-auto"
           >
             {busyAction === "metrics-ai"
               ? "Analisando métricas..."
@@ -3490,7 +3518,7 @@ export function CampaignsPanel({
             type="button"
             disabled={busyAction !== null}
             onClick={handleLoadAdvisor}
-            className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm hover:opacity-95 disabled:opacity-60"
+            className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-center text-xs font-extrabold text-white shadow-sm hover:opacity-95 disabled:opacity-60 sm:w-auto"
           >
             {busyAction === "advisor"
               ? "Analisando..."
@@ -3570,7 +3598,7 @@ export function CampaignsPanel({
       {/* Conta de Anúncios & Metas decide() */}
       <form
         onSubmit={handleSaveAdAccount}
-        className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm"
+        className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-6"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -3903,11 +3931,24 @@ export function CampaignsPanel({
                     Contas encontradas na sua Meta agrupadas por BM (clique em
                     uma conta para abrir/editar ou importe a BM inteira):
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRemoteAccounts([]);
+                      setRemoteBusinesses([]);
+                    }}
+                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-700 hover:bg-slate-100"
+                  >
+                    Fechar
+                  </button>
                 </div>
                 <div className="space-y-2.5">
                   {remoteGroups.map((group) => {
                     const importBusy =
                       busyAction === `import-bm-${group.key}`;
+                    const notSavedCount = group.accounts.filter(
+                      (acc) => !savedIdsSet.has(acc.id.toLowerCase())
+                    ).length;
                     return (
                       <div
                         key={group.key}
@@ -3929,24 +3970,29 @@ export function CampaignsPanel({
                               • {group.accounts.length} conta(s)
                             </span>
                           </div>
-                          {group.key !== "__PERSONAL__" && (
-                            <button
-                              type="button"
-                              disabled={busyAction !== null}
-                              onClick={() =>
-                                handleImportBusinessAccounts(
-                                  group.key,
-                                  group.businessName,
-                                  group.accounts
-                                )
-                              }
-                              className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
-                            >
-                              {importBusy
-                                ? "Importando..."
-                                : `Importar todas desta BM (${group.accounts.length})`}
-                            </button>
-                          )}
+                          {group.key !== "__PERSONAL__" &&
+                            (notSavedCount === 0 ? (
+                              <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800">
+                                ✓ Todas conectadas
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={busyAction !== null}
+                                onClick={() =>
+                                  handleImportBusinessAccounts(
+                                    group.key,
+                                    group.businessName,
+                                    group.accounts
+                                  )
+                                }
+                                className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
+                              >
+                                {importBusy
+                                  ? "Importando..."
+                                  : `Importar todas desta BM (${group.accounts.length})`}
+                              </button>
+                            ))}
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {group.accounts.map((acc) => {
@@ -3999,7 +4045,7 @@ export function CampaignsPanel({
                                   setEditingAccountRowId(null);
                                   setAccountFormMode("create");
                                 }}
-                                className={`rounded-lg border px-3 py-1.5 text-left text-[11px] font-bold transition ${
+                                className={`max-w-full rounded-lg border px-3 py-1.5 text-left text-[11px] font-bold whitespace-normal break-words transition ${
                                   isSelected
                                     ? "border-indigo-500 bg-indigo-50 text-indigo-800"
                                     : "border-slate-200 bg-slate-50/60 text-slate-700 hover:bg-slate-100"
@@ -4276,7 +4322,7 @@ export function CampaignsPanel({
 
       {/* Diagnóstico IA das Métricas (por Conta ou Campanha) */}
       {metricsDiagnosis && (
-        <div className="space-y-4 rounded-2xl border border-cyan-200 bg-cyan-50/40 p-6 shadow-sm">
+        <div className="space-y-4 rounded-2xl border border-cyan-200 bg-cyan-50/40 p-4 shadow-sm sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h3 className="text-sm font-extrabold text-cyan-950">
@@ -4350,7 +4396,7 @@ export function CampaignsPanel({
 
       {/* Consultor IA (Verba & Novos Ganchos) */}
       {advisor && (
-        <div className="space-y-4 rounded-2xl border border-indigo-200 bg-indigo-50/40 p-6 shadow-sm">
+        <div className="space-y-4 rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4 shadow-sm sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-extrabold text-indigo-950">
               Consultor IA de Verba &amp; Novos Ganchos Orgânicos
@@ -4436,7 +4482,7 @@ export function CampaignsPanel({
       )}
 
       {/* Posts Publicados Prontos para Impulsionar */}
-      <div className="space-y-3 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+      <div className="space-y-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-extrabold text-slate-900">
@@ -4517,12 +4563,24 @@ export function CampaignsPanel({
                   }`}
                 >
                   {p.image_urls_json[0] && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={p.image_urls_json[0]}
-                      alt={p.headline}
-                      className="h-14 w-14 shrink-0 rounded-lg object-cover"
-                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setLightboxState({
+                          images: p.image_urls_json,
+                          title: p.headline,
+                        })
+                      }
+                      title="Clique para ampliar a imagem"
+                      className="relative h-14 w-14 shrink-0 cursor-zoom-in overflow-hidden rounded-lg border border-slate-200"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={p.image_urls_json[0]}
+                        alt={p.headline}
+                        className="h-full w-full object-cover transition hover:scale-105"
+                      />
+                    </button>
                   )}
                   <div className="min-w-0 flex-1 space-y-1.5 text-xs">
                     <p className="truncate font-extrabold text-slate-900">
@@ -4590,7 +4648,7 @@ export function CampaignsPanel({
         });
 
         return (
-      <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+      <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-extrabold text-slate-900">
             Campanhas &amp; Performance ({filteredCampaigns.length}
@@ -4599,13 +4657,13 @@ export function CampaignsPanel({
               : ""}
             )
           </h3>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             {distinctAccountIds.length > 0 && (
               <select
                 value={accountFilter}
                 onChange={(e) => setAccountFilter(e.target.value)}
                 aria-label="Filtrar por conta de anúncios"
-                className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-700"
+                className="w-full max-w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-bold text-slate-700 sm:w-auto sm:py-1"
               >
                 <option value="ALL">
                   Todas as Contas ({distinctAccountIds.length})
@@ -4623,7 +4681,7 @@ export function CampaignsPanel({
                 setProviderFilter(e.target.value as "ALL" | AdProvider)
               }
               aria-label="Filtrar por rede de anúncios"
-              className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-700"
+              className="w-full max-w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-bold text-slate-700 sm:w-auto sm:py-1"
             >
               <option value="ALL">Todas as Redes</option>
               <option value="META">Meta Ads (IG &amp; FB)</option>
@@ -4857,7 +4915,7 @@ export function CampaignsPanel({
                   </div>
 
                   {/* Métricas da janela */}
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
                     <div className="rounded-lg bg-white p-2 border border-slate-200/70">
                       <p className="text-[10px] text-slate-500">Gasto</p>
                       <p className="font-extrabold text-slate-900">
@@ -4958,12 +5016,24 @@ export function CampaignsPanel({
                             >
                               <div className="flex min-w-0 items-center gap-2">
                                 {ad.image_url && (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img
-                                    src={ad.image_url}
-                                    alt={ad.headline || ad.ad_name}
-                                    className="h-9 w-9 shrink-0 rounded object-cover"
-                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setLightboxState({
+                                        images: [ad.image_url!],
+                                        title: ad.headline || ad.ad_name,
+                                      })
+                                    }
+                                    title="Clique para ampliar a imagem"
+                                    className="h-9 w-9 shrink-0 cursor-zoom-in overflow-hidden rounded border border-slate-200"
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={ad.image_url}
+                                      alt={ad.headline || ad.ad_name}
+                                      className="h-full w-full object-cover transition hover:scale-105"
+                                    />
+                                  </button>
                                 )}
                                 <div className="min-w-0">
                                   <div className="flex flex-wrap items-center gap-1.5">
@@ -5104,6 +5174,14 @@ export function CampaignsPanel({
               text: "Anúncio atualizado na Meta Ads e sincronizado no PilotFlow.",
             });
           }}
+        />
+      )}
+
+      {lightboxState && (
+        <ImageLightboxModal
+          images={lightboxState.images}
+          title={lightboxState.title}
+          onClose={() => setLightboxState(null)}
         />
       )}
     </div>

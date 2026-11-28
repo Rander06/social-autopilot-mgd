@@ -757,14 +757,14 @@ export function CampaignsReportCharts({
   );
 
   return (
-    <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+    <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-6">
       {/* Cabeçalho do Relatório */}
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
-        <div>
+        <div className="min-w-0">
           <h3 className="text-sm font-extrabold text-slate-900">
             Relatório de Performance &amp; Gráficos
           </h3>
-          <p className="mt-0.5 text-[11px] text-slate-500">
+          <p className="mt-0.5 break-words text-[11px] text-slate-500">
             {companyName}
             {effectiveAccountLabel ? ` • ${effectiveAccountLabel}` : ""}
             {selectedCampaignObj ? ` • ${selectedCampaignObj.name}` : ""} •
@@ -775,14 +775,14 @@ export function CampaignsReportCharts({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <div className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
             {(["4d", "7d", "14d", "30d"] as AdInsightsWindow[]).map((win) => (
               <button
                 key={win}
                 type="button"
                 onClick={() => onSelectWindow(win)}
-                className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
+                className={`rounded-lg px-2 py-1 text-[11px] font-bold transition sm:px-2.5 ${
                   selectedWindow === win
                     ? "bg-indigo-600 text-white shadow-xs"
                     : "text-slate-600 hover:bg-white"
@@ -897,12 +897,12 @@ export function CampaignsReportCharts({
       )}
 
       {/* Grid de KPIs Consolidados (8 cards) */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5">
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3">
+        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 sm:p-3.5">
           <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
             Gasto Total
           </p>
-          <p className="mt-1 text-lg font-extrabold text-slate-900">
+          <p className="mt-1 text-base font-extrabold text-slate-900 sm:text-lg">
             {formatMoney(report.totalSpend, effectiveCurrency)}
           </p>
           <p className="mt-0.5 text-[10px] text-slate-500">
@@ -910,11 +910,11 @@ export function CampaignsReportCharts({
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5">
+        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 sm:p-3.5">
           <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
             Impressões
           </p>
-          <p className="mt-1 text-lg font-extrabold text-slate-900">
+          <p className="mt-1 text-base font-extrabold text-slate-900 sm:text-lg">
             {formatInt(report.totalImpressions)}
           </p>
           <p className="mt-0.5 text-[10px] text-slate-500">
@@ -922,11 +922,11 @@ export function CampaignsReportCharts({
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5">
+        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 sm:p-3.5">
           <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
             Cliques
           </p>
-          <p className="mt-1 text-lg font-extrabold text-slate-900">
+          <p className="mt-1 text-base font-extrabold text-slate-900 sm:text-lg">
             {formatInt(report.totalClicks)}
           </p>
           <p className="mt-0.5 text-[10px] text-slate-500">
@@ -934,11 +934,11 @@ export function CampaignsReportCharts({
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5">
+        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 sm:p-3.5">
           <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
             CPC Médio
           </p>
-          <p className="mt-1 text-lg font-extrabold text-slate-900">
+          <p className="mt-1 text-base font-extrabold text-slate-900 sm:text-lg">
             {formatMoney(report.avgCpc, effectiveCurrency)}
           </p>
           <p className="mt-0.5 text-[10px] text-slate-500">
@@ -946,11 +946,11 @@ export function CampaignsReportCharts({
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5">
+        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 sm:p-3.5">
           <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
             Conversões
           </p>
-          <p className="mt-1 text-lg font-extrabold text-slate-900">
+          <p className="mt-1 text-base font-extrabold text-slate-900 sm:text-lg">
             {formatInt(report.totalConversions)}
           </p>
           <p className="mt-0.5 text-[10px] text-slate-500">
@@ -958,12 +958,12 @@ export function CampaignsReportCharts({
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5">
+        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 sm:p-3.5">
           <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
             CPA / CPL Médio
           </p>
           <p
-            className={`mt-1 text-lg font-extrabold ${
+            className={`mt-1 text-base font-extrabold sm:text-lg ${
               report.avgCpa === null
                 ? "text-slate-900"
                 : report.avgCpa <= effectiveCpaMaximo
@@ -978,12 +978,12 @@ export function CampaignsReportCharts({
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5">
+        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 sm:p-3.5">
           <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
             ROAS Consolidado
           </p>
           <p
-            className={`mt-1 text-lg font-extrabold ${
+            className={`mt-1 text-base font-extrabold sm:text-lg ${
               report.consolidatedRoas === null
                 ? "text-slate-900"
                 : report.consolidatedRoas >= effectiveRoasMinimo
@@ -1000,7 +1000,7 @@ export function CampaignsReportCharts({
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5">
+        <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 sm:p-3.5">
           <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
             Vereditos IA
           </p>
