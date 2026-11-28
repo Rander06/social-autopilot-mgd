@@ -151,6 +151,29 @@ async function runPostPipeline(params: {
     );
   }
 
+  const approvalMode =
+    !params.forcePublish && topic?.approval_mode === "DRAFT"
+      ? "DRAFT"
+      : "AUTO";
+
+  const needsMetaTarget =
+    publishTargets.ig_feed ||
+    publishTargets.ig_stories ||
+    publishTargets.fb_feed ||
+    publishTargets.fb_stories;
+
+  if (
+    !params.previewOnly &&
+    !params.saveAsDraft &&
+    approvalMode === "AUTO" &&
+    needsMetaTarget &&
+    !secrets.meta_access_token?.trim()
+  ) {
+    throw new Error(
+      "META_ACCESS_TOKEN não configurado nas Integrações desta empresa."
+    );
+  }
+
   const topicTitle =
     params.customTitle?.trim() || topic?.title || "Campanha Especial";
   const promptInstructions =
@@ -667,11 +690,6 @@ DIRETRIZ DE CARROSSEL CONTÍNUO (SLIDE ${idx + 1}/${slidesCount} — CONTINUAÇ�
   }
   log(`Upload no R2 concluído (${imageUrls.length} imagem(ns)).`);
 
-  const approvalMode =
-    !params.forcePublish && topic?.approval_mode === "DRAFT"
-      ? "DRAFT"
-      : "AUTO";
-
   const tikTokTokenPromise =
     !params.previewOnly && approvalMode !== "DRAFT"
       ? refreshTikTokTokenIfNeeded(params.companyId)
@@ -957,36 +975,59 @@ export async function GET(request: NextRequest) {
       const currentBr = getSaoPauloSlotAndDow();
       const targetSlot = slotParam || currentBr.slot;
       const dueList = await findDueScheduledTopics(targetSlot, currentBr.dow);
-      const results = [];
 
-      for (const item of dueList) {
-        try {
-          const r = await runPostPipeline({
-            companyId: item.company.id,
-            topic: item.topic,
-          });
-          results.push({ company: item.company.name, topic: item.topic.title, ok: true, result: r });
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          await appendAuditLog({
-            company_id: item.company.id,
-            action: "CRON_POST_ERROR",
-            details_json: {
-              topic_id: item.topic.id,
-              topic_title: item.topic.title,
-              slot: targetSlot,
-              dow: currentBr.dow,
-              error: errMsg,
-            },
-          }).catch(() => {});
-          results.push({
-            company: item.company.name,
-            topic: item.topic.title,
-            ok: false,
-            error: errMsg,
-          });
-        }
+      if (dueList.length > 0) {
+        await appendAuditLog({
+          company_id: dueList[0].company.id,
+          action: "CRON_SLOT_DISPATCHED",
+          details_json: {
+            slot: targetSlot,
+            dow: currentBr.dow,
+            count: dueList.length,
+            topics: dueList.map((d) => ({
+              company_id: d.company.id,
+              topic_id: d.topic.id,
+              title: d.topic.title,
+            })),
+          },
+        }).catch(() => {});
       }
+
+      const results = await Promise.all(
+        dueList.map(async (item) => {
+          try {
+            const r = await runPostPipeline({
+              companyId: item.company.id,
+              topic: item.topic,
+            });
+            return {
+              company: item.company.name,
+              topic: item.topic.title,
+              ok: true,
+              result: r,
+            };
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            await appendAuditLog({
+              company_id: item.company.id,
+              action: "CRON_POST_ERROR",
+              details_json: {
+                topic_id: item.topic.id,
+                topic_title: item.topic.title,
+                slot: targetSlot,
+                dow: currentBr.dow,
+                error: errMsg,
+              },
+            }).catch(() => {});
+            return {
+              company: item.company.name,
+              topic: item.topic.title,
+              ok: false,
+              error: errMsg,
+            };
+          }
+        })
+      );
 
       return NextResponse.json({
         success: true,
