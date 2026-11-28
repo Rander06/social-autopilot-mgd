@@ -3550,7 +3550,7 @@ export default function SaasAppPage() {
 
   // ==================== INTERFACE LOGADA LUMINOSA ====================
   return (
-    <div className="min-h-screen pb-16">
+    <div className="min-h-screen pb-24 sm:pb-16">
       {/* Barra Superior Glass */}
       <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/85 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-3.5 md:px-8">
@@ -3611,7 +3611,7 @@ export default function SaasAppPage() {
                       : "text-slate-600"
                       }`}
                   >
-                    Painel da Empresa
+                    Painel
                   </button>
                   <button
                     type="button"
@@ -3621,7 +3621,7 @@ export default function SaasAppPage() {
                       : "text-slate-600"
                       }`}
                   >
-                    Super Admin
+                    Admin
                   </button>
                 </div>
               </>
@@ -3742,7 +3742,7 @@ export default function SaasAppPage() {
         {/* ==================== VISÃO SUPER ADMIN ==================== */}
         {viewScope === "admin" && user.role === "SUPER_ADMIN" && adminSnapshot && (
           <div className="space-y-6">
-            <div className="flex flex-nowrap gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
               {(
                 [
                   ["overview", "Dashboard Executivo SaaS"],
@@ -3751,12 +3751,12 @@ export default function SaasAppPage() {
                   ["tips", "Sugestões & Melhorias"],
                   ["audit", "Auditoria & Logs Globais"],
                 ] as Array<[AdminTab, string]>
-              ).map(([tabKey, label]) => (
+              ).map(([tabKey, label], idx) => (
                 <button
                   key={tabKey}
                   type="button"
                   onClick={() => setAdminTab(tabKey)}
-                  className={`shrink-0 whitespace-nowrap rounded-xl px-3.5 py-2 text-xs font-bold transition sm:px-4 sm:py-2.5 ${adminTab === tabKey
+                  className={`${idx === 4 ? "col-span-2 sm:col-span-1" : ""} rounded-xl px-3 py-2 text-center text-[11px] font-bold leading-snug transition sm:shrink-0 sm:whitespace-nowrap sm:px-4 sm:py-2.5 sm:text-xs ${adminTab === tabKey
                     ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md shadow-indigo-500/20"
                     : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                     }`}
@@ -4302,8 +4302,8 @@ export default function SaasAppPage() {
         {/* ==================== VISÃO EMPRESA CLIENTE ==================== */}
         {viewScope === "client" && (
           <div className="space-y-6">
-            {/* Abas Cliente */}
-            <nav className="flex flex-nowrap gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
+            {/* Abas Cliente (Desktop) */}
+            <nav className="hidden sm:flex sm:flex-wrap sm:gap-2">
               {(
                 [
                   ["dashboard", "Dashboard"],
@@ -8301,6 +8301,130 @@ export default function SaasAppPage() {
           </Link>
         </div>
       </footer>
+
+      {viewScope === "client" && !lightboxState && !boostModalPost && (
+        <nav
+          aria-label="Navegação principal mobile"
+          className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200/90 bg-white/95 px-1.5 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] shadow-[0_-4px_20px_-6px_rgba(15,23,42,0.12)] backdrop-blur-xl sm:hidden"
+        >
+          <div className="mx-auto grid max-w-lg grid-cols-5 gap-1">
+            {(
+              [
+                ["dashboard", "Dashboard"],
+                ["topics", "Assuntos"],
+                ["studio", "Estúdio"],
+                ["history", "Histórico"],
+                ["campaigns", "Campanhas"],
+              ] as Array<[ClientTab, string]>
+            ).map(([tabKey, shortLabel]) => {
+              const active = clientTab === tabKey;
+              return (
+                <button
+                  key={tabKey}
+                  type="button"
+                  aria-current={active ? "page" : undefined}
+                  onClick={() => {
+                    setConfigMenuOpen(false);
+                    if (clientTab !== tabKey && typeof window !== "undefined") {
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }
+                    setClientTab(tabKey);
+                  }}
+                  className={`flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1.5 transition ${
+                    active
+                      ? "bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-500 text-white shadow-sm shadow-indigo-500/25"
+                      : "text-slate-500 hover:bg-slate-100/80 hover:text-slate-800"
+                  }`}
+                >
+                  <span className="relative flex h-5 w-5 items-center justify-center">
+                    {tabKey === "dashboard" && (
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-5 w-5"
+                      >
+                        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+                        <rect x="14" y="14" width="7" height="7" rx="1.5" />
+                        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+                      </svg>
+                    )}
+                    {tabKey === "topics" && (
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-5 w-5"
+                      >
+                        <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                        <line x1="7" y1="7" x2="7.01" y2="7" />
+                      </svg>
+                    )}
+                    {tabKey === "studio" && (
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-5 w-5"
+                      >
+                        <rect x="3" y="3" width="18" height="18" rx="3" />
+                        <circle cx="8.5" cy="8.5" r="1.5" />
+                        <path d="M21 15l-5-5L5 21" />
+                      </svg>
+                    )}
+                    {tabKey === "history" && (
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-5 w-5"
+                      >
+                        <circle cx="12" cy="12" r="9" />
+                        <polyline points="12 7 12 12 15 15" />
+                      </svg>
+                    )}
+                    {tabKey === "campaigns" && (
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-5 w-5"
+                      >
+                        <path d="M3 11l18-5v12L3 13v-2z" />
+                        <path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" />
+                      </svg>
+                    )}
+                    {tabKey === "dashboard" && pendingDrafts.length > 0 && (
+                      <span className="absolute -right-2.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-extrabold leading-none text-slate-900 ring-2 ring-white">
+                        {pendingDrafts.length}
+                      </span>
+                    )}
+                  </span>
+                  <span className="max-w-full truncate text-[10px] font-bold leading-tight tracking-tight">
+                    {shortLabel}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      )}
 
       {lightboxState && (
         <ImageLightboxModal
