@@ -327,10 +327,19 @@ const IMAGE_SAFE_FB_POSITIONS = [
   "feed",
   "story",
   "marketplace",
+  "profile_feed",
+  "search",
   "facebook_reels",
 ];
 const IMAGE_SAFE_FB_POSITIONS_FALLBACK = ["feed", "story", "marketplace"];
-const IMAGE_SAFE_IG_POSITIONS = ["stream", "story", "explore", "reels"];
+const IMAGE_SAFE_IG_POSITIONS = [
+  "stream",
+  "story",
+  "reels",
+  "explore_home",
+  "profile_feed",
+  "ig_search",
+];
 const IMAGE_SAFE_IG_POSITIONS_FALLBACK = ["stream", "story", "reels"];
 
 export class MetaAdsService {
@@ -843,7 +852,11 @@ export class MetaAdsService {
   async applyImageSafePlacementsToAdSet(
     adsetId: string,
     hasInstagram = true
-  ): Promise<{ updated: boolean; placements: string[] }> {
+  ): Promise<{
+    updated: boolean;
+    fbPositions: string[];
+    igPositions: string[];
+  }> {
     const cleanId = adsetId.trim();
     if (!cleanId) {
       throw new Error("meta_adset_id não informado.");
@@ -878,7 +891,11 @@ export class MetaAdsService {
           ),
         },
       });
-      return { updated: true, placements: IMAGE_SAFE_FB_POSITIONS };
+      return {
+        updated: true,
+        fbPositions: IMAGE_SAFE_FB_POSITIONS,
+        igPositions: hasInstagram ? IMAGE_SAFE_IG_POSITIONS : [],
+      };
     } catch {
       await this.request(`/${encodeURIComponent(cleanId)}`, {
         method: "POST",
@@ -889,7 +906,11 @@ export class MetaAdsService {
           ),
         },
       });
-      return { updated: true, placements: IMAGE_SAFE_FB_POSITIONS_FALLBACK };
+      return {
+        updated: true,
+        fbPositions: IMAGE_SAFE_FB_POSITIONS_FALLBACK,
+        igPositions: hasInstagram ? IMAGE_SAFE_IG_POSITIONS_FALLBACK : [],
+      };
     }
   }
 
