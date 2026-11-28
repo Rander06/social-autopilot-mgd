@@ -3742,7 +3742,7 @@ export default function SaasAppPage() {
         {/* ==================== VISÃO SUPER ADMIN ==================== */}
         {viewScope === "admin" && user.role === "SUPER_ADMIN" && adminSnapshot && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+            <div className="hidden sm:flex sm:flex-wrap sm:gap-2">
               {(
                 [
                   ["overview", "Dashboard Executivo SaaS"],
@@ -8301,6 +8301,110 @@ export default function SaasAppPage() {
           </Link>
         </div>
       </footer>
+
+      {viewScope === "admin" &&
+        user.role === "SUPER_ADMIN" &&
+        adminSnapshot &&
+        !lightboxState && (
+          <nav
+            aria-label="Navegação admin mobile"
+            className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200/90 bg-white/95 px-1.5 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] shadow-[0_-4px_20px_-6px_rgba(15,23,42,0.12)] backdrop-blur-xl sm:hidden"
+          >
+            <div className="mx-auto grid max-w-lg grid-cols-5 gap-1">
+              {(
+                [
+                  ["overview", "Dashboard"],
+                  ["companies", "Empresas"],
+                  ["plans", "Planos"],
+                  ["tips", "Sugestões"],
+                  ["audit", "Auditoria"],
+                ] as Array<[AdminTab, string]>
+              ).map(([tabKey, shortLabel]) => {
+                const active = adminTab === tabKey;
+                return (
+                  <button
+                    key={tabKey}
+                    type="button"
+                    aria-current={active ? "page" : undefined}
+                    onClick={() => {
+                      setConfigMenuOpen(false);
+                      if (adminTab !== tabKey && typeof window !== "undefined") {
+                        window.scrollTo({ top: 0, behavior: "smooth" });
+                      }
+                      setAdminTab(tabKey);
+                    }}
+                    className={`flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1.5 transition ${
+                      active
+                        ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-sm shadow-indigo-500/25"
+                        : "text-slate-500 hover:bg-slate-100/80 hover:text-slate-800"
+                    }`}
+                  >
+                    <span className="relative flex h-5 w-5 items-center justify-center">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-5 w-5"
+                      >
+                        {tabKey === "overview" && (
+                          <>
+                            <line x1="4" y1="20" x2="20" y2="20" />
+                            <rect x="5" y="11" width="3" height="6" rx="0.5" />
+                            <rect x="10.5" y="7" width="3" height="10" rx="0.5" />
+                            <rect x="16" y="4" width="3" height="13" rx="0.5" />
+                          </>
+                        )}
+                        {tabKey === "companies" && (
+                          <>
+                            <rect x="4" y="3" width="16" height="18" rx="2" />
+                            <line x1="9" y1="7" x2="9.01" y2="7" />
+                            <line x1="15" y1="7" x2="15.01" y2="7" />
+                            <line x1="9" y1="11" x2="9.01" y2="11" />
+                            <line x1="15" y1="11" x2="15.01" y2="11" />
+                            <path d="M10 21v-4h4v4" />
+                          </>
+                        )}
+                        {tabKey === "plans" && (
+                          <>
+                            <rect x="2" y="5" width="20" height="14" rx="2" />
+                            <line x1="2" y1="10" x2="22" y2="10" />
+                            <line x1="6" y1="15" x2="10" y2="15" />
+                          </>
+                        )}
+                        {tabKey === "tips" && (
+                          <>
+                            <path d="M9 18h6" />
+                            <path d="M10 22h4" />
+                            <path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2z" />
+                          </>
+                        )}
+                        {tabKey === "audit" && (
+                          <>
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                            <polyline points="14 2 14 8 20 8" />
+                            <line x1="8" y1="13" x2="16" y2="13" />
+                            <line x1="8" y1="17" x2="13" y2="17" />
+                          </>
+                        )}
+                      </svg>
+                      {tabKey === "tips" && openAdminTipsCount > 0 && (
+                        <span className="absolute -right-2.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-extrabold leading-none text-slate-900 ring-2 ring-white">
+                          {openAdminTipsCount}
+                        </span>
+                      )}
+                    </span>
+                    <span className="max-w-full truncate text-[10px] font-bold leading-tight tracking-tight">
+                      {shortLabel}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
+        )}
 
       {viewScope === "client" && !lightboxState && !boostModalPost && (
         <nav
